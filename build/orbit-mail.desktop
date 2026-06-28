@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Orbit Mail
+Comment=Apple Mail-style email client
+Exec=orbit-mail %U
+Icon=orbit-mail
+Terminal=false
+Type=Application
+Categories=Network;Email;
+StartupWMClass=orbit-mail
+MimeType=x-scheme-handler/mailto;

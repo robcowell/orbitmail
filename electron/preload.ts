@@ -1,0 +1,55 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import type { OrbitMailAPI, ComposePayload, SyncStatus } from '../shared/types'
+
+const api: OrbitMailAPI = {
+  accounts: {
+    list: () => ipcRenderer.invoke('accounts:list'),
+    add: (provider) => ipcRenderer.invoke('accounts:add', provider),
+    remove: (accountId) => ipcRenderer.invoke('accounts:remove', accountId)
+  },
+  folders: {
+    list: (accountId) => ipcRenderer.invoke('folders:list', accountId)
+  },
+  messages: {
+    list: (folderId, limit, offset) =>
+      ipcRenderer.invoke('messages:list', folderId, limit, offset),
+    get: (messageId) => ipcRenderer.invoke('messages:get', messageId),
+    markRead: (messageId, isRead) =>
+      ipcRenderer.invoke('messages:markRead', messageId, isRead),
+    delete: (messageId) => ipcRenderer.invoke('messages:delete', messageId),
+    move: (messageId, targetFolderId) =>
+      ipcRenderer.invoke('messages:move', messageId, targetFolderId)
+  },
+  sync: {
+    refresh: (accountId) => ipcRenderer.invoke('sync:refresh', accountId),
+    getStatus: () => ipcRenderer.invoke('sync:getStatus'),
+    onStatusChange: (callback) => {
+      const handler = (_: unknown, status: SyncStatus) => callback(status)
+      ipcRenderer.on('sync:status', handler)
+      return () => ipcRenderer.removeListener('sync:status', handler)
+    },
+    onMessagesUpdated: (callback) => {
+      const handler = () => callback()
+      ipcRenderer.on('sync:messagesUpdated', handler)
+      return () => ipcRenderer.removeListener('sync:messagesUpdated', handler)
+    }
+  },
+  search: {
+    query: (text, limit) => ipcRenderer.invoke('search:query', text, limit)
+  },
+  compose: {
+    open: (payload) => ipcRenderer.invoke('compose:open', payload),
+    send: (payload) => ipcRenderer.invoke('compose:send', payload),
+    onOpen: (callback) => {
+      const handler = (_: unknown, payload: Partial<ComposePayload>) => callback(payload)
+      ipcRenderer.on('compose:open', handler)
+      return () => ipcRenderer.removeListener('compose:open', handler)
+    }
+  },
+  attachments: {
+    download: (attachmentId) => ipcRenderer.invoke('attachments:download', attachmentId),
+    open: (attachmentId) => ipcRenderer.invoke('attachments:open', attachmentId)
+  }
+}
+
+contextBridge.exposeInMainWorld('orbitMail', api)

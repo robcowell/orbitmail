@@ -1,0 +1,77 @@
+{
+  "name": "orbit-mail",
+  "version": "0.1.0",
+  "description": "Apple Mail-style email client for Linux",
+  "main": "out/main/index.js",
+  "homepage": "https://github.com/orbit-mail/orbit-mail",
+  "author": {
+    "name": "Orbit Mail",
+    "email": "orbit-mail@localhost"
+  },
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "dist": "npm run build && electron-builder",
+    "dist:deb": "npm run build && electron-builder --linux deb",
+    "dist:appimage": "npm run build && electron-builder --linux AppImage",
+    "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2.16.2",
+    "better-sqlite3": "^11.8.1",
+    "dompurify": "^3.2.4",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.39.1",
+    "google-auth-library": "^9.15.1",
+    "imapflow": "^1.0.184",
+    "lucide-react": "^0.474.0",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^6.10.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/dompurify": "^3.2.0",
+    "@types/mailparser": "^3.4.5",
+    "@types/nodemailer": "^6.4.17",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^34.0.2",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.0.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  },
+  "build": {
+    "appId": "com.orbitmail.app",
+    "productName": "Orbit Mail",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "category": "Network;Email",
+      "executableName": "orbit-mail",
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "desktop": {
+        "StartupWMClass": "orbit-mail"
+      }
+    },
+    "deb": {
+      "packageName": "orbit-mail",
+      "maintainer": "Orbit Mail <orbit-mail@localhost>"
+    }
+  }
+}

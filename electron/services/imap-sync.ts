@@ -296,9 +296,14 @@ async function getRecentMessageUids(client: ImapFlow, batchSize: number): Promis
 }
 
 let onFolderSynced: (() => void) | null = null
+let onNewMailArrived: ((count: number) => void) | null = null
 
 export function setOnFolderSynced(callback: (() => void) | null): void {
   onFolderSynced = callback
+}
+
+export function setOnNewMailArrived(callback: ((count: number) => void) | null): void {
+  onNewMailArrived = callback
 }
 
 async function resolveUidsToFetch(
@@ -701,6 +706,7 @@ export async function pollForNewMessages(): Promise<void> {
 
   if (fetchedTotal > 0) {
     onFolderSynced?.()
+    onNewMailArrived?.(fetchedTotal)
   }
 }
 
@@ -735,6 +741,32 @@ export async function markMessageReadOnServer(
         await client.messageFlagsAdd({ uid }, ['\\Seen'], { uid: true })
       } else {
         await client.messageFlagsRemove({ uid }, ['\\Seen'], { uid: true })
+      }
+    } finally {
+      lock.release()
+    }
+  } finally {
+    await client.logout()
+  }
+}
+
+export async function toggleMessageStarredOnServer(
+  accountId: string,
+  provider: Provider,
+  folderPath: string,
+  uid: number,
+  isStarred: boolean
+): Promise<void> {
+  if (provider === 'pop3') return
+
+  const client = await createImapClient(accountId, provider)
+  try {
+    const lock = await client.getMailboxLock(folderPath)
+    try {
+      if (isStarred) {
+        await client.messageFlagsAdd({ uid }, ['\\Flagged'], { uid: true })
+      } else {
+        await client.messageFlagsRemove({ uid }, ['\\Flagged'], { uid: true })
       }
     } finally {
       lock.release()

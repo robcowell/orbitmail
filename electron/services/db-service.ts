@@ -459,6 +459,31 @@ export function setMessageRead(messageId: string, isRead: boolean): void {
   db.update(messages).set({ isRead }).where(eq(messages.id, messageId)).run()
 }
 
+export function setMessageStarred(messageId: string, isStarred: boolean): void {
+  const db = getDb()
+  db.update(messages).set({ isStarred }).where(eq(messages.id, messageId)).run()
+}
+
+export function countMessages(folderId: string | 'unified'): number {
+  const db = getDb()
+
+  if (folderId === 'unified') {
+    const inboxIds = getInboxFolderIds()
+    if (inboxIds.length === 0) return 0
+    return db
+      .select()
+      .from(messages)
+      .where(inArray(messages.folderId, inboxIds))
+      .all().length
+  }
+
+  return db
+    .select()
+    .from(messages)
+    .where(eq(messages.folderId, folderId))
+    .all().length
+}
+
 export function deleteMessage(messageId: string): void {
   const db = getDb()
   deleteFts(messageId)

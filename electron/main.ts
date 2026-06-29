@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join } from 'path'
 import type { ComposePayload, SyncStatus, ManualAccountInput } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
@@ -9,8 +9,10 @@ import {
   removeAccount,
   listFolders,
   listMessages,
+  countMessages,
   getMessage,
   setMessageRead,
+  setMessageStarred,
   deleteMessage,
   getFolderById,
   searchMessages,
@@ -25,11 +27,13 @@ import {
   startBackgroundSync,
   stopBackgroundSync,
   markMessageReadOnServer,
+  toggleMessageStarredOnServer,
   deleteMessageOnServer,
   moveMessageOnServer,
   refreshAccount,
   pollForNewMessages,
   setOnFolderSynced,
+  setOnNewMailArrived,
   initSyncFromPersistence
 } from './services/imap-sync'
 import {
@@ -51,11 +55,97 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 let composeWindow: BrowserWindow | null = null
+let lastNotificationAt = 0
 
 configureLinuxDesktopIntegration()
 
 function getWindowIcon(): string | undefined {
   return getAppIconPath()
+}
+
+function parseMailtoUrl(url: string): Partial<ComposePayload> {
+  try {
+    const parsed = new URL(url)
+    const to = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''))
+    const subject = parsed.searchParams.get('subject') ?? ''
+    const body = parsed.searchParams.get('body') ?? ''
+    const cc = parsed.searchParams.get('cc') ?? ''
+    const bcc = parsed.searchParams.get('bcc') ?? ''
+
+    return {
+      to,
+      cc: cc || undefined,
+      bcc: bcc || undefined,
+      subject,
+      bodyText: body,
+      bodyHtml: body ? `<p>${body.replace(/\n/g, '<br>')}</p>` : ''
+    }
+  } catch {
+    return {}
+  }
+}
+
+function enrichComposePayload(payload?: Partial<ComposePayload>): Partial<ComposePayload> {
+  if (!payload) return {}
+
+  if (payload.originalMessageId && payload.mode) {
+    const accountId =
+      payload.accountId ??
+      getMessage(payload.originalMessageId)?.accountId ??
+      listAccounts()[0]?.id ??
+      ''
+    return {
+      ...buildReplyPayload(payload.originalMessageId, accountId, payload.mode),
+      ...payload,
+      accountId: payload.accountId ?? accountId
+    }
+  }
+
+  return payload
+}
+
+function openComposeFromMailto(url: string): void {
+  const accounts = listAccounts()
+  const mailtoPayload = parseMailtoUrl(url)
+  const accountId = accounts[0]?.id
+
+  if (!accountId) {
+    mainWindow?.webContents.send('app:needsAccount')
+    return
+  }
+
+  createComposeWindow({ accountId, ...mailtoPayload })
+  mainWindow?.show()
+  mainWindow?.focus()
+}
+
+function showNewMailNotification(count: number): void {
+  if (!Notification.isSupported()) return
+  if (Date.now() - lastNotificationAt < 5000) return
+  lastNotificationAt = Date.now()
+
+  const body =
+    count === 1 ? 'You have a new message' : `You have ${count} new messages`
+
+  const notification = new Notification({
+    title: 'Orbit Mail',
+    body,
+    icon: getAppIconPath()
+  })
+
+  notification.on('click', () => {
+    mainWindow?.show()
+    mainWindow?.focus()
+  })
+
+  notification.show()
+}
+
+function handleMailtoArgv(argv: string[]): void {
+  const mailtoUrl = argv.find((arg) => arg.toLowerCase().startsWith('mailto:'))
+  if (mailtoUrl) {
+    openComposeFromMailto(mailtoUrl)
+  }
 }
 
 function createMainWindow(): void {
@@ -109,9 +199,11 @@ function createMainWindow(): void {
 }
 
 function createComposeWindow(payload?: Partial<ComposePayload>): void {
+  const finalPayload = enrichComposePayload(payload)
+
   if (composeWindow) {
     composeWindow.focus()
-    composeWindow.webContents.send('compose:open', payload ?? {})
+    composeWindow.webContents.send('compose:open', finalPayload)
     return
   }
 
@@ -136,11 +228,16 @@ function createComposeWindow(payload?: Partial<ComposePayload>): void {
 
   composeWindow.on('ready-to-show', () => {
     composeWindow?.show()
-    composeWindow?.webContents.send('compose:open', payload ?? {})
+    composeWindow?.webContents.send('compose:open', finalPayload)
   })
 
   composeWindow.on('closed', () => {
     composeWindow = null
+  })
+
+  composeWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url)
+    return { action: 'deny' }
   })
 
   const composeUrl = process.env.ELECTRON_RENDERER_URL
@@ -188,6 +285,10 @@ function registerIpc(): void {
       listMessages(folderId, limit, offset)
   )
 
+  ipcMain.handle('messages:count', (_, folderId: string | 'unified') =>
+    countMessages(folderId)
+  )
+
   ipcMain.handle('messages:get', (_, messageId: string) => getMessage(messageId))
 
   ipcMain.handle('messages:markRead', async (_, messageId: string, isRead: boolean) => {
@@ -206,6 +307,25 @@ function registerIpc(): void {
       folder.imapPath,
       msg.uid,
       isRead
+    )
+  })
+
+  ipcMain.handle('messages:toggleStar', async (_, messageId: string, isStarred: boolean) => {
+    const msg = getMessage(messageId)
+    if (!msg) return
+    const folder = getFolderById(msg.folderId)
+    if (!folder) return
+    const accounts = listAccounts()
+    const account = accounts.find((a) => a.id === msg.accountId)
+    if (!account) return
+
+    setMessageStarred(messageId, isStarred)
+    await toggleMessageStarredOnServer(
+      account.id,
+      account.provider,
+      folder.imapPath,
+      msg.uid,
+      isStarred
     )
   })
 
@@ -240,6 +360,7 @@ function registerIpc(): void {
       msg.uid
     )
     deleteMessage(messageId)
+    await pollForNewMessages()
   })
 
   ipcMain.handle('sync:refresh', async (_, accountId?: string) => {
@@ -270,6 +391,23 @@ function registerIpc(): void {
     if (!account) throw new Error('Account not found')
     await sendMail(payload, account.provider)
     await pollForNewMessages()
+    composeWindow?.close()
+  })
+
+  ipcMain.handle('compose:pickAttachments', async () => {
+    const result = await dialog.showOpenDialog(composeWindow ?? mainWindow ?? undefined, {
+      properties: ['openFile', 'multiSelections']
+    })
+    if (result.canceled) return []
+    return result.filePaths
+  })
+
+  ipcMain.handle('compose:close', () => {
+    composeWindow?.close()
+  })
+
+  ipcMain.handle('shell:openExternal', async (_, url: string) => {
+    await shell.openExternal(url)
   })
 
   ipcMain.handle('attachments:download', async (_, attachmentId: string) => {
@@ -291,39 +429,71 @@ function registerIpc(): void {
   ipcMain.handle('preferences:save', (_, state) => patchAppState(state))
 }
 
-app.whenReady().then(() => {
-  if (process.platform === 'win32') {
-    app.setAppUserModelId('com.orbitmail.app')
-  }
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
-  if (process.platform === 'linux') {
-    app.setName('Orbit Mail')
-  }
-
-  registerIpc()
-  initSyncFromPersistence()
-  createMainWindow()
-  startBackgroundSync()
-
-  setOnFolderSynced(() => {
-    mainWindow?.webContents.send('sync:messagesUpdated')
-  })
-
-  setIdleNewMailHandler(() => {
-    mainWindow?.webContents.send('sync:messagesUpdated')
-  })
-  startIdleMonitoring()
-
-  // Push sync status to renderer
-  onSyncStatusChange((status: SyncStatus) => {
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_, argv) => {
+    handleMailtoArgv(argv)
     if (mainWindow) {
-      mainWindow.webContents.send('sync:status', status)
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
     }
   })
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+  app.whenReady().then(() => {
+    if (process.platform === 'win32') {
+      app.setAppUserModelId('com.orbitmail.app')
+    }
+
+    if (process.platform === 'linux') {
+      app.setName('Orbit Mail')
+    }
+
+    if (!app.isDefaultProtocolClient('mailto')) {
+      app.setAsDefaultProtocolClient('mailto')
+    }
+
+    registerIpc()
+    initSyncFromPersistence()
+    createMainWindow()
+    startBackgroundSync()
+
+    handleMailtoArgv(process.argv)
+
+    setOnFolderSynced(() => {
+      mainWindow?.webContents.send('sync:messagesUpdated')
+    })
+
+    setOnNewMailArrived((count) => {
+      showNewMailNotification(count)
+    })
+
+    setIdleNewMailHandler(() => {
+      mainWindow?.webContents.send('sync:messagesUpdated')
+      showNewMailNotification(1)
+    })
+    startIdleMonitoring()
+
+    onSyncStatusChange((status: SyncStatus) => {
+      if (mainWindow) {
+        mainWindow.webContents.send('sync:status', status)
+      }
+    })
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+    })
   })
+}
+
+app.on('open-url', (event, url) => {
+  event.preventDefault()
+  if (url.toLowerCase().startsWith('mailto:')) {
+    openComposeFromMailto(url)
+  }
 })
 
 app.on('before-quit', () => {

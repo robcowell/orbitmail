@@ -9,23 +9,57 @@ import {
   useMailStore,
   loadInitialData,
   refreshMessages,
-  saveUiPreferencesNow
+  saveUiPreferencesNow,
+  moveMessageToTrash
 } from './stores/mailStore'
 import { exposeFlushHook } from './stores/persistence'
 
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
+  const isOnline = useMailStore((s) => s.isOnline)
+  const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
+  const setToast = useMailStore((s) => s.setToast)
 
   const syncLabel =
     syncStatus.syncTotal > 0
       ? `Syncing ${syncStatus.syncCurrent} of ${syncStatus.syncTotal}…`
       : 'Syncing…'
 
+  const handleRetrySync = async () => {
+    try {
+      await window.orbitMail.sync.refresh()
+      await refreshMessages()
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Sync failed')
+    }
+  }
+
+  const needsReauth =
+    syncStatus.error &&
+    /auth|token|login|expired|invalid_grant|consent/i.test(syncStatus.error)
+
   return (
     <div className="status-bar">
+      {!isOnline && <span className="status-offline">Offline — showing cached mail</span>}
       {syncStatus.syncing && <span className="status-syncing">{syncLabel}</span>}
-      {syncStatus.error && <span className="status-error">{syncStatus.error}</span>}
-      {syncStatus.lastSyncAt && !syncStatus.syncing && (
+      {syncStatus.error && (
+        <span className="status-error-wrap">
+          <span className="status-error">{syncStatus.error}</span>
+          <button type="button" className="status-action" onClick={handleRetrySync}>
+            Retry
+          </button>
+          {needsReauth && (
+            <button
+              type="button"
+              className="status-action"
+              onClick={() => setShowAddAccount(true)}
+            >
+              Re-authenticate
+            </button>
+          )}
+        </span>
+      )}
+      {syncStatus.lastSyncAt && !syncStatus.syncing && !syncStatus.error && (
         <span>
           Last synced {new Date(syncStatus.lastSyncAt).toLocaleTimeString()}
         </span>
@@ -50,12 +84,19 @@ function Toast() {
 
 function MainApp() {
   const setSyncStatus = useMailStore((s) => s.setSyncStatus)
+  const setIsOnline = useMailStore((s) => s.setIsOnline)
+  const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
 
   useEffect(() => {
     exposeFlushHook()
     loadInitialData()
     let lastRefreshAt = 0
     let lastSyncCurrent = -1
+
+    const updateOnline = () => setIsOnline(navigator.onLine)
+    updateOnline()
+    window.addEventListener('online', updateOnline)
+    window.addEventListener('offline', updateOnline)
 
     const unsubStatus = window.orbitMail.sync.onStatusChange((status) => {
       setSyncStatus(status)
@@ -87,8 +128,10 @@ function MainApp() {
     return () => {
       unsubStatus()
       unsubMessages()
+      window.removeEventListener('online', updateOnline)
+      window.removeEventListener('offline', updateOnline)
     }
-  }, [setSyncStatus])
+  }, [setSyncStatus, setIsOnline])
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -104,10 +147,8 @@ function MainApp() {
       if (e.key === 'r' && !e.metaKey && !e.ctrlKey && store.selectedMessage) {
         window.orbitMail.compose.open({
           accountId: store.selectedMessage.accountId,
-          to: store.selectedMessage.from,
-          subject: `Re: ${store.selectedMessage.subject.replace(/^Re:\s*/, '')}`,
-          bodyText: `\n\n${store.selectedMessage.bodyText ?? ''}`,
-          mode: 'reply'
+          mode: 'reply',
+          originalMessageId: store.selectedMessage.id
         })
       }
       if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
@@ -115,11 +156,7 @@ function MainApp() {
         document.querySelector<HTMLInputElement>('.search-input')?.focus()
       }
       if (e.key === 'Delete' && store.selectedMessageId) {
-        window.orbitMail.messages.delete(store.selectedMessageId).then(() => {
-          store.setSelectedMessage(null)
-          store.setSelectedMessageId(null)
-          refreshMessages()
-        })
+        moveMessageToTrash(store.selectedMessageId).catch(() => {})
       }
     }
 
@@ -132,6 +169,11 @@ function MainApp() {
     window.addEventListener('beforeunload', flush)
     return () => window.removeEventListener('beforeunload', flush)
   }, [])
+
+  useEffect(() => {
+    const unsub = window.orbitMail.app.onNeedsAccount(() => setShowAddAccount(true))
+    return unsub
+  }, [setShowAddAccount])
 
   return (
     <div className="app-shell">
@@ -149,16 +191,9 @@ function MainApp() {
 }
 
 import { ComposeWindow } from './components/compose/ComposeWindow'
-import { loadPersistedPreferences } from './stores/persistence'
 
 export default function App() {
   const isCompose = window.location.hash === '#/compose'
-
-  useEffect(() => {
-    if (isCompose) {
-      void loadPersistedPreferences()
-    }
-  }, [isCompose])
 
   if (isCompose) {
     return (

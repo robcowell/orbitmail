@@ -23,9 +23,12 @@ const api: OrbitMailAPI = {
   messages: {
     list: (folderId, limit, offset) =>
       ipcRenderer.invoke('messages:list', folderId, limit, offset),
+    count: (folderId) => ipcRenderer.invoke('messages:count', folderId),
     get: (messageId) => ipcRenderer.invoke('messages:get', messageId),
     markRead: (messageId, isRead) =>
       ipcRenderer.invoke('messages:markRead', messageId, isRead),
+    toggleStar: (messageId, isStarred) =>
+      ipcRenderer.invoke('messages:toggleStar', messageId, isStarred),
     delete: (messageId) => ipcRenderer.invoke('messages:delete', messageId),
     move: (messageId, targetFolderId) =>
       ipcRenderer.invoke('messages:move', messageId, targetFolderId)
@@ -50,10 +53,22 @@ const api: OrbitMailAPI = {
   compose: {
     open: (payload) => ipcRenderer.invoke('compose:open', payload),
     send: (payload) => ipcRenderer.invoke('compose:send', payload),
+    pickAttachments: () => ipcRenderer.invoke('compose:pickAttachments'),
+    close: () => ipcRenderer.invoke('compose:close'),
     onOpen: (callback) => {
       const handler = (_: unknown, payload: Partial<ComposePayload>) => callback(payload)
       ipcRenderer.on('compose:open', handler)
       return () => ipcRenderer.removeListener('compose:open', handler)
+    }
+  },
+  shell: {
+    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url)
+  },
+  app: {
+    onNeedsAccount: (callback) => {
+      const handler = () => callback()
+      ipcRenderer.on('app:needsAccount', handler)
+      return () => ipcRenderer.removeListener('app:needsAccount', handler)
     }
   },
   attachments: {

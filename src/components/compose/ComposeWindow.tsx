@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import type { ComposePayload } from '../../../shared/types'
 import { useMailStore } from '../../stores/mailStore'
+import { loadInitialData } from '../../stores/mailStore'
+import { Paperclip, X } from '../icons'
 
 const emptyPayload = (accountId: string): ComposePayload => ({
   accountId,
@@ -19,6 +21,11 @@ export function ComposeWindow() {
   const [sending, setSending] = useState(false)
   const [showCc, setShowCc] = useState(false)
   const [showBcc, setShowBcc] = useState(false)
+  const [attachmentPaths, setAttachmentPaths] = useState<string[]>([])
+
+  useEffect(() => {
+    void loadInitialData()
+  }, [])
 
   useEffect(() => {
     const unsub = window.orbitMail.compose.onOpen((initial) => {
@@ -27,6 +34,7 @@ export function ComposeWindow() {
         ...emptyPayload(accountId),
         ...initial
       })
+      setAttachmentPaths(initial.attachmentPaths ?? [])
       if (initial.cc) setShowCc(true)
       if (initial.bcc) setShowBcc(true)
     })
@@ -44,6 +52,16 @@ export function ComposeWindow() {
   const update = (patch: Partial<ComposePayload>) =>
     setPayload((p) => (p ? { ...p, ...patch } : p))
 
+  const handlePickAttachments = async () => {
+    const paths = await window.orbitMail.compose.pickAttachments()
+    if (paths.length === 0) return
+    setAttachmentPaths((current) => [...current, ...paths])
+  }
+
+  const handleRemoveAttachment = (path: string) => {
+    setAttachmentPaths((current) => current.filter((p) => p !== path))
+  }
+
   const handleSend = async () => {
     if (!payload.to.trim()) {
       setToast('Please enter a recipient')
@@ -51,15 +69,22 @@ export function ComposeWindow() {
     }
     setSending(true)
     try {
-      await window.orbitMail.compose.send(payload)
-      setToast('Message sent')
-      setPayload(emptyPayload(payload.accountId))
+      await window.orbitMail.compose.send({
+        ...payload,
+        attachmentPaths: attachmentPaths.length ? attachmentPaths : undefined
+      })
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Failed to send')
-    } finally {
       setSending(false)
     }
   }
+
+  const displayAccounts =
+    accounts.length > 0
+      ? accounts
+      : payload.accountId
+        ? [{ id: payload.accountId, email: payload.accountId, displayName: payload.accountId, provider: 'imap' as const }]
+        : []
 
   return (
     <div className="compose-form">
@@ -70,7 +95,7 @@ export function ComposeWindow() {
           value={payload.accountId}
           onChange={(e) => update({ accountId: e.target.value })}
         >
-          {accounts.map((a) => (
+          {displayAccounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.email}
             </option>
@@ -142,7 +167,34 @@ export function ComposeWindow() {
         placeholder="Write your message…"
       />
 
+      {attachmentPaths.length > 0 && (
+        <div className="compose-attachments">
+          {attachmentPaths.map((path) => (
+            <div key={path} className="compose-attachment-chip">
+              <Paperclip size={14} weight="duotone" />
+              <span>{path.split('/').pop()}</span>
+              <button
+                type="button"
+                className="compose-attachment-remove"
+                onClick={() => handleRemoveAttachment(path)}
+                aria-label="Remove attachment"
+              >
+                <X size={12} weight="bold" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="compose-actions">
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={handlePickAttachments}
+          disabled={sending}
+        >
+          Attach
+        </button>
         <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
           {sending ? 'Sending…' : 'Send'}
         </button>

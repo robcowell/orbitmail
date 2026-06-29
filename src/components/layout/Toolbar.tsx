@@ -1,4 +1,11 @@
-import { useMailStore, refreshMessages } from '../../stores/mailStore'
+import {
+  useMailStore,
+  refreshMessages,
+  moveMessageToTrash,
+  archiveMessage,
+  markMessageUnread,
+  toggleMessageStar
+} from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
 import {
@@ -9,7 +16,9 @@ import {
   Trash,
   Archive,
   ArrowsClockwise,
-  MagnifyingGlass
+  MagnifyingGlass,
+  Star,
+  Envelope
 } from '../icons'
 
 function ThemeToggle() {
@@ -40,6 +49,7 @@ export function Toolbar() {
   const setSearchQuery = useMailStore((s) => s.setSearchQuery)
   const setToast = useMailStore((s) => s.setToast)
   const syncStatus = useMailStore((s) => s.syncStatus)
+  const isOnline = useMailStore((s) => s.isOnline)
 
   const handleCompose = () => {
     const accountId = accounts[0]?.id
@@ -54,12 +64,6 @@ export function Toolbar() {
     if (!selectedMessage) return
     window.orbitMail.compose.open({
       accountId: selectedMessage.accountId,
-      to: selectedMessage.from,
-      subject: selectedMessage.subject.startsWith('Re:')
-        ? selectedMessage.subject
-        : `Re: ${selectedMessage.subject}`,
-      bodyText: `\n\n${selectedMessage.bodyText ?? ''}`,
-      bodyHtml: `<br><br><blockquote>${selectedMessage.bodyHtml ?? selectedMessage.bodyText ?? ''}</blockquote>`,
       mode: 'reply',
       originalMessageId: selectedMessage.id
     })
@@ -69,11 +73,6 @@ export function Toolbar() {
     if (!selectedMessage) return
     window.orbitMail.compose.open({
       accountId: selectedMessage.accountId,
-      subject: selectedMessage.subject.startsWith('Fwd:')
-        ? selectedMessage.subject
-        : `Fwd: ${selectedMessage.subject}`,
-      bodyText: `\n\n---------- Forwarded message ----------\n${selectedMessage.bodyText ?? ''}`,
-      bodyHtml: `<br><br>---------- Forwarded message ----------<br>${selectedMessage.bodyHtml ?? selectedMessage.bodyText ?? ''}`,
       mode: 'forward',
       originalMessageId: selectedMessage.id
     })
@@ -82,17 +81,45 @@ export function Toolbar() {
   const handleDelete = async () => {
     if (!selectedMessageId) return
     try {
-      await window.orbitMail.messages.delete(selectedMessageId)
-      useMailStore.getState().setSelectedMessage(null)
-      useMailStore.getState().setSelectedMessageId(null)
-      await refreshMessages()
-      setToast('Message deleted')
+      await moveMessageToTrash(selectedMessageId)
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Delete failed')
     }
   }
 
+  const handleArchive = async () => {
+    if (!selectedMessageId) return
+    try {
+      await archiveMessage(selectedMessageId)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Archive failed')
+    }
+  }
+
+  const handleMarkUnread = async () => {
+    if (!selectedMessageId) return
+    try {
+      await markMessageUnread(selectedMessageId)
+      setToast('Marked as unread')
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Update failed')
+    }
+  }
+
+  const handleToggleStar = async () => {
+    if (!selectedMessageId || !selectedMessage) return
+    try {
+      await toggleMessageStar(selectedMessageId, !selectedMessage.isStarred)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Update failed')
+    }
+  }
+
   const handleRefresh = async () => {
+    if (!isOnline) {
+      setToast('You are offline — showing cached mail')
+      return
+    }
     try {
       await window.orbitMail.sync.refresh()
       await refreshMessages()
@@ -149,8 +176,29 @@ export function Toolbar() {
         >
           <Trash {...iconProps} />
         </button>
-        <button className="toolbar-btn" title="Archive" disabled>
+        <button
+          className="toolbar-btn"
+          title="Archive"
+          onClick={handleArchive}
+          disabled={!selectedMessageId}
+        >
           <Archive {...iconProps} />
+        </button>
+        <button
+          className={`toolbar-btn${selectedMessage?.isStarred ? ' active' : ''}`}
+          title="Star"
+          onClick={handleToggleStar}
+          disabled={!selectedMessageId}
+        >
+          <Star {...iconProps} weight={selectedMessage?.isStarred ? 'fill' : 'duotone'} />
+        </button>
+        <button
+          className="toolbar-btn"
+          title="Mark unread"
+          onClick={handleMarkUnread}
+          disabled={!selectedMessageId || !selectedMessage?.isRead}
+        >
+          <Envelope {...iconProps} />
         </button>
         <button
           className="toolbar-btn"

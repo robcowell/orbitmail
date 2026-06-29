@@ -16,7 +16,11 @@ import {
   MagnifyingGlass,
   Paperclip,
   EnvelopeSimpleOpen,
-  Planet
+  Planet,
+  Star,
+  Envelope,
+  X,
+  GearSix
 } from '@phosphor-icons/react'
 import type { FolderType } from '../../shared/types'
 
@@ -65,7 +69,11 @@ export {
   MagnifyingGlass,
   Paperclip,
   EnvelopeSimpleOpen,
-  Planet
+  Planet,
+  Star,
+  Envelope,
+  X,
+  GearSix
 }
 
 export type { IconProps }

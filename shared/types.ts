@@ -128,8 +128,10 @@ export interface OrbitMailAPI {
   }
   messages: {
     list: (folderId: string | 'unified', limit?: number, offset?: number) => Promise<MessageSummary[]>
+    count: (folderId: string | 'unified') => Promise<number>
     get: (messageId: string) => Promise<MessageDetail | null>
     markRead: (messageId: string, isRead: boolean) => Promise<void>
+    toggleStar: (messageId: string, isStarred: boolean) => Promise<void>
     delete: (messageId: string) => Promise<void>
     move: (messageId: string, targetFolderId: string) => Promise<void>
   }
@@ -145,7 +147,15 @@ export interface OrbitMailAPI {
   compose: {
     open: (payload?: Partial<ComposePayload>) => Promise<void>
     send: (payload: ComposePayload) => Promise<void>
+    pickAttachments: () => Promise<string[]>
+    close: () => Promise<void>
     onOpen: (callback: (payload: Partial<ComposePayload>) => void) => () => void
+  }
+  shell: {
+    openExternal: (url: string) => Promise<void>
+  }
+  app: {
+    onNeedsAccount: (callback: () => void) => () => void
   }
   attachments: {
     download: (attachmentId: string) => Promise<string>

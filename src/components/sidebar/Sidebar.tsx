@@ -1,13 +1,21 @@
-import { useMemo } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import type { Account, FolderType } from '../../../shared/types'
-import { useMailStore, selectFolder } from '../../stores/mailStore'
+import {
+  useMailStore,
+  selectFolder,
+  removeAccountById,
+  syncAccountById
+} from '../../stores/mailStore'
 import { AppBrand } from '../brand/AppBrand'
 import {
   sidebarIconProps,
   FOLDER_ICON_MAP,
   FOLDER_COLOR_CLASS,
   TrayArrowDown,
-  PlusCircle
+  PlusCircle,
+  GearSix,
+  ArrowsClockwise,
+  Trash
 } from '../icons'
 
 const STANDARD_TYPES: FolderType[] = ['inbox', 'sent', 'drafts', 'trash', 'junk']
@@ -17,11 +25,59 @@ function accountLabel(account: Account): string {
   return `${account.displayName} (${account.email})`
 }
 
+function AccountMenu({
+  account,
+  onClose
+}: {
+  account: Account
+  onClose: () => void
+}) {
+  const handleSync = async () => {
+    onClose()
+    await syncAccountById(account.id)
+  }
+
+  const handleRemove = async () => {
+    onClose()
+    const confirmed = window.confirm(
+      `Remove ${account.email}? Local cached mail for this account will be deleted.`
+    )
+    if (!confirmed) return
+    await removeAccountById(account.id)
+  }
+
+  return (
+    <div className="account-menu">
+      <button type="button" className="account-menu-item" onClick={handleSync}>
+        <ArrowsClockwise size={14} weight="duotone" />
+        Sync now
+      </button>
+      <button type="button" className="account-menu-item danger" onClick={handleRemove}>
+        <Trash size={14} weight="duotone" />
+        Remove account
+      </button>
+    </div>
+  )
+}
+
 function AccountSection({ account }: { account: Account }) {
   const folders = useMailStore((s) => s.folders)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const collapsed = useMailStore((s) => s.collapsedAccountIds[account.id] ?? false)
   const toggleAccountCollapsed = useMailStore((s) => s.toggleAccountCollapsed)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const handleClick = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [menuOpen])
 
   const accountFolders = useMemo(
     () => folders.filter((f) => f.accountId === account.id),
@@ -33,14 +89,30 @@ function AccountSection({ account }: { account: Account }) {
 
   return (
     <div className="sidebar-section">
-      <button
-        type="button"
-        className="sidebar-account-header"
-        onClick={() => toggleAccountCollapsed(account.id)}
-        aria-expanded={!collapsed}
-      >
-        <span className="sidebar-account-label">{accountLabel(account)}</span>
-      </button>
+      <div className="sidebar-account-header-row">
+        <button
+          type="button"
+          className="sidebar-account-header"
+          onClick={() => toggleAccountCollapsed(account.id)}
+          aria-expanded={!collapsed}
+        >
+          <span className="sidebar-account-label">{accountLabel(account)}</span>
+        </button>
+        <div className="account-menu-wrap" ref={menuRef}>
+          <button
+            type="button"
+            className="sidebar-account-menu-btn"
+            title="Account settings"
+            aria-label="Account settings"
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <GearSix size={14} weight="duotone" />
+          </button>
+          {menuOpen && (
+            <AccountMenu account={account} onClose={() => setMenuOpen(false)} />
+          )}
+        </div>
+      </div>
 
       {!collapsed && (
         <div className="sidebar-account-folders">

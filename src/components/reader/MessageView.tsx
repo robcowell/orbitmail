@@ -1,11 +1,13 @@
+import { useState } from 'react'
 import DOMPurify from 'dompurify'
-import { useMailStore } from '../../stores/mailStore'
+import { useMailStore, toggleMessageStar } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
-import { Paperclip, EnvelopeSimpleOpen } from '../icons'
+import { Paperclip, EnvelopeSimpleOpen, Star } from '../icons'
 
 export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
+  const setToast = useMailStore((s) => s.setToast)
 
   if (!selectedMessageId || !selectedMessage) {
     return (
@@ -19,15 +21,43 @@ export function MessageView() {
 
   const sanitizedHtml = selectedMessage.bodyHtml
     ? DOMPurify.sanitize(selectedMessage.bodyHtml, {
-        ADD_ATTR: ['target'],
+        ADD_ATTR: ['target', 'href'],
         FORBID_TAGS: ['script', 'style']
       })
     : null
 
+  const handleBodyClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement
+    const anchor = target.closest('a')
+    if (!anchor) return
+    const href = anchor.getAttribute('href')
+    if (!href || href.startsWith('#')) return
+    event.preventDefault()
+    void window.orbitMail.shell.openExternal(href)
+  }
+
+  const handleToggleStar = async () => {
+    try {
+      await toggleMessageStar(selectedMessage.id, !selectedMessage.isStarred)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Update failed')
+    }
+  }
+
   return (
     <div>
       <div className="reader-header">
-        <div className="reader-subject">{selectedMessage.subject}</div>
+        <div className="reader-header-top">
+          <div className="reader-subject">{selectedMessage.subject}</div>
+          <button
+            type="button"
+            className={`reader-star-btn${selectedMessage.isStarred ? ' active' : ''}`}
+            title={selectedMessage.isStarred ? 'Remove star' : 'Star message'}
+            onClick={handleToggleStar}
+          >
+            <Star size={18} weight={selectedMessage.isStarred ? 'fill' : 'duotone'} />
+          </button>
+        </div>
         <div className="reader-meta">
           <div>
             <strong>From:</strong> {selectedMessage.from}
@@ -65,7 +95,7 @@ export function MessageView() {
         </div>
       )}
 
-      <div className="reader-body">
+      <div className="reader-body" onClick={handleBodyClick}>
         {sanitizedHtml ? (
           <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
         ) : (

@@ -1,6 +1,6 @@
 # Orbit Mail
 
-A desktop email client for Linux with an Apple Mail–inspired three-pane layout. Orbit Mail supports Gmail and Microsoft 365 via OAuth, plus manual IMAP, POP3, and SMTP accounts. Mail is cached locally in SQLite for fast search and offline reading.
+A desktop email client for Linux with an Apple Mail–inspired three-pane layout. Orbit Mail supports Gmail and Microsoft 365, plus manual IMAP, POP3, and SMTP accounts. Mail is cached locally for fast search and offline reading.
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-green)
@@ -12,20 +12,20 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 
 - **Multi-account inbox** — unified “All Inboxes” view plus per-account folders
 - **Folder navigation** — Inbox, Sent, Drafts, Trash, Junk, and custom IMAP folders
-- **Incremental sync** — UID-based fetching; only new messages are downloaded after initial sync
-- **Near-realtime updates** — background poll every 20 seconds plus IMAP IDLE on inbox folders
+- **Incremental sync** — only new messages are downloaded after the initial sync
+- **Near-realtime updates** — background sync plus IMAP IDLE on inbox folders
 - **Read, compose, reply, and forward** — separate compose window with threading headers on reply
 - **Move and archive** — delete moves to Trash; archive moves to All Mail / Archive when available
-- **Star and mark unread** — synced to the server via IMAP flags
+- **Star and mark unread** — synced to the server
 - **Attachments** — view incoming attachments; attach files when sending
-- **Full-text search** — local SQLite FTS5 index across subject, snippet, and body text
-- **Load more** — paginated message lists (200 messages per page)
+- **Full-text search** — search subject, snippet, and body text locally
+- **Load more** — paginated message lists for older mail
 
 ### Accounts
 
-- **Gmail** — OAuth 2.0 (Google Cloud desktop app)
-- **Microsoft 365 / Outlook** — OAuth 2.0 (Microsoft Entra ID)
-- **Other providers** — manual IMAP or POP3 + SMTP with optional server autodetect (Mozilla ISPDB + domain fallbacks)
+- **Gmail** — sign in with Google
+- **Microsoft 365 / Outlook** — sign in with Microsoft
+- **Other providers** — manual IMAP or POP3 + SMTP with optional server autodetect
 
 ### UX
 
@@ -37,111 +37,49 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 - Sync error recovery — retry and re-authenticate actions in the status bar
 - External link handling — links in HTML messages open in your default browser
 
-## Requirements
+## Install
 
-- **Node.js** 20 or later
-- **Linux** desktop (developed on Linux Mint Cinnamon; other desktops supported)
-- **OAuth credentials** — required for Gmail and Microsoft 365 during development (see below)
-- **Build tools** — needed for `better-sqlite3` native module (`build-essential`, Python, etc.)
+Orbit Mail is currently distributed for **Linux** only.
 
-## Quick Start
+### Debian package
 
 ```bash
-git clone <your-repo-url> orbit-mail
-cd orbit-mail
-npm install
-cp .env.example .env
-# Edit .env with your OAuth client IDs (for Gmail/O365)
-npm run dev
+sudo dpkg -i release/Orbit\ Mail-*.deb
 ```
 
-If Electron fails to start because `ELECTRON_RUN_AS_NODE` is set in your shell:
+### AppImage
+
+Download the AppImage from the release assets, make it executable, and run it:
 
 ```bash
-unset ELECTRON_RUN_AS_NODE
-npm run dev
+chmod +x Orbit\ Mail-*.AppImage
+./Orbit\ Mail-*.AppImage
 ```
 
-### Add a launcher to your app menu (development)
+Packaged builds register as a `mailto:` handler and install a desktop launcher for correct taskbar/window grouping on Cinnamon and other desktops.
 
-Generates a `.desktop` file that runs `npm run dev` from the project directory:
+> **Note:** Gmail and Microsoft sign-in require OAuth credentials to be configured at build time. Pre-built packages from the project maintainer include these; if you build from source yourself, see [DEVELOPERS.md](DEVELOPERS.md).
 
-```bash
-npm run icons
-npm run install:desktop
-```
+## Getting started
 
-## OAuth Setup
+1. Launch Orbit Mail from your app menu or the AppImage.
+2. Click **Add Account** and choose Gmail, Microsoft 365, or Other (IMAP / POP3).
+3. Sign in or enter your server settings.
+4. Select a folder in the sidebar — **All Inboxes** shows unread mail across accounts.
 
-OAuth client IDs are loaded from a `.env` file at dev/build time. End users of packaged builds will need registered app credentials until in-app OAuth configuration is added (see [Known Limitations](#known-limitations)).
+### Add a Gmail or Microsoft account
 
-```bash
-cp .env.example .env
-```
+Choose the provider in the add-account wizard and complete sign-in in your browser. If sign-in fails, see [Troubleshooting](#troubleshooting).
 
-### Google (Gmail)
-
-1. Open [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a project and enable the **Gmail API**
-3. Configure the OAuth consent screen (**External**)
-4. Create credentials → **Desktop app**
-5. Add the `https://mail.google.com/` scope to the consent screen (this is the only scope that grants IMAP/SMTP access, and Google classes it as **restricted**)
-6. Copy the Client ID and Client Secret into `.env`:
-
-```env
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-```
-
-**Gmail notes**
-
-- IMAP must be enabled in each Gmail account's settings.
-
-**Who can sign in (publishing status)**
-
-The code accepts any Gmail account; what limits sign-in is your OAuth app's publishing status:
-
-| Status | Who can sign in | Caveats |
-| --- | --- | --- |
-| **Testing** | Only Google accounts on the **test users** allowlist (max 100) | Refresh tokens **expire after 7 days**, so accounts must re-auth weekly |
-| **In production**, unverified | **Any** Gmail account | Users see an "unverified app" warning to click through; hard cap of **100 total users**; refresh tokens no longer expire at 7 days |
-| **In production**, verified | **Any** Gmail account | No warnings, no user cap; requires brand verification + an annual **CASA security assessment** for the restricted scope (weeks to complete) |
-
-To let **any** Gmail account sign in: OAuth consent screen → **Audience** → **Publish app**. Each new user clicks **Advanced → Go to Orbit Mail (unsafe)** past the unverified-app screen until you complete full restricted-scope verification (only needed for wide public distribution).
-
-### Microsoft (Office 365 / Outlook)
-
-1. Open [Microsoft Entra admin center](https://portal.azure.com/) → **App registrations** → **New registration**
-2. Set **Supported account types** to match the accounts you'll sign in with (e.g. _Accounts in any organizational directory and personal Microsoft accounts_ for both work and outlook.com)
-3. Under **Authentication** → **Add a platform** → **Mobile and desktop applications**
-4. Add the loopback redirect URI **exactly**: `http://127.0.0.1/callback`
-   - Entra ignores the port for loopback URIs, so this single entry covers the random port Orbit Mail listens on. The host (`127.0.0.1`) and path (`/callback`) must match.
-5. Under **Authentication** → **Advanced settings**, set **Allow public client flows** to **Yes** (required for the desktop sign-in + refresh-token flow)
-6. Copy the **Application (client) ID** into `.env`:
-
-```env
-MICROSOFT_CLIENT_ID=your-microsoft-client-id
-MICROSOFT_TENANT_ID=common
-```
-
-**Microsoft notes**
-
-- **You do not need to add API permissions in the portal.** Orbit Mail requests the IMAP/SMTP scopes (`IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access`) dynamically at sign-in, and you consent in the browser. This is why "Office 365 Exchange Online" not appearing under **API permissions → APIs my organization uses** does not matter for this flow.
-- That API only appears for tenants with an active Exchange Online license; for personal Microsoft accounts it is absent by design. If your tenant admin requires _pre-consent_, you can add it by searching the GUID `00000002-0000-0ff1-ce00-000000000000`, but it is optional here.
-- Your tenant administrator must allow OAuth-based IMAP/SMTP (some tenants disable IMAP/SMTP entirely).
-- `MICROSOFT_TENANT_ID=common` works for most cases; use your specific tenant GUID to restrict sign-in to one organization.
-
-### Manual IMAP / POP3 accounts
-
-No OAuth setup required. In the app:
+### Add another provider (IMAP / POP3)
 
 1. Click **Add Account → Other (IMAP / POP3)**
 2. Enter email, username, and password
-3. Optionally click **Autodetect** to fill server settings from Mozilla’s ISPDB
-4. Adjust incoming (IMAP or POP3) and outgoing (SMTP) server settings if needed
+3. Optionally click **Autodetect** to fill server settings
+4. Adjust incoming (IMAP or POP3) and outgoing (SMTP) settings if needed
 5. The app verifies the connection before saving
 
-Credentials are stored encrypted using the OS keychain via Electron `safeStorage` (with a base64 fallback if encryption is unavailable).
+Credentials are stored encrypted using your OS keychain.
 
 ## Usage
 
@@ -164,12 +102,11 @@ Credentials are stored encrypted using the OS keychain via Electron `safeStorage
 - **Mark unread** — mark the selected message as unread
 - **Refresh** — trigger a manual sync
 
-### Account management
+### Sidebar and folders
 
-Click the gear icon next to an account name in the sidebar:
-
-- **Sync now** — refresh that account immediately
-- **Remove account** — delete the account and its local cached data
+- Click a folder to read its messages; unread counts appear as badges.
+- Right-click a folder for mailbox actions (new mailbox, export, mark all read, sync account, and more).
+- Click the gear icon next to an account name for **Sync now** and **Remove account**.
 
 ### Compose window
 
@@ -178,41 +115,7 @@ Click the gear icon next to an account name in the sidebar:
 - Window closes automatically after a successful send
 - Supports `mailto:` links (e.g. from a browser or another app)
 
-## Building & Installing
-
-Regenerate icons before building distributables:
-
-```bash
-npm run icons
-```
-
-### Build from source
-
-```bash
-npm run build
-```
-
-Output goes to `out/` (main, preload, and renderer bundles).
-
-### Linux packages
-
-```bash
-npm run dist          # .deb + AppImage
-npm run dist:deb      # .deb only
-npm run dist:appimage # AppImage only
-```
-
-Install the Debian package:
-
-```bash
-sudo dpkg -i release/Orbit\ Mail-*.deb
-```
-
-Or run the AppImage directly from `release/`.
-
-Packaged builds register as a `mailto:` handler and install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops.
-
-## Data & Privacy
+## Data & privacy
 
 All local data is stored under the Electron user data directory:
 
@@ -221,77 +124,18 @@ All local data is stored under the Electron user data directory:
 | `~/.config/orbit-mail/data/orbit-mail.db` | SQLite database (accounts, folders, messages, preferences) |
 | `~/.config/orbit-mail/data/attachments/` | Downloaded attachment files |
 
-On other platforms the base path follows Electron conventions (`app.getPath('userData')`).
-
 - Mail is synced over IMAP/POP3 and cached locally for performance and search
 - OAuth tokens and passwords are stored in an encrypted blob per account
 - No telemetry or third-party analytics are included
 
-## Architecture
+Removing an account from the sidebar deletes its local cached mail for that account.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Renderer (React + Zustand)                             │
-│  Three-pane UI · Compose · Search · Preferences         │
-└───────────────────────────┬─────────────────────────────┘
-                            │ typed IPC (contextBridge)
-┌───────────────────────────▼─────────────────────────────┐
-│  Main process (Electron)                                │
-│  IMAP sync · SMTP send · OAuth · IDLE · Notifications   │
-└───────────────────────────┬─────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────┐
-│  SQLite (better-sqlite3 + Drizzle) + FTS5               │
-└─────────────────────────────────────────────────────────┘
-```
-
-| Layer | Technology |
-|-------|------------|
-| Shell | Electron 34, electron-vite |
-| UI | React 18, TypeScript, Zustand, Phosphor Icons |
-| IMAP | imapflow (sync, IDLE, move, flags) |
-| POP3 | node-pop3 (inbox-only sync) |
-| SMTP | nodemailer |
-| Parsing | mailparser |
-| OAuth | google-auth-library, @azure/msal-node |
-| Storage | better-sqlite3, Drizzle ORM, FTS5 |
-| HTML sanitization | DOMPurify |
-
-### Project layout
-
-```
-orbit-mail/
-├── electron/           # Main process: sync, OAuth, DB, IPC
-│   ├── main.ts
-│   ├── preload.ts
-│   ├── db/             # Schema, migrations, FTS
-│   └── services/       # imap-sync, smtp-send, oauth-*, etc.
-├── src/                # Renderer: React UI
-├── shared/             # Types shared between main and renderer
-├── build/              # Icons and .desktop template
-├── scripts/            # Icon generation, dev launcher install
-└── release/            # electron-builder output (after dist)
-```
-
-## Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start development server with hot reload |
-| `npm run build` | Build main, preload, and renderer for production |
-| `npm run preview` | Preview production build |
-| `npm run icons` | Regenerate PNG icons from `build/icon.svg` |
-| `npm run install:desktop` | Install a dev `.desktop` launcher |
-| `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
-| `npm run dist:deb` | Debian package only |
-| `npm run dist:appimage` | AppImage only |
-
-## Known Limitations
+## Known limitations
 
 See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 
-- **OAuth for packaged builds** — users currently need developer-supplied client IDs in `.env`; no in-app OAuth settings yet
-- **POP3** — inbox sync only; move/archive not supported on server
+- **Gmail / Microsoft sign-in on self-built copies** — you must configure OAuth credentials when building from source; see [DEVELOPERS.md](DEVELOPERS.md)
+- **POP3** — inbox sync only; move/archive are not supported on the server
 - **Initial sync depth** — first sync fetches up to 200 messages per folder; use **Load more** for older mail
 - **Compose** — plain-text body editor (HTML is generated as simple paragraphs)
 - **No local draft autosave** — Drafts folder syncs from the server only
@@ -300,19 +144,23 @@ See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 ## Troubleshooting
 
 **Account add fails (Google)**  
-Confirm IMAP is enabled, the consent screen includes `https://mail.google.com/`, and your account is a test user if the app is in Testing mode.
+Confirm IMAP is enabled in your Gmail settings. If you built the app yourself, check the OAuth setup in [DEVELOPERS.md](DEVELOPERS.md). If the app is in Google “Testing” mode, your account must be on the developer’s test-users list.
 
 **Account add fails (Microsoft)**  
-Register the redirect URI exactly as `http://127.0.0.1/callback`, set **Allow public client flows** to **Yes**, and confirm your tenant allows OAuth IMAP/SMTP. You do **not** need to add "Office 365 Exchange Online" API permissions — scopes are consented in the browser at sign-in. If you see "no refresh token", re-check that public client flows are enabled and try again.
+Try again after confirming your organisation allows OAuth IMAP/SMTP. If you built the app yourself, see the Microsoft OAuth section in [DEVELOPERS.md](DEVELOPERS.md).
 
 **Sync errors in the status bar**  
 Click **Retry**. For auth-related errors, use **Re-authenticate** to open the add-account wizard.
 
-**App icon missing in dev launcher**  
-Run `npm run icons` before `npm run install:desktop`.
+**Inbox badge and message list out of sync**  
+Click **Refresh** in the toolbar or **Sync now** on the account. If it persists, restart the app.
 
-**`better-sqlite3` compile errors on install**  
-Install build essentials: `sudo apt install build-essential python3`.
+**Links in messages do not open**  
+Orbit Mail opens links in your default browser; check that a default browser is set in your desktop environment.
+
+## Building from source
+
+For development, OAuth setup, architecture, and packaging instructions, see **[DEVELOPERS.md](DEVELOPERS.md)**.
 
 ## License
 

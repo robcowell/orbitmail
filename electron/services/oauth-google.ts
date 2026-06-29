@@ -165,9 +165,10 @@ export function formatGmailAuthError(err: unknown, email: string): Error {
 
   return new Error(
     `Gmail sign-in failed for ${email}. Check that:\n` +
-      `• This address is listed as a test user in Google Cloud Console (OAuth consent screen), or the app is published\n` +
+      `• The OAuth app is "In production" (to allow any Gmail account), or this address is on the test-user allowlist\n` +
+      `• You clicked through any "Google hasn't verified this app" warning (Advanced → Go to Orbit Mail)\n` +
       `• IMAP is enabled in Gmail settings\n` +
-      `• You approved all permissions including Gmail access\n` +
+      `• You approved all permissions including full Gmail access\n` +
       `Then remove the account in Orbit Mail and add it again.`
   )
 }

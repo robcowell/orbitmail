@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { eq, desc, and, inArray, max } from 'drizzle-orm'
+import { eq, desc, and, inArray, max, count } from 'drizzle-orm'
 import { getDb, getRawSqlite, upsertFts, deleteFts } from '../db'
 import { accounts, folders, messages, attachments } from '../db/schema'
 import type {
@@ -457,9 +457,34 @@ export function upsertMessage(data: {
   return { id, isNew }
 }
 
+export function updateFolderUnread(folderId: string, count: number): void {
+  const db = getDb()
+  db.update(folders).set({ unreadCount: count }).where(eq(folders.id, folderId)).run()
+}
+
+export function recalculateFolderUnread(folderId: string): number {
+  const db = getDb()
+  const row = db
+    .select({ value: count() })
+    .from(messages)
+    .where(and(eq(messages.folderId, folderId), eq(messages.isRead, false)))
+    .get()
+  const unread = row?.value ?? 0
+  updateFolderUnread(folderId, unread)
+  return unread
+}
+
 export function setMessageRead(messageId: string, isRead: boolean): void {
   const db = getDb()
+  const existing = db
+    .select({ folderId: messages.folderId })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get()
+  if (!existing) return
+
   db.update(messages).set({ isRead }).where(eq(messages.id, messageId)).run()
+  recalculateFolderUnread(existing.folderId)
 }
 
 export function setMessageStarred(messageId: string, isStarred: boolean): void {
@@ -507,13 +532,16 @@ export function countMessages(folderId: string | 'unified'): number {
 
 export function deleteMessage(messageId: string): void {
   const db = getDb()
+  const existing = db
+    .select({ folderId: messages.folderId })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get()
   deleteFts(messageId)
   db.delete(messages).where(eq(messages.id, messageId)).run()
-}
-
-export function updateFolderUnread(folderId: string, count: number): void {
-  const db = getDb()
-  db.update(folders).set({ unreadCount: count }).where(eq(folders.id, folderId)).run()
+  if (existing) {
+    recalculateFolderUnread(existing.folderId)
+  }
 }
 
 export function addAttachment(

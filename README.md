@@ -83,9 +83,9 @@ cp .env.example .env
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a project and enable the **Gmail API**
-3. Configure the OAuth consent screen (External; add test users while in Testing mode)
+3. Configure the OAuth consent screen (**External**)
 4. Create credentials → **Desktop app**
-5. Add the `https://mail.google.com/` scope to the consent screen
+5. Add the `https://mail.google.com/` scope to the consent screen (this is the only scope that grants IMAP/SMTP access, and Google classes it as **restricted**)
 6. Copy the Client ID and Client Secret into `.env`:
 
 ```env
@@ -95,8 +95,19 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 
 **Gmail notes**
 
-- IMAP must be enabled in Gmail settings
-- While the app is in Google OAuth Testing mode, each Gmail account must be added as a test user
+- IMAP must be enabled in each Gmail account's settings.
+
+**Who can sign in (publishing status)**
+
+The code accepts any Gmail account; what limits sign-in is your OAuth app's publishing status:
+
+| Status | Who can sign in | Caveats |
+| --- | --- | --- |
+| **Testing** | Only Google accounts on the **test users** allowlist (max 100) | Refresh tokens **expire after 7 days**, so accounts must re-auth weekly |
+| **In production**, unverified | **Any** Gmail account | Users see an "unverified app" warning to click through; hard cap of **100 total users**; refresh tokens no longer expire at 7 days |
+| **In production**, verified | **Any** Gmail account | No warnings, no user cap; requires brand verification + an annual **CASA security assessment** for the restricted scope (weeks to complete) |
+
+To let **any** Gmail account sign in: OAuth consent screen → **Audience** → **Publish app**. Each new user clicks **Advanced → Go to Orbit Mail (unsafe)** past the unverified-app screen until you complete full restricted-scope verification (only needed for wide public distribution).
 
 ### Microsoft (Office 365 / Outlook)
 

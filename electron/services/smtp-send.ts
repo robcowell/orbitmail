@@ -30,7 +30,7 @@ async function ensureFreshToken(
 
   if (!needsRefresh) return tokens
 
-  const refreshed = await refreshMicrosoftToken(tokens, tokens.email)
+  const refreshed = await refreshMicrosoftToken(tokens)
   updateAccountTokens(accountId, refreshed)
   return refreshed
 }

@@ -100,15 +100,13 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 
 ### Microsoft (Office 365 / Outlook)
 
-1. Open [Microsoft Entra admin center](https://portal.azure.com/)
-2. Register a new application
-3. Add platform: **Mobile and desktop applications**
-4. Add redirect URI: `http://localhost`
-5. Under **API permissions**, add delegated permissions:
-   - `IMAP.AccessAsUser.All`
-   - `SMTP.Send`
-   - `openid`, `profile`, `email`, `offline_access`
-6. Copy the Application (client) ID into `.env`:
+1. Open [Microsoft Entra admin center](https://portal.azure.com/) → **App registrations** → **New registration**
+2. Set **Supported account types** to match the accounts you'll sign in with (e.g. _Accounts in any organizational directory and personal Microsoft accounts_ for both work and outlook.com)
+3. Under **Authentication** → **Add a platform** → **Mobile and desktop applications**
+4. Add the loopback redirect URI **exactly**: `http://127.0.0.1/callback`
+   - Entra ignores the port for loopback URIs, so this single entry covers the random port Orbit Mail listens on. The host (`127.0.0.1`) and path (`/callback`) must match.
+5. Under **Authentication** → **Advanced settings**, set **Allow public client flows** to **Yes** (required for the desktop sign-in + refresh-token flow)
+6. Copy the **Application (client) ID** into `.env`:
 
 ```env
 MICROSOFT_CLIENT_ID=your-microsoft-client-id
@@ -117,8 +115,10 @@ MICROSOFT_TENANT_ID=common
 
 **Microsoft notes**
 
-- IMAP/SMTP must be allowed by your tenant administrator
-- Some organizations require explicit Exchange Online IMAP/SMTP permissions in the Entra app manifest
+- **You do not need to add API permissions in the portal.** Orbit Mail requests the IMAP/SMTP scopes (`IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access`) dynamically at sign-in, and you consent in the browser. This is why "Office 365 Exchange Online" not appearing under **API permissions → APIs my organization uses** does not matter for this flow.
+- That API only appears for tenants with an active Exchange Online license; for personal Microsoft accounts it is absent by design. If your tenant admin requires _pre-consent_, you can add it by searching the GUID `00000002-0000-0ff1-ce00-000000000000`, but it is optional here.
+- Your tenant administrator must allow OAuth-based IMAP/SMTP (some tenants disable IMAP/SMTP entirely).
+- `MICROSOFT_TENANT_ID=common` works for most cases; use your specific tenant GUID to restrict sign-in to one organization.
 
 ### Manual IMAP / POP3 accounts
 
@@ -279,7 +279,6 @@ orbit-mail/
 
 See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 
-- **Microsoft OAuth after restart** — token refresh may fail until MSAL cache persistence is implemented
 - **OAuth for packaged builds** — users currently need developer-supplied client IDs in `.env`; no in-app OAuth settings yet
 - **POP3** — inbox sync only; move/archive not supported on server
 - **Initial sync depth** — first sync fetches up to 200 messages per folder; use **Load more** for older mail
@@ -293,7 +292,7 @@ See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 Confirm IMAP is enabled, the consent screen includes `https://mail.google.com/`, and your account is a test user if the app is in Testing mode.
 
 **Account add fails (Microsoft)**  
-Verify IMAP/SMTP permissions in Entra and that your tenant allows OAuth IMAP access.
+Register the redirect URI exactly as `http://127.0.0.1/callback`, set **Allow public client flows** to **Yes**, and confirm your tenant allows OAuth IMAP/SMTP. You do **not** need to add "Office 365 Exchange Online" API permissions — scopes are consented in the browser at sign-in. If you see "no refresh token", re-check that public client flows are enabled and try again.
 
 **Sync errors in the status bar**  
 Click **Retry**. For auth-related errors, use **Re-authenticate** to open the add-account wizard.

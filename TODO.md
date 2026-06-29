@@ -4,11 +4,6 @@ Items intentionally deferred after the High Impact + Trust/Polish pass. Tackle t
 
 ## Critical
 
-### Microsoft OAuth persistence
-- MSAL token cache is in-memory only; refresh tokens are not stored like Gmail.
-- **Impact:** O365 accounts likely fail after app restart.
-- **Fix:** Persist MSAL cache (or store refresh token in encrypted `token_blob`) and add a re-authenticate flow when refresh fails.
-
 ### End-user OAuth distribution
 - Google/Microsoft client IDs still require a developer `.env` at build/dev time.
 - **Impact:** `.deb` / AppImage users cannot sign in without cloning and configuring credentials.

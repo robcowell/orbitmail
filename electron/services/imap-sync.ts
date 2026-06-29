@@ -202,7 +202,7 @@ async function ensureFreshToken(
   if (provider === 'gmail' && tokens.refreshToken) {
     refreshed = await refreshGoogleToken(tokens)
   } else if (provider === 'o365') {
-    refreshed = await refreshMicrosoftToken(tokens, tokens.email)
+    refreshed = await refreshMicrosoftToken(tokens)
   } else {
     return tokens
   }

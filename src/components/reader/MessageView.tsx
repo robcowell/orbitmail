@@ -11,6 +11,7 @@ export function MessageView() {
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
   const setToast = useMailStore((s) => s.setToast)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [fetchingAttachmentId, setFetchingAttachmentId] = useState<string | null>(null)
 
   if (!selectedMessageId || !selectedMessage) {
     return (
@@ -44,6 +45,19 @@ export function MessageView() {
       await toggleMessageStar(selectedMessage.id, !selectedMessage.isStarred)
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Update failed')
+    }
+  }
+
+  const handleOpenAttachment = async (attachmentId: string) => {
+    if (fetchingAttachmentId) return
+
+    setFetchingAttachmentId(attachmentId)
+    try {
+      await window.orbitMail.attachments.open(attachmentId)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to open attachment')
+    } finally {
+      setFetchingAttachmentId(null)
     }
   }
 
@@ -95,10 +109,11 @@ export function MessageView() {
             <button
               key={att.id}
               className="attachment-chip"
-              onClick={() => window.orbitMail.attachments.open(att.id)}
+              disabled={fetchingAttachmentId === att.id}
+              onClick={() => void handleOpenAttachment(att.id)}
             >
               <Paperclip size={14} weight="duotone" />
-              {att.filename}
+              {fetchingAttachmentId === att.id ? 'Opening…' : att.filename}
               <span style={{ color: 'var(--text-muted)' }}>
                 ({formatSize(att.size)})
               </span>

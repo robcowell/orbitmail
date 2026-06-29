@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
-import { eq, desc, and, inArray, max, count } from 'drizzle-orm'
+import { existsSync, statSync, unlinkSync } from 'fs'
+import { eq, desc, and, inArray, max, count, lt } from 'drizzle-orm'
 import { getDb, getRawSqlite, upsertFts, deleteFts } from '../db'
 import { accounts, folders, messages, attachments } from '../db/schema'
 import type {
@@ -18,6 +19,7 @@ import {
   type ManualAccountCredentials,
   type AccountCredentials
 } from './account-credentials'
+import { DEFAULT_SYNC_DAYS, getSyncCutoffTimestamp } from './sync-policy'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
@@ -45,7 +47,8 @@ export function saveAccount(
       id: existing.id,
       provider,
       email: tokenData.email,
-      displayName: tokenData.displayName
+      displayName: tokenData.displayName,
+      syncDays: existing.syncDays
     }
   }
 
@@ -54,7 +57,8 @@ export function saveAccount(
     id,
     provider,
     email: tokenData.email,
-    displayName: tokenData.displayName
+    displayName: tokenData.displayName,
+    syncDays: DEFAULT_SYNC_DAYS
   }
   db.insert(accounts).values({
     id,
@@ -62,7 +66,8 @@ export function saveAccount(
     email: tokenData.email,
     displayName: tokenData.displayName,
     tokenBlob: encryptCredentials({ authType: 'oauth', ...tokenData }),
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    syncDays: DEFAULT_SYNC_DAYS
   }).run()
   return account
 }
@@ -91,7 +96,8 @@ export function saveManualAccount(
       id: existing.id,
       provider,
       email: creds.email,
-      displayName: creds.displayName
+      displayName: creds.displayName,
+      syncDays: existing.syncDays
     }
   }
 
@@ -102,14 +108,16 @@ export function saveManualAccount(
     email: creds.email,
     displayName: creds.displayName,
     tokenBlob: encryptCredentials(creds),
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    syncDays: DEFAULT_SYNC_DAYS
   }).run()
 
   return {
     id,
     provider,
     email: creds.email,
-    displayName: creds.displayName
+    displayName: creds.displayName,
+    syncDays: DEFAULT_SYNC_DAYS
   }
 }
 
@@ -146,7 +154,8 @@ export function listAccounts(): Account[] {
     id: r.id,
     provider: r.provider as Provider,
     email: r.email,
-    displayName: r.displayName
+    displayName: r.displayName,
+    syncDays: r.syncDays
   }))
 }
 
@@ -159,7 +168,33 @@ export function getAccountById(accountId: string): (Account & { createdAt: numbe
     provider: row.provider as Provider,
     email: row.email,
     displayName: row.displayName,
+    syncDays: row.syncDays,
     createdAt: row.createdAt
+  }
+}
+
+export function getAccountSyncDays(accountId: string): number {
+  const db = getDb()
+  const row = db
+    .select({ syncDays: accounts.syncDays })
+    .from(accounts)
+    .where(eq(accounts.id, accountId))
+    .get()
+  return row?.syncDays ?? DEFAULT_SYNC_DAYS
+}
+
+export function updateAccountSyncDays(accountId: string, syncDays: number): Account {
+  const db = getDb()
+  const normalized = syncDays <= 0 ? 0 : Math.max(1, Math.round(syncDays))
+  db.update(accounts).set({ syncDays: normalized }).where(eq(accounts.id, accountId)).run()
+  const row = db.select().from(accounts).where(eq(accounts.id, accountId)).get()
+  if (!row) throw new Error('Account not found')
+  return {
+    id: row.id,
+    provider: row.provider as Provider,
+    email: row.email,
+    displayName: row.displayName,
+    syncDays: row.syncDays
   }
 }
 
@@ -172,7 +207,41 @@ export function updateAccountDisplayName(accountId: string, displayName: string)
     id: row.id,
     provider: row.provider as Provider,
     email: row.email,
-    displayName: row.displayName
+    displayName: row.displayName,
+    syncDays: row.syncDays
+  }
+}
+
+export function getMessageSyncContext(messageId: string): {
+  accountId: string
+  folderId: string
+  uid: number
+  provider: Provider
+} | null {
+  const db = getDb()
+  const message = db
+    .select({
+      accountId: messages.accountId,
+      folderId: messages.folderId,
+      uid: messages.uid
+    })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get()
+  if (!message) return null
+
+  const account = db
+    .select({ provider: accounts.provider })
+    .from(accounts)
+    .where(eq(accounts.id, message.accountId))
+    .get()
+  if (!account) return null
+
+  return {
+    accountId: message.accountId,
+    folderId: message.folderId,
+    uid: message.uid,
+    provider: account.provider as Provider
   }
 }
 
@@ -198,6 +267,24 @@ export function markAllMessagesReadInFolder(folderId: string): number {
 }
 
 export function removeAccount(accountId: string): void {
+  const sqlite = getRawSqlite()
+  const paths = sqlite
+    .prepare(
+      `SELECT a.local_path
+       FROM attachments a
+       JOIN messages m ON m.id = a.message_id
+       WHERE m.account_id = ? AND a.local_path IS NOT NULL`
+    )
+    .all(accountId) as Array<{ local_path: string }>
+
+  for (const row of paths) {
+    try {
+      if (existsSync(row.local_path)) unlinkSync(row.local_path)
+    } catch {
+      // ignore missing files
+    }
+  }
+
   const db = getDb()
   db.delete(accounts).where(eq(accounts.id, accountId)).run()
 }
@@ -402,6 +489,7 @@ export function clearFolderMessages(folderId: string): void {
     .all()
 
   for (const row of messageRows) {
+    deleteAttachmentFilesForMessage(row.id)
     deleteFts(row.id)
   }
 
@@ -584,10 +672,29 @@ export function deleteMessage(messageId: string): void {
     .from(messages)
     .where(eq(messages.id, messageId))
     .get()
+  deleteAttachmentFilesForMessage(messageId)
   deleteFts(messageId)
   db.delete(messages).where(eq(messages.id, messageId)).run()
   if (existing) {
     recalculateFolderUnread(existing.folderId)
+  }
+}
+
+function deleteAttachmentFilesForMessage(messageId: string): void {
+  const db = getDb()
+  const rows = db
+    .select({ localPath: attachments.localPath })
+    .from(attachments)
+    .where(eq(attachments.messageId, messageId))
+    .all()
+
+  for (const row of rows) {
+    if (!row.localPath) continue
+    try {
+      if (existsSync(row.localPath)) unlinkSync(row.localPath)
+    } catch {
+      // ignore missing files
+    }
   }
 }
 
@@ -596,7 +703,7 @@ export function addAttachment(
   filename: string,
   mimeType: string,
   size: number,
-  localPath: string
+  localPath: string | null
 ): string {
   const db = getDb()
   const id = randomUUID()
@@ -609,6 +716,78 @@ export function addAttachment(
     localPath
   }).run()
   return id
+}
+
+export function updateAttachmentLocalPath(attachmentId: string, localPath: string): void {
+  const db = getDb()
+  db.update(attachments).set({ localPath }).where(eq(attachments.id, attachmentId)).run()
+}
+
+export function pruneMessagesOutsideSyncWindow(accountId: string, syncDays: number): number {
+  if (syncDays <= 0) return 0
+
+  const cutoff = getSyncCutoffTimestamp(syncDays)
+  if (cutoff == null) return 0
+
+  const db = getDb()
+  const stale = db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.accountId, accountId), lt(messages.date, cutoff)))
+    .all()
+
+  for (const row of stale) {
+    deleteMessage(row.id)
+  }
+
+  return stale.length
+}
+
+export function getAccountStorageUsage(accountId: string): {
+  contentBytes: number
+  attachmentBytes: number
+  attachmentCount: number
+  downloadedAttachmentCount: number
+} {
+  const sqlite = getRawSqlite()
+  const contentRow = sqlite
+    .prepare(
+      `SELECT COALESCE(SUM(
+         LENGTH(COALESCE(body_html, '')) +
+         LENGTH(COALESCE(body_text, '')) +
+         LENGTH(subject) +
+         LENGTH(snippet)
+       ), 0) AS content_bytes
+       FROM messages
+       WHERE account_id = ?`
+    )
+    .get(accountId) as { content_bytes: number }
+
+  const attachmentRows = sqlite
+    .prepare(
+      `SELECT a.local_path, a.size
+       FROM attachments a
+       JOIN messages m ON m.id = a.message_id
+       WHERE m.account_id = ?`
+    )
+    .all(accountId) as Array<{ local_path: string | null; size: number }>
+
+  let attachmentBytes = 0
+  let downloadedAttachmentCount = 0
+
+  for (const row of attachmentRows) {
+    if (row.local_path && existsSync(row.local_path)) {
+      downloadedAttachmentCount++
+      attachmentBytes += statSync(row.local_path).size
+    }
+  }
+
+  return {
+    contentBytes: contentRow.content_bytes,
+    attachmentBytes,
+    attachmentCount: attachmentRows.length,
+    downloadedAttachmentCount
+  }
 }
 
 export function getAttachment(attachmentId: string) {

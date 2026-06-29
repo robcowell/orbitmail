@@ -12,7 +12,6 @@ import {
   upsertFolder,
   upsertMessage,
   updateFolderUnread,
-  addAttachment,
   listAccounts,
   getMessage,
   getFolderById,
@@ -22,9 +21,13 @@ import {
   clearFolderMessages,
   hasMessageUid,
   recalculateFolderUnread,
+  getAccountSyncDays,
+  pruneMessagesOutsideSyncWindow,
   type TokenData
 } from './db-service'
 import { getLastSyncAt, setLastSyncAt } from './preferences-service'
+import { recordAttachmentsMetadata } from './attachment-fetch'
+import { isWithinSyncWindow, syncSinceDate } from './sync-policy'
 import { imapFlowSecure } from './account-credentials'
 import { refreshGoogleToken, resolveGoogleAccessToken, formatGmailAuthError } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
@@ -314,7 +317,39 @@ function sortMailboxesForSync<
   })
 }
 
-async function getRecentMessageUids(client: ImapFlow, batchSize: number): Promise<number[]> {
+async function getRecentMessageUids(
+  client: ImapFlow,
+  batchSize: number,
+  syncDays: number
+): Promise<number[]> {
+  const since = syncSinceDate(syncDays)
+
+  if (since) {
+    try {
+      const sorted = await client.sort(['REVERSE DATE'], { since }, { uid: true })
+      if (sorted?.length) {
+        return sorted
+          .slice(0, batchSize)
+          .map((uid) => normalizeImapUint(uid))
+          .filter((uid): uid is number => uid != null)
+      }
+    } catch {
+      // SORT unsupported for this query
+    }
+
+    try {
+      const found = await client.search({ since }, { uid: true })
+      if (found?.length) {
+        const uids = found
+          .map((uid) => normalizeImapUint(uid))
+          .filter((uid): uid is number => uid != null)
+        return uids.length > batchSize ? uids.slice(-batchSize) : uids
+      }
+    } catch {
+      // fall through to legacy fetch
+    }
+  }
+
   let uids: unknown[] = []
 
   try {
@@ -351,6 +386,7 @@ export function setOnNewMailArrived(callback: ((count: number) => void) | null):
 async function resolveUidsToFetch(
   client: ImapFlow,
   folderId: string,
+  accountId: string,
   maxLocalUid: number | null,
   uidNext: number
 ): Promise<number[]> {
@@ -358,9 +394,10 @@ async function resolveUidsToFetch(
     return []
   }
 
+  const syncDays = getAccountSyncDays(accountId)
   let candidates: number[]
   if (maxLocalUid == null) {
-    candidates = await getRecentMessageUids(client, SYNC_BATCH_SIZE)
+    candidates = await getRecentMessageUids(client, SYNC_BATCH_SIZE, syncDays)
   } else {
     const found = (await client.search({ uid: `${maxLocalUid + 1}:*` }, { uid: true })) ?? []
     candidates = found
@@ -411,27 +448,6 @@ function makeSnippet(text: string, max = 120): string {
   return clean.length > max ? clean.slice(0, max) + '…' : clean
 }
 
-async function saveAttachments(
-  messageId: string,
-  uid: number,
-  parsedAttachments: Attachment[]
-): Promise<void> {
-  const dir = getAttachmentsDir()
-  for (const att of parsedAttachments) {
-    if (!att.content) continue
-    const safeName = (att.filename ?? `attachment-${uid}`).replace(/[^\w.-]/g, '_')
-    const path = join(dir, `${messageId}-${safeName}`)
-    writeFileSync(path, att.content)
-    addAttachment(
-      messageId,
-      att.filename ?? safeName,
-      att.contentType ?? 'application/octet-stream',
-      att.size ?? att.content.length,
-      path
-    )
-  }
-}
-
 async function fetchMessagesByUid(
   client: ImapFlow,
   accountId: string,
@@ -441,6 +457,7 @@ async function fetchMessagesByUid(
 ): Promise<{ newCount: number; maxUid: number | null }> {
   if (uids.length === 0) return { newCount: 0, maxUid: null }
 
+  const syncDays = getAccountSyncDays(accountId)
   let newCount = 0
   let maxUid: number | null = null
 
@@ -470,6 +487,8 @@ async function fetchMessagesByUid(
     const bodyHtml = parsed.html ? String(parsed.html) : null
     const snippet = makeSnippet(bodyText || (parsed.textAsHtml ?? subject))
     const date = parsed.date?.getTime() ?? Date.now()
+    if (!isWithinSyncWindow(date, syncDays)) continue
+
     const isRead = msg.flags?.has('\\Seen') ?? false
     const isStarred = msg.flags?.has('\\Flagged') ?? false
     const hasAttachments = (parsed.attachments?.length ?? 0) > 0
@@ -495,7 +514,7 @@ async function fetchMessagesByUid(
     if (!isNew) continue
 
     if (parsed.attachments?.length) {
-      await saveAttachments(id, msg.uid, parsed.attachments)
+      recordAttachmentsMetadata(id, parsed.attachments)
     }
 
     newCount++
@@ -539,7 +558,7 @@ export async function syncFolder(
 
   const lock = await client.getMailboxLock(imapPath)
   try {
-    const uids = await resolveUidsToFetch(client, folderId, maxLocalUid, uidNext)
+    const uids = await resolveUidsToFetch(client, folderId, accountId, maxLocalUid, uidNext)
 
     if (validityChanged) {
       if (uids.length === 0) {
@@ -625,6 +644,7 @@ export async function syncAccount(
       await client.logout()
     }
 
+    pruneMessagesOutsideSyncWindow(accountId, getAccountSyncDays(accountId))
     return newCount
   } finally {
     syncLock = false

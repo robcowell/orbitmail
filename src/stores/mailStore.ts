@@ -387,6 +387,21 @@ export async function updateAccountDisplayName(
   }
 }
 
+export async function updateAccountSyncDays(
+  accountId: string,
+  syncDays: number
+): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    const account = await window.orbitMail.accounts.updateSyncDays(accountId, syncDays)
+    store.setAccounts(store.accounts.map((a) => (a.id === accountId ? account : a)))
+    store.setToast('Sync window updated')
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Failed to update sync window')
+    throw err
+  }
+}
+
 export async function selectMessage(messageId: string): Promise<void> {
   const store = useMailStore.getState()
   store.setSelectedMessageId(messageId)

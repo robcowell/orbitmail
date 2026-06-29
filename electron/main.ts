@@ -17,7 +17,6 @@ import {
   deleteMessage,
   getFolderById,
   searchMessages,
-  getAttachment,
   updateAccountDisplayName
 } from './services/db-service'
 import { authenticateGoogle } from './services/oauth-google'
@@ -49,12 +48,14 @@ import {
 import { sendMail, buildReplyPayload } from './services/smtp-send'
 import { autodetectMailSettings } from './services/mail-autoconfig'
 import { addManualAccount } from './services/manual-account'
+import { ensureAttachmentLocal } from './services/attachment-fetch'
 import {
   getAccountInfo,
   createMailbox,
   exportMailboxToMbox,
   emptySpecialFolder,
-  markFolderAllRead
+  markFolderAllRead,
+  setAccountSyncDays
 } from './services/folder-actions'
 import {
   getAppState,
@@ -368,6 +369,10 @@ function registerIpc(): void {
     updateAccountDisplayName(accountId, displayName)
   )
 
+  ipcMain.handle('accounts:updateSyncDays', (_, accountId: string, syncDays: number) =>
+    setAccountSyncDays(accountId, syncDays)
+  )
+
   ipcMain.handle(
     'messages:list',
     (_, folderId: string | 'unified', limit?: number, offset?: number) =>
@@ -539,15 +544,12 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('attachments:download', async (_, attachmentId: string) => {
-    const att = getAttachment(attachmentId)
-    if (!att?.localPath) throw new Error('Attachment not found')
-    return att.localPath
+    return ensureAttachmentLocal(attachmentId)
   })
 
   ipcMain.handle('attachments:open', async (_, attachmentId: string) => {
-    const att = getAttachment(attachmentId)
-    if (!att?.localPath) throw new Error('Attachment not found')
-    await shell.openPath(att.localPath)
+    const localPath = await ensureAttachmentLocal(attachmentId)
+    await shell.openPath(localPath)
   })
 
   ipcMain.handle('preferences:get', () => getAppState())

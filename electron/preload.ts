@@ -19,7 +19,9 @@ const api: OrbitMailAPI = {
     remove: (accountId) => ipcRenderer.invoke('accounts:remove', accountId),
     getInfo: (accountId) => ipcRenderer.invoke('accounts:getInfo', accountId),
     updateDisplayName: (accountId, displayName) =>
-      ipcRenderer.invoke('accounts:updateDisplayName', accountId, displayName)
+      ipcRenderer.invoke('accounts:updateDisplayName', accountId, displayName),
+    updateSyncDays: (accountId, syncDays) =>
+      ipcRenderer.invoke('accounts:updateSyncDays', accountId, syncDays)
   },
   folders: {
     list: (accountId) => ipcRenderer.invoke('folders:list', accountId),

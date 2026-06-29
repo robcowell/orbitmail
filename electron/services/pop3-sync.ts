@@ -1,20 +1,20 @@
 import Pop3Command from 'node-pop3'
 import { simpleParser } from 'mailparser'
-import { writeFileSync } from 'fs'
-import { join } from 'path'
 import {
   getManualCredentials,
   upsertFolder,
   upsertMessage,
   recalculateFolderUnread,
-  addAttachment,
   getFolderUidSet,
   hasMessageUid,
   getFolderMaxUid,
-  updateFolderSyncState
+  updateFolderSyncState,
+  getAccountSyncDays,
+  pruneMessagesOutsideSyncWindow
 } from './db-service'
 import { pop3ClientOptions } from './account-credentials'
-import { getAttachmentsDir } from '../db'
+import { recordAttachmentsMetadata } from './attachment-fetch'
+import { isWithinSyncWindow } from './sync-policy'
 import type { SyncProgressHandler } from './imap-sync'
 
 const SYNC_BATCH_SIZE = 200
@@ -46,36 +46,10 @@ function hashUid(serverUid: string, msgNum: number): number {
   return hash || msgNum
 }
 
-async function saveAttachments(
-  messageId: string,
-  uid: number,
-  parsedAttachments: import('mailparser').Attachment[]
-): Promise<void> {
-  const dir = getAttachmentsDir()
-  for (const att of parsedAttachments) {
-    if (!att.content) continue
-    const safeName = (att.filename ?? `attachment-${uid}`).replace(/[^\w.-]/g, '_')
-    const path = join(dir, `${messageId}-${safeName}`)
-    writeFileSync(path, att.content)
-    addAttachment(
-      messageId,
-      att.filename ?? safeName,
-      att.contentType ?? 'application/octet-stream',
-      att.size ?? att.content.length,
-      path
-    )
-  }
-}
-
 function createPop3Client(accountId: string): Pop3Command {
   const creds = getManualCredentials(accountId)
   if (!creds) throw new Error('Account credentials not found')
   return new Pop3Command(pop3ClientOptions(creds.incoming, creds.username, creds.password))
-}
-
-function parsePop3Stat(stat: unknown): number {
-  const text = Array.isArray(stat) ? String(stat[0] ?? '') : String(stat ?? '')
-  return Number(text.split(/\s+/)[0] ?? 0)
 }
 
 export async function estimatePop3NewMessageCount(accountId: string): Promise<number> {
@@ -105,6 +79,7 @@ export async function syncPop3Account(
 ): Promise<number> {
   const pop3 = createPop3Client(accountId)
   const folder = upsertFolder(accountId, 'INBOX', 'INBOX', 'inbox')
+  const syncDays = getAccountSyncDays(accountId)
   let newCount = 0
 
   try {
@@ -121,6 +96,9 @@ export async function syncPop3Account(
       if (!raw) continue
 
       const parsed = await simpleParser(raw)
+      const date = parsed.date?.getTime() ?? Date.now()
+      if (!isWithinSyncWindow(date, syncDays)) continue
+
       const from = formatAddress(parsed.from?.value[0])
       const to = formatAddressList(parsed.to?.value)
       const cc = formatAddressList(parsed.cc?.value)
@@ -128,7 +106,6 @@ export async function syncPop3Account(
       const bodyText = parsed.text ?? ''
       const bodyHtml = parsed.html ? String(parsed.html) : null
       const snippet = makeSnippet(bodyText || (parsed.textAsHtml ?? subject))
-      const date = parsed.date?.getTime() ?? Date.now()
 
       const { id, isNew } = upsertMessage({
         folderId: folder.id,
@@ -151,7 +128,7 @@ export async function syncPop3Account(
       if (!isNew) continue
 
       if (parsed.attachments?.length) {
-        await saveAttachments(id, uid, parsed.attachments)
+        recordAttachmentsMetadata(id, parsed.attachments)
       }
 
       newCount++
@@ -170,6 +147,7 @@ export async function syncPop3Account(
     await pop3.QUIT().catch(() => {})
   }
 
+  pruneMessagesOutsideSyncWindow(accountId, syncDays)
   return newCount
 }
 

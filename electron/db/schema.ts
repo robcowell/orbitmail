@@ -6,7 +6,8 @@ export const accounts = sqliteTable('accounts', {
   email: text('email').notNull(),
   displayName: text('display_name').notNull(),
   tokenBlob: text('token_blob').notNull(),
-  createdAt: integer('created_at').notNull()
+  createdAt: integer('created_at').notNull(),
+  syncDays: integer('sync_days').notNull().default(90)
 })
 
 export const folders = sqliteTable(

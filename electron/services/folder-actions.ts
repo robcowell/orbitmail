@@ -4,11 +4,14 @@ import {
   clearFolderMessages,
   countMessages,
   getAccountById,
+  getAccountStorageUsage,
   getFolderById,
   listAccounts,
   listFolders,
   markAllMessagesReadInFolder,
+  pruneMessagesOutsideSyncWindow,
   updateAccountDisplayName,
+  updateAccountSyncDays,
   upsertFolder
 } from './db-service'
 import { createImapClient, refreshAccount } from './imap-sync'
@@ -47,6 +50,8 @@ export function getAccountInfo(accountId: string): AccountInfo {
     messageCount += countMessages(folder.id)
   }
 
+  const storage = getAccountStorageUsage(accountId)
+
   return {
     id: account.id,
     provider: account.provider,
@@ -56,8 +61,18 @@ export function getAccountInfo(accountId: string): AccountInfo {
     createdAt: account.createdAt,
     folderCount: folders.length,
     messageCount,
-    unreadCount: folders.reduce((sum, folder) => sum + folder.unreadCount, 0)
+    unreadCount: folders.reduce((sum, folder) => sum + folder.unreadCount, 0),
+    syncDays: account.syncDays,
+    localStorageBytes: storage.contentBytes + storage.attachmentBytes,
+    attachmentCount: storage.attachmentCount,
+    downloadedAttachmentCount: storage.downloadedAttachmentCount
   }
+}
+
+export function setAccountSyncDays(accountId: string, syncDays: number): Account {
+  const account = updateAccountSyncDays(accountId, syncDays)
+  pruneMessagesOutsideSyncWindow(accountId, syncDays)
+  return account
 }
 
 export async function createMailbox(accountId: string, name: string): Promise<void> {

@@ -31,6 +31,7 @@ export interface Account {
   provider: Provider
   email: string
   displayName: string
+  syncDays: number
 }
 
 export interface AccountInfo {
@@ -43,6 +44,10 @@ export interface AccountInfo {
   folderCount: number
   messageCount: number
   unreadCount: number
+  syncDays: number
+  localStorageBytes: number
+  attachmentCount: number
+  downloadedAttachmentCount: number
 }
 
 export interface Folder {
@@ -150,6 +155,7 @@ export interface OrbitMailAPI {
     remove: (accountId: string) => Promise<void>
     getInfo: (accountId: string) => Promise<AccountInfo>
     updateDisplayName: (accountId: string, displayName: string) => Promise<Account>
+    updateSyncDays: (accountId: string, syncDays: number) => Promise<Account>
   }
   messages: {
     list: (folderId: string | 'unified', limit?: number, offset?: number) => Promise<MessageSummary[]>

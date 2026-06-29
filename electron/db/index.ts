@@ -136,6 +136,12 @@ function migrateSchema(db: Database.Database): void {
   if (!messageNames.has('flag_color')) {
     db.exec('ALTER TABLE messages ADD COLUMN flag_color TEXT')
   }
+
+  const accountCols = db.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>
+  const accountNames = new Set(accountCols.map((c) => c.name))
+  if (!accountNames.has('sync_days')) {
+    db.exec('ALTER TABLE accounts ADD COLUMN sync_days INTEGER NOT NULL DEFAULT 90')
+  }
 }
 
 export function getDb() {

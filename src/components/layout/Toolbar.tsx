@@ -1,13 +1,16 @@
+import { useEffect, useRef } from 'react'
 import {
   useMailStore,
-  refreshMessages,
   moveMessageToTrash,
   archiveMessage,
   markMessageUnread,
-  toggleMessageStar
+  toggleMessageStar,
+  runSearch,
+  clearSearch
 } from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
+import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
 import {
   iconProps,
   PencilLine,
@@ -45,11 +48,23 @@ export function Toolbar() {
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const accounts = useMailStore((s) => s.accounts)
+  const folders = useMailStore((s) => s.folders)
+  const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const searchQuery = useMailStore((s) => s.searchQuery)
-  const setSearchQuery = useMailStore((s) => s.setSearchQuery)
   const setToast = useMailStore((s) => s.setToast)
   const syncStatus = useMailStore((s) => s.syncStatus)
   const isOnline = useMailStore((s) => s.isOnline)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const searchAccountId = resolveSearchAccountId(selectedFolderId, folders)
+  const searchScopeLabel = searchAccountLabel(searchAccountId, accounts)
+  const searchEnabled = searchAccountId != null
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    }
+  }, [])
 
   const handleCompose = () => {
     const accountId = accounts[0]?.id
@@ -127,15 +142,32 @@ export function Toolbar() {
     }
   }
 
-  const handleSearch = async (value: string) => {
-    setSearchQuery(value)
-    if (!value.trim()) {
-      useMailStore.getState().setSearchResults([])
+  const handleSearch = (value: string) => {
+    if (!searchAccountId) {
+      if (value.trim()) clearSearch()
       return
     }
-    const results = await window.orbitMail.search.query(value)
-    useMailStore.getState().setSearchResults(results)
+
+    useMailStore.getState().setSearchQuery(value)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+
+    if (!value.trim()) {
+      clearSearch()
+      return
+    }
+
+    searchTimerRef.current = setTimeout(() => {
+      void runSearch(value, searchAccountId).catch((err) => {
+        setToast(err instanceof Error ? err.message : 'Search failed')
+      })
+    }, 200)
   }
+
+  const searchPlaceholder = searchEnabled
+    ? searchScopeLabel
+      ? `Search ${searchScopeLabel}…`
+      : 'Search this account…'
+    : 'Select a folder to search'
 
   return (
     <div className="toolbar">
@@ -216,12 +248,14 @@ export function Toolbar() {
 
       <ThemeToggle />
 
-      <div className="search-wrap">
+      <div className={`search-wrap${searchEnabled ? '' : ' search-wrap-disabled'}`}>
         <MagnifyingGlass {...iconProps} size={16} className="search-icon" />
         <input
           className="search-input"
-          placeholder="Search mail…"
+          placeholder={searchPlaceholder}
           value={searchQuery}
+          disabled={!searchEnabled}
+          aria-disabled={!searchEnabled}
           onChange={(e) => handleSearch(e.target.value)}
         />
       </div>

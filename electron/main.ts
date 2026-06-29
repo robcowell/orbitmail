@@ -505,8 +505,8 @@ function registerIpc(): void {
 
   ipcMain.handle('sync:getStatus', () => getSyncStatus())
 
-  ipcMain.handle('search:query', (_, text: string, limit?: number) =>
-    searchMessages(text, limit)
+  ipcMain.handle('search:query', (_, text: string, accountId: string, limit?: number) =>
+    searchMessages(text, accountId, limit)
   )
 
   ipcMain.handle('compose:open', async (_, payload?: Partial<ComposePayload>) => {

@@ -616,10 +616,10 @@ export function getAttachment(attachmentId: string) {
   return db.select().from(attachments).where(eq(attachments.id, attachmentId)).get()
 }
 
-export function searchMessages(text: string, limit = 50): MessageSummary[] {
+export function searchMessages(text: string, accountId: string, limit = 50): MessageSummary[] {
   const sqlite = getRawSqlite()
   const query = text.replace(/[^\w\s@.]/g, ' ').trim()
-  if (!query) return []
+  if (!query || !accountId) return []
 
   const rows = sqlite
     .prepare(
@@ -628,11 +628,11 @@ export function searchMessages(text: string, limit = 50): MessageSummary[] {
               m.is_read, m.is_starred, m.flag_color, m.has_attachments
        FROM messages_fts fts
        JOIN messages m ON m.id = fts.message_id
-       WHERE messages_fts MATCH ?
-       ORDER BY rank
+       WHERE messages_fts MATCH ? AND m.account_id = ?
+       ORDER BY rank, m.date DESC
        LIMIT ?`
     )
-    .all(query + '*', limit) as Array<{
+    .all(query + '*', accountId, limit) as Array<{
     id: string
     folder_id: string
     account_id: string

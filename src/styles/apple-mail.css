@@ -272,6 +272,24 @@ textarea {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.search-wrap-disabled .search-input {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.search-wrap-disabled .search-icon {
+  opacity: 0.45;
+}
+
+.search-results-banner {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+}
+
 .three-pane {
   display: flex;
   flex: 1;
@@ -546,6 +564,16 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
   margin-top: 2px;
+}
+
+.message-folder {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 1px;
 }
 
 .message-snippet {

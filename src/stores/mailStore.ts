@@ -13,6 +13,7 @@ import {
   scheduleSaveUiPreferences
 } from './persistence'
 import { findAccountFolder, findArchiveFolder } from '../utils/folders'
+import { resolveSearchAccountId } from '../utils/search'
 
 export const MESSAGE_PAGE_SIZE = 200
 
@@ -394,7 +395,15 @@ export async function selectMessage(messageId: string): Promise<void> {
   store.setSelectedMessage(msg)
   if (msg && !msg.isRead) {
     await window.orbitMail.messages.markRead(messageId, true)
-    await refreshMessages()
+    const current = useMailStore.getState()
+    if (current.searchQuery.trim()) {
+      const accountId = resolveSearchAccountId(current.selectedFolderId, current.folders)
+      if (accountId) {
+        await runSearch(current.searchQuery, accountId)
+      }
+    } else {
+      await refreshMessages()
+    }
   }
 }
 
@@ -404,6 +413,8 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
   store.setSelectedMessageId(null)
   store.setSelectedMessage(null)
   store.setMessageOffset(0)
+  store.setSearchQuery('')
+  store.setSearchResults([])
   scheduleSaveUiPreferences({
     selectedFolderId: folderId,
     selectedMessageId: null
@@ -563,13 +574,19 @@ export async function toggleMessageStar(messageId: string, isStarred: boolean): 
 
 export { saveUiPreferencesNow } from './persistence'
 
-export async function runSearch(query: string): Promise<void> {
+export function clearSearch(): void {
+  const store = useMailStore.getState()
+  store.setSearchQuery('')
+  store.setSearchResults([])
+}
+
+export async function runSearch(query: string, accountId: string): Promise<void> {
   const store = useMailStore.getState()
   store.setSearchQuery(query)
   if (!query.trim()) {
     store.setSearchResults([])
     return
   }
-  const results = await window.orbitMail.search.query(query)
+  const results = await window.orbitMail.search.query(query, accountId)
   store.setSearchResults(results)
 }

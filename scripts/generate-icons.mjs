@@ -12,9 +12,10 @@ mkdirSync(iconsDir, { recursive: true })
 
 for (const size of sizes) {
   const out = join(iconsDir, `${size}x${size}.png`)
-  await sharp(svgPath).resize(size, size).png().toFile(out)
+  const density = size <= 48 ? 512 : 384
+  await sharp(svgPath, { density }).resize(size, size).png().toFile(out)
   console.log(`Wrote ${out}`)
 }
 
-await sharp(svgPath).resize(512, 512).png().toFile(join(root, 'build/icon.png'))
+await sharp(svgPath, { density: 384 }).resize(512, 512).png().toFile(join(root, 'build/icon.png'))
 console.log(`Wrote ${join(root, 'build/icon.png')}`)

@@ -2,6 +2,7 @@ import { ImapFlow } from 'imapflow'
 import { simpleParser, type Attachment } from 'mailparser'
 import { writeFileSync } from 'fs'
 import { join } from 'path'
+import { tmpdir } from 'os'
 import type { Provider, FolderType, SyncStatus } from '../../shared/types'
 import { getAttachmentsDir } from '../db'
 import {
@@ -13,6 +14,8 @@ import {
   updateFolderUnread,
   addAttachment,
   listAccounts,
+  getMessage,
+  getFolderById,
   getFolderMaxUid,
   getFolderUidValidity,
   updateFolderSyncState,
@@ -800,6 +803,30 @@ export async function deleteMessageOnServer(
   }
 }
 
+export async function copyMessageOnServer(
+  accountId: string,
+  provider: Provider,
+  sourcePath: string,
+  targetPath: string,
+  uid: number
+): Promise<void> {
+  if (provider === 'pop3') {
+    throw new Error('Copying messages is not supported for POP3 accounts')
+  }
+
+  const client = await createImapClient(accountId, provider)
+  try {
+    const lock = await client.getMailboxLock(sourcePath)
+    try {
+      await client.messageCopy({ uid }, targetPath, { uid: true })
+    } finally {
+      lock.release()
+    }
+  } finally {
+    await client.logout()
+  }
+}
+
 export async function moveMessageOnServer(
   accountId: string,
   provider: Provider,
@@ -860,4 +887,42 @@ export function getProviderSmtpConfig(provider: Provider) {
     throw new Error('Use getAccountSmtpConfig for manual accounts')
   }
   return PROVIDER_CONFIG[provider].smtp
+}
+
+export async function exportMessageRawToTemp(messageId: string): Promise<string> {
+  const msg = getMessage(messageId)
+  if (!msg) throw new Error('Message not found')
+
+  const folder = getFolderById(msg.folderId)
+  if (!folder) throw new Error('Folder not found')
+
+  const account = listAccounts().find((a) => a.id === msg.accountId)
+  if (!account) throw new Error('Account not found')
+
+  if (account.provider === 'pop3') {
+    throw new Error('Raw message export is not supported for POP3 accounts')
+  }
+
+  const client = await createImapClient(account.id, account.provider)
+  try {
+    const lock = await client.getMailboxLock(folder.imapPath)
+    try {
+      let raw: Buffer | null = null
+      for await (const item of client.fetch(String(msg.uid), { source: true }, { uid: true })) {
+        raw = item.source ?? null
+        break
+      }
+
+      if (!raw) throw new Error('Could not download message source')
+
+      const safeName = (msg.subject || 'message').replace(/[^\w.-]+/g, '_').slice(0, 60)
+      const path = join(tmpdir(), `orbit-mail-${safeName}-${Date.now()}.eml`)
+      writeFileSync(path, raw)
+      return path
+    } finally {
+      lock.release()
+    }
+  } finally {
+    await client.logout()
+  }
 }

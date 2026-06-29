@@ -8,7 +8,8 @@ import type {
   MessageSummary,
   MessageDetail,
   FolderType,
-  Provider
+  Provider,
+  FlagColor
 } from '../../shared/types'
 import {
   encryptCredentials,
@@ -239,6 +240,7 @@ function rowToSummary(r: typeof messages.$inferSelect): MessageSummary {
     date: r.date,
     isRead: r.isRead,
     isStarred: r.isStarred,
+    flagColor: (r.flagColor as FlagColor | null) ?? null,
     hasAttachments: r.hasAttachments
   }
 }
@@ -423,6 +425,7 @@ export function upsertMessage(data: {
         date: data.date,
         isRead: data.isRead,
         isStarred: data.isStarred,
+        flagColor: data.isStarred ? existing.flagColor : null,
         hasAttachments: data.hasAttachments,
         bodyHtml: data.bodyHtml,
         bodyText: data.bodyText
@@ -461,7 +464,25 @@ export function setMessageRead(messageId: string, isRead: boolean): void {
 
 export function setMessageStarred(messageId: string, isStarred: boolean): void {
   const db = getDb()
-  db.update(messages).set({ isStarred }).where(eq(messages.id, messageId)).run()
+  if (isStarred) {
+    db.update(messages).set({ isStarred: true }).where(eq(messages.id, messageId)).run()
+  } else {
+    db.update(messages)
+      .set({ isStarred: false, flagColor: null })
+      .where(eq(messages.id, messageId))
+      .run()
+  }
+}
+
+export function setMessageFlag(messageId: string, flagColor: FlagColor | null): void {
+  const db = getDb()
+  db.update(messages)
+    .set({
+      flagColor,
+      isStarred: flagColor !== null
+    })
+    .where(eq(messages.id, messageId))
+    .run()
 }
 
 export function countMessages(folderId: string | 'unified'): number {
@@ -529,7 +550,7 @@ export function searchMessages(text: string, limit = 50): MessageSummary[] {
     .prepare(
       `SELECT m.id, m.folder_id, m.account_id, m.uid, m.message_id,
               m.from_addr, m.to_addr, m.subject, m.snippet, m.date,
-              m.is_read, m.is_starred, m.has_attachments
+              m.is_read, m.is_starred, m.flag_color, m.has_attachments
        FROM messages_fts fts
        JOIN messages m ON m.id = fts.message_id
        WHERE messages_fts MATCH ?
@@ -549,6 +570,7 @@ export function searchMessages(text: string, limit = 50): MessageSummary[] {
     date: number
     is_read: number
     is_starred: number
+    flag_color: string | null
     has_attachments: number
   }>
 
@@ -565,6 +587,7 @@ export function searchMessages(text: string, limit = 50): MessageSummary[] {
     date: r.date,
     isRead: Boolean(r.is_read),
     isStarred: Boolean(r.is_starred),
+    flagColor: (r.flag_color as FlagColor | null) ?? null,
     hasAttachments: Boolean(r.has_attachments)
   }))
 }

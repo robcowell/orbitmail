@@ -31,7 +31,9 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
 
 export const DEFAULT_APP_STATE: PersistedAppState = {
   ui: DEFAULT_UI_PREFERENCES,
-  lastSyncAt: null
+  lastSyncAt: null,
+  mutedSenders: [],
+  blockedSenders: []
 }
 
 function readRawState(): PersistedAppState {
@@ -47,6 +49,8 @@ function readRawState(): PersistedAppState {
     return {
       ui: { ...DEFAULT_UI_PREFERENCES, ...parsed.ui },
       lastSyncAt: parsed.lastSyncAt ?? null,
+      mutedSenders: parsed.mutedSenders ?? [],
+      blockedSenders: parsed.blockedSenders ?? [],
       window: parsed.window
     }
   } catch {
@@ -81,7 +85,9 @@ export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppSt
   const next: PersistedAppState = {
     ...current,
     ...patch,
-    ui: { ...current.ui, ...patch.ui }
+    ui: { ...current.ui, ...patch.ui },
+    mutedSenders: patch.mutedSenders ?? current.mutedSenders,
+    blockedSenders: patch.blockedSenders ?? current.blockedSenders
   }
   saveAppState(next)
   return next
@@ -108,4 +114,25 @@ export function setWindowPreferences(window: WindowPreferences | undefined): voi
 
 export function getWindowPreferences(): WindowPreferences | undefined {
   return getAppState().window
+}
+
+function normalizeEmail(email: string): string {
+  const match = email.match(/<([^>]+)>/)
+  return (match ? match[1] : email).trim().toLowerCase()
+}
+
+export function muteSender(email: string): void {
+  const normalized = normalizeEmail(email)
+  if (!normalized) return
+  const current = getAppState()
+  if (current.mutedSenders.includes(normalized)) return
+  patchAppState({ mutedSenders: [...current.mutedSenders, normalized] })
+}
+
+export function blockSender(email: string): void {
+  const normalized = normalizeEmail(email)
+  if (!normalized) return
+  const current = getAppState()
+  if (current.blockedSenders.includes(normalized)) return
+  patchAppState({ blockedSenders: [...current.blockedSenders, normalized] })
 }

@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join } from 'path'
-import type { ComposePayload, SyncStatus, ManualAccountInput } from '../shared/types'
+import type { ComposePayload, SyncStatus, ManualAccountInput, FlagColor } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
 import {
   listAccounts,
@@ -13,6 +13,7 @@ import {
   getMessage,
   setMessageRead,
   setMessageStarred,
+  setMessageFlag,
   deleteMessage,
   getFolderById,
   searchMessages,
@@ -30,11 +31,13 @@ import {
   toggleMessageStarredOnServer,
   deleteMessageOnServer,
   moveMessageOnServer,
+  copyMessageOnServer,
   refreshAccount,
   pollForNewMessages,
   setOnFolderSynced,
   setOnNewMailArrived,
-  initSyncFromPersistence
+  initSyncFromPersistence,
+  exportMessageRawToTemp
 } from './services/imap-sync'
 import {
   startIdleMonitoring,
@@ -50,12 +53,23 @@ import {
   patchAppState,
   patchUiPreferences,
   setWindowPreferences,
-  getWindowPreferences
+  getWindowPreferences,
+  muteSender,
+  blockSender
 } from './services/preferences-service'
 
 let mainWindow: BrowserWindow | null = null
 let composeWindow: BrowserWindow | null = null
 let lastNotificationAt = 0
+
+process.on('uncaughtException', (err) => {
+  const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : ''
+  if (code === 'ETIMEOUT' || err.message === 'Socket timeout') {
+    console.warn('[orbit-mail] Suppressed IMAP socket timeout:', err.message)
+    return
+  }
+  console.error('[orbit-mail] Uncaught exception:', err)
+})
 
 configureLinuxDesktopIntegration()
 
@@ -86,22 +100,44 @@ function parseMailtoUrl(url: string): Partial<ComposePayload> {
 }
 
 function enrichComposePayload(payload?: Partial<ComposePayload>): Partial<ComposePayload> {
-  if (!payload) return {}
+  if (!payload?.originalMessageId || !payload.mode || payload.mode === 'new') {
+    return payload ?? {}
+  }
 
-  if (payload.originalMessageId && payload.mode) {
-    const accountId =
-      payload.accountId ??
-      getMessage(payload.originalMessageId)?.accountId ??
-      listAccounts()[0]?.id ??
-      ''
-    return {
-      ...buildReplyPayload(payload.originalMessageId, accountId, payload.mode),
-      ...payload,
-      accountId: payload.accountId ?? accountId
+  const accountId =
+    payload.accountId ??
+    getMessage(payload.originalMessageId)?.accountId ??
+    listAccounts()[0]?.id ??
+    ''
+
+  return {
+    ...buildReplyPayload(payload.originalMessageId, accountId, payload.mode),
+    ...payload,
+    accountId: payload.accountId ?? accountId
+  }
+}
+
+async function prepareComposePayload(
+  payload?: Partial<ComposePayload>
+): Promise<Partial<ComposePayload>> {
+  const finalPayload = enrichComposePayload(payload)
+
+  if (
+    payload?.originalMessageId &&
+    (payload.mode === 'forward-attachment' || payload.mode === 'redirect')
+  ) {
+    try {
+      const rawPath = await exportMessageRawToTemp(payload.originalMessageId)
+      return {
+        ...finalPayload,
+        attachmentPaths: [rawPath, ...(payload.attachmentPaths ?? [])]
+      }
+    } catch (err) {
+      console.warn('[orbit-mail] Could not attach raw message:', err)
     }
   }
 
-  return payload
+  return finalPayload
 }
 
 function openComposeFromMailto(url: string): void {
@@ -198,8 +234,8 @@ function createMainWindow(): void {
   }
 }
 
-function createComposeWindow(payload?: Partial<ComposePayload>): void {
-  const finalPayload = enrichComposePayload(payload)
+async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<void> {
+  const finalPayload = await prepareComposePayload(payload)
 
   if (composeWindow) {
     composeWindow.focus()
@@ -329,6 +365,25 @@ function registerIpc(): void {
     )
   })
 
+  ipcMain.handle('messages:setFlag', async (_, messageId: string, flagColor: FlagColor | null) => {
+    const msg = getMessage(messageId)
+    if (!msg) return
+    const folder = getFolderById(msg.folderId)
+    if (!folder) return
+    const accounts = listAccounts()
+    const account = accounts.find((a) => a.id === msg.accountId)
+    if (!account) return
+
+    setMessageFlag(messageId, flagColor)
+    await toggleMessageStarredOnServer(
+      account.id,
+      account.provider,
+      folder.imapPath,
+      msg.uid,
+      flagColor !== null
+    )
+  })
+
   ipcMain.handle('messages:delete', async (_, messageId: string) => {
     const msg = getMessage(messageId)
     if (!msg) return
@@ -363,6 +418,26 @@ function registerIpc(): void {
     await pollForNewMessages()
   })
 
+  ipcMain.handle('messages:copy', async (_, messageId: string, targetFolderId: string) => {
+    const msg = getMessage(messageId)
+    if (!msg) return
+    const sourceFolder = getFolderById(msg.folderId)
+    const targetFolder = getFolderById(targetFolderId)
+    if (!sourceFolder || !targetFolder) return
+    const accounts = listAccounts()
+    const account = accounts.find((a) => a.id === msg.accountId)
+    if (!account) return
+
+    await copyMessageOnServer(
+      account.id,
+      account.provider,
+      sourceFolder.imapPath,
+      targetFolder.imapPath,
+      msg.uid
+    )
+    await pollForNewMessages()
+  })
+
   ipcMain.handle('sync:refresh', async (_, accountId?: string) => {
     if (accountId) {
       const accounts = listAccounts()
@@ -381,8 +456,8 @@ function registerIpc(): void {
     searchMessages(text, limit)
   )
 
-  ipcMain.handle('compose:open', (_, payload?: Partial<ComposePayload>) => {
-    createComposeWindow(payload)
+  ipcMain.handle('compose:open', async (_, payload?: Partial<ComposePayload>) => {
+    await createComposeWindow(payload)
   })
 
   ipcMain.handle('compose:send', async (_, payload: ComposePayload) => {
@@ -427,6 +502,14 @@ function registerIpc(): void {
   ipcMain.handle('preferences:saveUi', (_, ui) => patchUiPreferences(ui))
 
   ipcMain.handle('preferences:save', (_, state) => patchAppState(state))
+
+  ipcMain.handle('preferences:muteSender', (_, email: string) => {
+    muteSender(email)
+  })
+
+  ipcMain.handle('preferences:blockSender', (_, email: string) => {
+    blockSender(email)
+  })
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()

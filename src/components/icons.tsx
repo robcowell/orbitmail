@@ -20,7 +20,16 @@ import {
   Star,
   Envelope,
   X,
-  GearSix
+  GearSix,
+  CaretRight,
+  BellSlash,
+  Prohibit,
+  Flag,
+  Funnel,
+  ArrowBendDoubleUpLeft,
+  ShareNetwork,
+  EnvelopeOpen,
+  ListChecks
 } from '@phosphor-icons/react'
 import type { FolderType } from '../../shared/types'
 
@@ -73,7 +82,16 @@ export {
   Star,
   Envelope,
   X,
-  GearSix
+  GearSix,
+  CaretRight,
+  BellSlash,
+  Prohibit,
+  Flag,
+  Funnel,
+  ArrowBendDoubleUpLeft,
+  ShareNetwork,
+  EnvelopeOpen,
+  ListChecks
 }
 
 export type { IconProps }

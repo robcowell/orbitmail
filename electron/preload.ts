@@ -5,7 +5,8 @@ import type {
   SyncStatus,
   ManualAccountInput,
   UiPreferences,
-  PersistedAppState
+  PersistedAppState,
+  FlagColor
 } from '../shared/types'
 
 const api: OrbitMailAPI = {
@@ -29,9 +30,13 @@ const api: OrbitMailAPI = {
       ipcRenderer.invoke('messages:markRead', messageId, isRead),
     toggleStar: (messageId, isStarred) =>
       ipcRenderer.invoke('messages:toggleStar', messageId, isStarred),
+    setFlag: (messageId, flagColor) =>
+      ipcRenderer.invoke('messages:setFlag', messageId, flagColor),
     delete: (messageId) => ipcRenderer.invoke('messages:delete', messageId),
     move: (messageId, targetFolderId) =>
-      ipcRenderer.invoke('messages:move', messageId, targetFolderId)
+      ipcRenderer.invoke('messages:move', messageId, targetFolderId),
+    copy: (messageId, targetFolderId) =>
+      ipcRenderer.invoke('messages:copy', messageId, targetFolderId)
   },
   sync: {
     refresh: (accountId) => ipcRenderer.invoke('sync:refresh', accountId),
@@ -78,7 +83,9 @@ const api: OrbitMailAPI = {
   preferences: {
     get: () => ipcRenderer.invoke('preferences:get'),
     saveUi: (ui: Partial<UiPreferences>) => ipcRenderer.invoke('preferences:saveUi', ui),
-    save: (state: Partial<PersistedAppState>) => ipcRenderer.invoke('preferences:save', state)
+    save: (state: Partial<PersistedAppState>) => ipcRenderer.invoke('preferences:save', state),
+    muteSender: (email: string) => ipcRenderer.invoke('preferences:muteSender', email),
+    blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email)
   }
 }
 

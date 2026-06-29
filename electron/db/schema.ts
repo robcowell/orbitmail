@@ -52,6 +52,9 @@ export const messages = sqliteTable(
     date: integer('date').notNull(),
     isRead: integer('is_read', { mode: 'boolean' }).notNull().default(false),
     isStarred: integer('is_starred', { mode: 'boolean' }).notNull().default(false),
+    flagColor: text('flag_color', {
+      enum: ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray']
+    }),
     hasAttachments: integer('has_attachments', { mode: 'boolean' }).notNull().default(false),
     bodyHtml: text('body_html'),
     bodyText: text('body_text')

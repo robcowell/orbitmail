@@ -2,12 +2,15 @@ import { useState } from 'react'
 import DOMPurify from 'dompurify'
 import { useMailStore, toggleMessageStar } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
-import { Paperclip, EnvelopeSimpleOpen, Star } from '../icons'
+import { MessageContextMenu } from '../messages/MessageContextMenu'
+import { Paperclip, EnvelopeSimpleOpen, Flag } from '../icons'
+import { flagColorHex } from '../../constants/flags'
 
 export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
   const setToast = useMailStore((s) => s.setToast)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   if (!selectedMessageId || !selectedMessage) {
     return (
@@ -45,7 +48,12 @@ export function MessageView() {
   }
 
   return (
-    <div>
+    <div
+      onContextMenu={(event) => {
+        event.preventDefault()
+        setContextMenu({ x: event.clientX, y: event.clientY })
+      }}
+    >
       <div className="reader-header">
         <div className="reader-header-top">
           <div className="reader-subject">{selectedMessage.subject}</div>
@@ -55,7 +63,11 @@ export function MessageView() {
             title={selectedMessage.isStarred ? 'Remove star' : 'Star message'}
             onClick={handleToggleStar}
           >
-            <Star size={18} weight={selectedMessage.isStarred ? 'fill' : 'duotone'} />
+            <Flag
+              size={18}
+              weight="fill"
+              style={{ color: flagColorHex(selectedMessage.flagColor) ?? '#f5a623' }}
+            />
           </button>
         </div>
         <div className="reader-meta">
@@ -104,6 +116,15 @@ export function MessageView() {
           </pre>
         )}
       </div>
+
+      {contextMenu && (
+        <MessageContextMenu
+          message={selectedMessage}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   )
 }

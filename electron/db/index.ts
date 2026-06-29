@@ -130,6 +130,12 @@ function migrateSchema(db: Database.Database): void {
     SET initial_sync_complete = 1
     WHERE highest_synced_uid > 0
   `)
+
+  const messageCols = db.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
+  const messageNames = new Set(messageCols.map((c) => c.name))
+  if (!messageNames.has('flag_color')) {
+    db.exec('ALTER TABLE messages ADD COLUMN flag_color TEXT')
+  }
 }
 
 export function getDb() {

@@ -7,6 +7,7 @@ import {
   getManualCredentials,
   updateAccountTokens,
   getMessage,
+  listAccounts,
   type TokenData
 } from './db-service'
 import { appendToSentFolder, getAccountSmtpConfig } from './imap-sync'
@@ -121,34 +122,133 @@ export async function sendMail(
   }
 }
 
+export type ComposeMode = NonNullable<ComposePayload['mode']>
+
+function extractEmailAddress(value: string): string {
+  const match = value.match(/<([^>]+)>/)
+  return (match ? match[1] : value).trim().toLowerCase()
+}
+
+function parseAddressList(value: string | undefined): string[] {
+  if (!value?.trim()) return []
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function getAccountEmail(accountId: string): string {
+  const account = listAccounts().find((a) => a.id === accountId)
+  if (!account) return ''
+  if (account.provider === 'imap' || account.provider === 'pop3') {
+    return getManualCredentials(accountId)?.email ?? account.email
+  }
+  return getAccountTokens(accountId)?.email ?? account.email
+}
+
+function buildReplyAllCc(from: string, to: string, cc: string, accountId: string): string {
+  const self = extractEmailAddress(getAccountEmail(accountId))
+  const fromAddr = extractEmailAddress(from)
+  const recipients = [...parseAddressList(to), ...parseAddressList(cc)]
+  const ccList = recipients.filter((recipient) => {
+    const addr = extractEmailAddress(recipient)
+    return addr !== self && addr !== fromAddr
+  })
+  return [...new Set(ccList)].join(', ')
+}
+
+function quotedBody(msg: NonNullable<ReturnType<typeof getMessage>>) {
+  return {
+    bodyHtml: `<br><br><blockquote>${msg.bodyHtml ?? msg.bodyText ?? ''}</blockquote>`,
+    bodyText: `\n\n${msg.bodyText ?? ''}`
+  }
+}
+
 export function buildReplyPayload(
   originalMessageId: string,
   accountId: string,
-  mode: 'reply' | 'forward'
+  mode: ComposeMode
 ): Partial<ComposePayload> {
   const msg = getMessage(originalMessageId)
   if (!msg) return { accountId }
 
-  if (mode === 'reply') {
-    return {
-      accountId,
-      to: msg.from,
-      subject: msg.subject.startsWith('Re:') ? msg.subject : `Re: ${msg.subject}`,
-      bodyHtml: `<br><br><blockquote>${msg.bodyHtml ?? msg.bodyText ?? ''}</blockquote>`,
-      bodyText: `\n\n${msg.bodyText ?? ''}`,
-      inReplyTo: msg.messageId ?? msg.id,
-      references: msg.messageId ?? msg.id,
-      mode: 'reply',
-      originalMessageId
-    }
+  const reSubject = msg.subject.startsWith('Re:') ? msg.subject : `Re: ${msg.subject}`
+  const fwdSubject = msg.subject.startsWith('Fwd:') ? msg.subject : `Fwd: ${msg.subject}`
+  const quote = quotedBody(msg)
+  const threading = {
+    inReplyTo: msg.messageId ?? msg.id,
+    references: msg.messageId ?? msg.id,
+    originalMessageId
   }
 
-  return {
-    accountId,
-    subject: msg.subject.startsWith('Fwd:') ? msg.subject : `Fwd: ${msg.subject}`,
-    bodyHtml: `<br><br>---------- Forwarded message ----------<br>${msg.bodyHtml ?? msg.bodyText ?? ''}`,
-    bodyText: `\n\n---------- Forwarded message ----------\n${msg.bodyText ?? ''}`,
-    mode: 'forward',
-    originalMessageId
+  switch (mode) {
+    case 'reply':
+      return {
+        accountId,
+        to: msg.from,
+        subject: reSubject,
+        ...quote,
+        ...threading,
+        mode: 'reply'
+      }
+
+    case 'reply-all':
+      return {
+        accountId,
+        to: msg.from,
+        cc: buildReplyAllCc(msg.from, msg.to, msg.cc, accountId) || undefined,
+        subject: reSubject,
+        ...quote,
+        ...threading,
+        mode: 'reply-all'
+      }
+
+    case 'send-again':
+      return {
+        accountId,
+        to: msg.to,
+        cc: msg.cc || undefined,
+        subject: msg.subject,
+        bodyHtml: msg.bodyHtml ?? (msg.bodyText ? `<p>${msg.bodyText}</p>` : ''),
+        bodyText: msg.bodyText ?? '',
+        mode: 'send-again',
+        originalMessageId
+      }
+
+    case 'forward':
+      return {
+        accountId,
+        subject: fwdSubject,
+        bodyHtml: `<br><br>---------- Forwarded message ----------<br>${msg.bodyHtml ?? msg.bodyText ?? ''}`,
+        bodyText: `\n\n---------- Forwarded message ----------\n${msg.bodyText ?? ''}`,
+        mode: 'forward',
+        originalMessageId
+      }
+
+    case 'forward-attachment':
+      return {
+        accountId,
+        to: '',
+        subject: fwdSubject,
+        bodyText: '',
+        bodyHtml: '',
+        mode: 'forward-attachment',
+        originalMessageId
+      }
+
+    case 'redirect':
+      return {
+        accountId,
+        to: '',
+        cc: '',
+        subject: msg.subject,
+        bodyText: '',
+        bodyHtml: '',
+        mode: 'redirect',
+        originalMessageId
+      }
+
+    default:
+      return { accountId }
   }
 }

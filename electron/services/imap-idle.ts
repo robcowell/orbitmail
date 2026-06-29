@@ -56,6 +56,43 @@ function scheduleIdleReconnect(accountId: string, provider: Provider): void {
   }, IDLE_RECONNECT_MS)
 }
 
+function teardownIdleConnection(
+  accountId: string,
+  provider: Provider,
+  runtime: IdleRuntime
+): void {
+  if (runtime.stopping) return
+  runtime.client = null
+  idleRuntimes.delete(accountId)
+  scheduleIdleReconnect(accountId, provider)
+}
+
+function attachIdleClientHandlers(
+  accountId: string,
+  provider: Provider,
+  client: ImapFlow,
+  runtime: IdleRuntime
+): void {
+  client.on('error', (err: Error) => {
+    // Idle connections drop often (sleep, network, server limits). Reconnect quietly.
+    if (runtime.stopping || !idleRuntimes.has(accountId)) return
+    console.warn(`[orbit-mail] IMAP IDLE error for ${accountId}:`, err.message)
+    teardownIdleConnection(accountId, provider, runtime)
+  })
+
+  client.on('exists', () => {
+    void handleMailboxActivity(accountId, provider, client).catch((err) => {
+      console.warn(`[orbit-mail] IMAP IDLE sync error for ${accountId}:`, err)
+    })
+  })
+
+  client.on('close', () => {
+    runtime.client = null
+    if (runtime.stopping || !idleRuntimes.has(accountId)) return
+    teardownIdleConnection(accountId, provider, runtime)
+  })
+}
+
 async function ensureAccountIdle(accountId: string, provider: Provider): Promise<void> {
   if (idleRuntimes.has(accountId)) return
 
@@ -76,16 +113,7 @@ async function ensureAccountIdle(accountId: string, provider: Provider): Promise
       return
     }
 
-    client.on('exists', () => {
-      void handleMailboxActivity(accountId, provider, client)
-    })
-
-    client.on('close', () => {
-      runtime.client = null
-      if (!runtime.stopping) {
-        scheduleIdleReconnect(accountId, provider)
-      }
-    })
+    attachIdleClientHandlers(accountId, provider, client, runtime)
 
     const mailboxes = await client.list()
     const inbox = findInboxMailbox(mailboxes)

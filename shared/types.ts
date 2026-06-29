@@ -42,6 +42,8 @@ export interface Folder {
   unreadCount: number
 }
 
+export type FlagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'gray'
+
 export interface MessageSummary {
   id: string
   folderId: string
@@ -55,6 +57,7 @@ export interface MessageSummary {
   date: number
   isRead: boolean
   isStarred: boolean
+  flagColor: FlagColor | null
   hasAttachments: boolean
 }
 
@@ -85,7 +88,7 @@ export interface ComposePayload {
   inReplyTo?: string
   references?: string
   attachmentPaths?: string[]
-  mode?: 'new' | 'reply' | 'forward'
+  mode?: 'new' | 'reply' | 'reply-all' | 'forward' | 'forward-attachment' | 'redirect' | 'send-again'
   originalMessageId?: string
 }
 
@@ -107,6 +110,8 @@ export interface UiPreferences {
 export interface PersistedAppState {
   ui: UiPreferences
   lastSyncAt: number | null
+  mutedSenders: string[]
+  blockedSenders: string[]
   window?: {
     width: number
     height: number
@@ -132,8 +137,10 @@ export interface OrbitMailAPI {
     get: (messageId: string) => Promise<MessageDetail | null>
     markRead: (messageId: string, isRead: boolean) => Promise<void>
     toggleStar: (messageId: string, isStarred: boolean) => Promise<void>
+    setFlag: (messageId: string, flagColor: FlagColor | null) => Promise<void>
     delete: (messageId: string) => Promise<void>
     move: (messageId: string, targetFolderId: string) => Promise<void>
+    copy: (messageId: string, targetFolderId: string) => Promise<void>
   }
   sync: {
     refresh: (accountId?: string) => Promise<void>
@@ -165,6 +172,8 @@ export interface OrbitMailAPI {
     get: () => Promise<PersistedAppState>
     saveUi: (ui: Partial<UiPreferences>) => Promise<UiPreferences>
     save: (state: Partial<PersistedAppState>) => Promise<PersistedAppState>
+    muteSender: (email: string) => Promise<void>
+    blockSender: (email: string) => Promise<void>
   }
 }
 

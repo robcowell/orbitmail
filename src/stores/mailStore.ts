@@ -5,7 +5,8 @@ import type {
   MessageSummary,
   MessageDetail,
   SyncStatus,
-  ManualAccountInput
+  ManualAccountInput,
+  FlagColor
 } from '../../shared/types'
 import {
   loadPersistedPreferences,
@@ -313,6 +314,89 @@ export async function markMessageUnread(messageId: string): Promise<void> {
   await window.orbitMail.messages.markRead(messageId, false)
   const msg = await window.orbitMail.messages.get(messageId)
   useMailStore.getState().setSelectedMessage(msg)
+  await refreshMessages()
+}
+
+export async function markMessageRead(messageId: string): Promise<void> {
+  await window.orbitMail.messages.markRead(messageId, true)
+  const msg = await window.orbitMail.messages.get(messageId)
+  const store = useMailStore.getState()
+  if (store.selectedMessageId === messageId) {
+    store.setSelectedMessage(msg)
+  }
+  await refreshMessages()
+}
+
+export async function moveMessageToJunk(messageId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const msg = store.selectedMessage ?? (await window.orbitMail.messages.get(messageId))
+  if (!msg) return
+
+  const folders = store.folders.length
+    ? store.folders
+    : await window.orbitMail.folders.list()
+  const junk = findAccountFolder(folders, msg.accountId, 'junk')
+
+  if (!junk) {
+    store.setToast('No junk folder found for this account')
+    return
+  }
+
+  await window.orbitMail.messages.move(messageId, junk.id)
+
+  if (store.selectedMessageId === messageId) {
+    store.setSelectedMessage(null)
+    store.setSelectedMessageId(null)
+    scheduleSaveUiPreferences({ selectedMessageId: null })
+  }
+
+  store.setToast('Message moved to Junk')
+  await refreshMessages()
+}
+
+export async function moveMessageToFolder(
+  messageId: string,
+  targetFolderId: string
+): Promise<void> {
+  const store = useMailStore.getState()
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const target = folders.find((folder) => folder.id === targetFolderId)
+
+  await window.orbitMail.messages.move(messageId, targetFolderId)
+
+  if (store.selectedMessageId === messageId) {
+    store.setSelectedMessage(null)
+    store.setSelectedMessageId(null)
+    scheduleSaveUiPreferences({ selectedMessageId: null })
+  }
+
+  store.setToast(`Message moved to ${target?.name ?? 'folder'}`)
+  await refreshMessages()
+}
+
+export async function copyMessageToFolder(
+  messageId: string,
+  targetFolderId: string
+): Promise<void> {
+  const store = useMailStore.getState()
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const target = folders.find((folder) => folder.id === targetFolderId)
+
+  await window.orbitMail.messages.copy(messageId, targetFolderId)
+  store.setToast(`Message copied to ${target?.name ?? 'folder'}`)
+  await refreshMessages()
+}
+
+export async function setMessageFlagColor(
+  messageId: string,
+  flagColor: FlagColor | null
+): Promise<void> {
+  await window.orbitMail.messages.setFlag(messageId, flagColor)
+  const msg = await window.orbitMail.messages.get(messageId)
+  const store = useMailStore.getState()
+  if (store.selectedMessageId === messageId && msg) {
+    store.setSelectedMessage(msg)
+  }
   await refreshMessages()
 }
 

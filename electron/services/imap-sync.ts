@@ -21,6 +21,7 @@ import {
   updateFolderSyncState,
   clearFolderMessages,
   hasMessageUid,
+  recalculateFolderUnread,
   type TokenData
 } from './db-service'
 import { getLastSyncAt, setLastSyncAt } from './preferences-service'
@@ -516,7 +517,6 @@ export async function syncFolder(
     unseen: true,
     uidValidity: true
   })
-  updateFolderUnread(folderId, status.unseen ?? 0)
 
   const storedValidity = normalizeImapUint(getFolderUidValidity(folderId))
   const serverValidity = normalizeImapUint(status.uidValidity)
@@ -529,6 +529,7 @@ export async function syncFolder(
   const uidNext = normalizeImapUint(status.uidNext) ?? 1
 
   if (maxLocalUid != null && uidNext <= maxLocalUid + 1) {
+    updateFolderUnread(folderId, status.unseen ?? 0)
     updateFolderSyncState(folderId, {
       uidValidity: serverValidity,
       lastSyncAt: Date.now()
@@ -557,6 +558,8 @@ export async function syncFolder(
       uids,
       onProgress
     )
+
+    recalculateFolderUnread(folderId)
 
     const highestSyncedUid = Math.max(maxLocalUid ?? 0, maxUid ?? 0)
     updateFolderSyncState(folderId, {

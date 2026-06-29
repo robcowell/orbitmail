@@ -171,12 +171,19 @@ async function loadFolderMessages(
 
 let refreshMessagesTimer: ReturnType<typeof setTimeout> | null = null
 
+export function cancelScheduledRefreshMessages(): void {
+  if (refreshMessagesTimer) {
+    clearTimeout(refreshMessagesTimer)
+    refreshMessagesTimer = null
+  }
+}
+
 /** Debounced refresh for background sync (IDLE / polling). Avoids list flicker. */
 export function scheduleRefreshMessages(delayMs?: number): void {
   const resolvedDelay =
     delayMs ??
     (useMailStore.getState().messages.length === 0 ? 0 : 400)
-  if (refreshMessagesTimer) clearTimeout(refreshMessagesTimer)
+  cancelScheduledRefreshMessages()
   if (resolvedDelay === 0) {
     void refreshMessages()
     return
@@ -191,6 +198,7 @@ export function scheduleRefreshMessages(delayMs?: number): void {
 export function subscribeSyncCompleteRefresh(): () => void {
   return useMailStore.subscribe((state, prevState) => {
     if (prevState.syncStatus.syncing && !state.syncStatus.syncing) {
+      cancelScheduledRefreshMessages()
       void refreshMessages()
     }
   })

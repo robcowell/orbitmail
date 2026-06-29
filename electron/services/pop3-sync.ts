@@ -6,7 +6,7 @@ import {
   getManualCredentials,
   upsertFolder,
   upsertMessage,
-  updateFolderUnread,
+  recalculateFolderUnread,
   addAttachment,
   getFolderUidSet,
   hasMessageUid,
@@ -112,8 +112,6 @@ export async function syncPop3Account(
     const entries = uidl ?? []
     const batch = entries.slice(-SYNC_BATCH_SIZE)
 
-    updateFolderUnread(folder.id, batch.length)
-
     for (const [msgNumStr, serverUid] of batch) {
       const msgNum = Number(msgNumStr)
       const uid = hashUid(serverUid, msgNum)
@@ -159,6 +157,8 @@ export async function syncPop3Account(
       newCount++
       onProgress?.()
     }
+
+    recalculateFolderUnread(folder.id)
 
     const highestSyncedUid = getFolderMaxUid(folder.id) ?? 0
     updateFolderSyncState(folder.id, {

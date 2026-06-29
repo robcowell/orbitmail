@@ -9,6 +9,7 @@ import {
   useMailStore,
   loadInitialData,
   scheduleRefreshMessages,
+  cancelScheduledRefreshMessages,
   subscribeSyncCompleteRefresh,
   saveUiPreferencesNow,
   moveMessageToTrash
@@ -102,6 +103,9 @@ function MainApp() {
 
     const unsubStatus = window.orbitMail.sync.onStatusChange((status) => {
       setSyncStatus(status)
+      if (status.syncing) {
+        cancelScheduledRefreshMessages()
+      }
     })
 
     const unsubMessages = window.orbitMail.sync.onMessagesUpdated(() => {

@@ -338,8 +338,8 @@ textarea {
 
 .sidebar-account-header {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 6px 12px 6px 10px;
   text-align: left;
@@ -367,6 +367,11 @@ textarea {
   font-weight: 600;
   line-height: 1.35;
   word-break: break-word;
+}
+
+.sidebar-account-badge {
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .sidebar-account-folders {

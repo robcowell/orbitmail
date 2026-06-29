@@ -126,6 +126,11 @@ function AccountSection({
     [folders, account.id]
   )
 
+  const accountUnreadCount = useMemo(
+    () => accountFolders.reduce((sum, folder) => sum + folder.unreadCount, 0),
+    [accountFolders]
+  )
+
   const byType = (type: FolderType) => accountFolders.find((f) => f.type === type)
   const customFolders = accountFolders.filter((f) => f.type === 'custom')
 
@@ -149,6 +154,11 @@ function AccountSection({
           aria-expanded={!collapsed}
         >
           <span className="sidebar-account-label">{accountLabel(account)}</span>
+          {collapsed && accountUnreadCount > 0 && (
+            <span className="sidebar-badge sidebar-account-badge" aria-label={`${accountUnreadCount} unread`}>
+              {accountUnreadCount}
+            </span>
+          )}
         </button>
         <div className="account-menu-wrap" ref={menuRef}>
           <button

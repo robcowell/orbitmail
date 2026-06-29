@@ -122,6 +122,18 @@ function incrementSyncProgress(by = 1): void {
 
 const SYNC_BATCH_SIZE = 200
 
+/** ImapFlow exposes UID fields as bigint; normalize before compare/store. */
+function normalizeImapUint(value: unknown): number | null {
+  if (value == null) return null
+  if (typeof value === 'bigint') return Number(value)
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
 function estimateNewMessagesInFolder(maxLocalUid: number | null, uidNext: number): number {
   const highestUid = Math.max(0, uidNext - 1)
   if (maxLocalUid == null) {
@@ -153,9 +165,10 @@ async function countNewMessagesForAccount(
         detectFolderType(mb.name, mb.specialUse)
       )
       const status = await client.status(mb.path, { uidNext: true, uidValidity: true })
-      const storedValidity = getFolderUidValidity(folder.id)
-      const serverValidity = status.uidValidity ?? null
-      const highestUid = Math.max(0, (status.uidNext ?? 1) - 1)
+      const storedValidity = normalizeImapUint(getFolderUidValidity(folder.id))
+      const serverValidity = normalizeImapUint(status.uidValidity)
+      const uidNext = normalizeImapUint(status.uidNext) ?? 1
+      const highestUid = Math.max(0, uidNext - 1)
 
       if (
         storedValidity != null &&
@@ -165,7 +178,7 @@ async function countNewMessagesForAccount(
         // Folder will be re-synced from scratch; initial batch can exceed incremental estimate.
         total += Math.min(SYNC_BATCH_SIZE, highestUid)
       } else {
-        total += estimateNewMessagesInFolder(getFolderMaxUid(folder.id), status.uidNext ?? 1)
+        total += estimateNewMessagesInFolder(getFolderMaxUid(folder.id), uidNext)
       }
     }
   } finally {
@@ -301,18 +314,26 @@ function sortMailboxesForSync<
 }
 
 async function getRecentMessageUids(client: ImapFlow, batchSize: number): Promise<number[]> {
+  let uids: unknown[] = []
+
   try {
     const sorted = await client.sort(['REVERSE DATE'], ['ALL'], { uid: true })
     if (sorted?.length) {
-      return sorted.slice(0, batchSize)
+      uids = sorted.slice(0, batchSize)
     }
   } catch {
     // SORT not supported — fall back to SEARCH
   }
 
-  const all = await client.search({ all: true }, { uid: true })
-  if (!all?.length) return []
-  return all.length > batchSize ? all.slice(-batchSize) : all
+  if (uids.length === 0) {
+    const all = await client.search({ all: true }, { uid: true })
+    if (!all?.length) return []
+    uids = all.length > batchSize ? all.slice(-batchSize) : all
+  }
+
+  return uids
+    .map((uid) => normalizeImapUint(uid))
+    .filter((uid): uid is number => uid != null)
 }
 
 let onFolderSynced: (() => void) | null = null
@@ -340,7 +361,10 @@ async function resolveUidsToFetch(
   if (maxLocalUid == null) {
     candidates = await getRecentMessageUids(client, SYNC_BATCH_SIZE)
   } else {
-    candidates = (await client.search({ uid: `${maxLocalUid + 1}:*` }, { uid: true })) ?? []
+    const found = (await client.search({ uid: `${maxLocalUid + 1}:*` }, { uid: true })) ?? []
+    candidates = found
+      .map((uid) => normalizeImapUint(uid))
+      .filter((uid): uid is number => uid != null)
   }
 
   return candidates.filter((uid) => !hasMessageUid(folderId, uid))
@@ -431,7 +455,10 @@ async function fetchMessagesByUid(
   )) {
     if (!msg.source) continue
 
-    maxUid = maxUid == null ? msg.uid : Math.max(maxUid, msg.uid)
+    const uid = normalizeImapUint(msg.uid)
+    if (uid == null) continue
+
+    maxUid = maxUid == null ? uid : Math.max(maxUid, uid)
 
     const parsed = await simpleParser(msg.source)
     const from = formatAddress(parsed.from?.value[0])
@@ -449,7 +476,7 @@ async function fetchMessagesByUid(
     const { id, isNew } = upsertMessage({
       folderId,
       accountId,
-      uid: msg.uid,
+      uid,
       messageId: parsed.messageId,
       from,
       to,
@@ -491,21 +518,15 @@ export async function syncFolder(
   })
   updateFolderUnread(folderId, status.unseen ?? 0)
 
-  const storedValidity = getFolderUidValidity(folderId)
-  const serverValidity = status.uidValidity ?? null
-  if (
+  const storedValidity = normalizeImapUint(getFolderUidValidity(folderId))
+  const serverValidity = normalizeImapUint(status.uidValidity)
+  const validityChanged =
     storedValidity != null &&
     serverValidity != null &&
     storedValidity !== serverValidity
-  ) {
-    // UID space was reset on the server — drop stale local UIDs before fetching fresh ones.
-    clearFolderMessages(folderId)
-    maxLocalUid = null
-  } else {
-    maxLocalUid = getFolderMaxUid(folderId)
-  }
 
-  const uidNext = status.uidNext ?? 1
+  let maxLocalUid = validityChanged ? null : getFolderMaxUid(folderId)
+  const uidNext = normalizeImapUint(status.uidNext) ?? 1
 
   if (maxLocalUid != null && uidNext <= maxLocalUid + 1) {
     updateFolderSyncState(folderId, {
@@ -518,6 +539,17 @@ export async function syncFolder(
   const lock = await client.getMailboxLock(imapPath)
   try {
     const uids = await resolveUidsToFetch(client, folderId, maxLocalUid, uidNext)
+
+    if (validityChanged) {
+      if (uids.length === 0) {
+        console.warn(
+          `[orbit-mail] UIDVALIDITY changed for ${imapPath} but no UIDs to fetch; keeping local cache`
+        )
+        return 0
+      }
+      clearFolderMessages(folderId)
+    }
+
     const { newCount, maxUid } = await fetchMessagesByUid(
       client,
       accountId,
@@ -583,6 +615,7 @@ export async function syncAccount(
         )
         if (fetched > 0) {
           newCount += fetched
+          onFolderSynced?.()
         }
       }
     } finally {

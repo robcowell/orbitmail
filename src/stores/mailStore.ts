@@ -118,18 +118,23 @@ function messageListSignature(messages: MessageSummary[]): string {
     .join('|')
 }
 
-async function loadFolderMessages(
-  folderId: string | 'unified',
-  offset = 0
-): Promise<void> {
+function shouldReplaceMessageList(
+  current: MessageSummary[],
+  next: MessageSummary[]
+): boolean {
+  if (next.length > 0 && current.length === 0) return true
+  return messageListSignature(current) !== messageListSignature(next)
+}
+
+function applyMessagePage(
+  messages: MessageSummary[],
+  total: number,
+  offset: number
+): void {
   const store = useMailStore.getState()
-  const [messages, total] = await Promise.all([
-    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, offset),
-    window.orbitMail.messages.count(folderId)
-  ])
 
   if (offset === 0) {
-    if (messageListSignature(store.messages) !== messageListSignature(messages)) {
+    if (shouldReplaceMessageList(store.messages, messages)) {
       store.setMessages(messages)
     }
   } else {
@@ -141,15 +146,42 @@ async function loadFolderMessages(
   }
 }
 
+async function loadFolderMessages(
+  folderId: string | 'unified',
+  offset = 0
+): Promise<void> {
+  const [messages, total] = await Promise.all([
+    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, offset),
+    window.orbitMail.messages.count(folderId)
+  ])
+  applyMessagePage(messages, total, offset)
+}
+
 let refreshMessagesTimer: ReturnType<typeof setTimeout> | null = null
 
 /** Debounced refresh for background sync (IDLE / polling). Avoids list flicker. */
-export function scheduleRefreshMessages(delayMs = 400): void {
+export function scheduleRefreshMessages(delayMs?: number): void {
+  const resolvedDelay =
+    delayMs ??
+    (useMailStore.getState().messages.length === 0 ? 0 : 400)
   if (refreshMessagesTimer) clearTimeout(refreshMessagesTimer)
+  if (resolvedDelay === 0) {
+    void refreshMessages()
+    return
+  }
   refreshMessagesTimer = setTimeout(() => {
     refreshMessagesTimer = null
     void refreshMessages()
-  }, delayMs)
+  }, resolvedDelay)
+}
+
+/** Refresh the list when sync finishes (syncing true → false). */
+export function subscribeSyncCompleteRefresh(): () => void {
+  return useMailStore.subscribe((state, prevState) => {
+    if (prevState.syncStatus.syncing && !state.syncStatus.syncing) {
+      void refreshMessages()
+    }
+  })
 }
 
 export async function loadInitialData(): Promise<void> {
@@ -190,22 +222,15 @@ export async function loadInitialData(): Promise<void> {
 }
 
 export async function refreshMessages(): Promise<void> {
-  const store = useMailStore.getState()
-  const folderId = store.selectedFolderId
+  const folderId = useMailStore.getState().selectedFolderId
   const [messages, total, folders] = await Promise.all([
     window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, 0),
     window.orbitMail.messages.count(folderId),
     window.orbitMail.folders.list()
   ])
 
-  if (messageListSignature(store.messages) !== messageListSignature(messages)) {
-    store.setMessages(messages)
-  }
-  store.setMessageOffset(messages.length)
-  if (store.messageTotal !== total) {
-    store.setMessageTotal(total)
-  }
-  store.setFolders(folders)
+  applyMessagePage(messages, total, 0)
+  useMailStore.getState().setFolders(folders)
 }
 
 export async function loadMoreMessages(): Promise<void> {

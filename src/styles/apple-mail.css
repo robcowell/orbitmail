@@ -306,10 +306,21 @@ textarea {
 }
 
 .pane-divider {
+  position: relative;
   width: 1px;
   background: var(--border);
   cursor: col-resize;
   flex-shrink: 0;
+  touch-action: none;
+}
+
+.pane-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
 }
 
 .sidebar-section {

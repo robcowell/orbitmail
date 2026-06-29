@@ -8,8 +8,8 @@ import { AddAccountWizard } from './components/accounts/AddAccountWizard'
 import {
   useMailStore,
   loadInitialData,
-  refreshMessages,
   scheduleRefreshMessages,
+  subscribeSyncCompleteRefresh,
   saveUiPreferencesNow,
   moveMessageToTrash
 } from './stores/mailStore'
@@ -92,25 +92,16 @@ function MainApp() {
   useEffect(() => {
     exposeFlushHook()
     loadInitialData()
-    let wasSyncing = false
 
     const updateOnline = () => setIsOnline(navigator.onLine)
     updateOnline()
     window.addEventListener('online', updateOnline)
     window.addEventListener('offline', updateOnline)
 
+    const unsubSyncComplete = subscribeSyncCompleteRefresh()
+
     const unsubStatus = window.orbitMail.sync.onStatusChange((status) => {
       setSyncStatus(status)
-
-      if (status.syncing) {
-        wasSyncing = true
-        return
-      }
-
-      if (wasSyncing) {
-        wasSyncing = false
-        void refreshMessages()
-      }
     })
 
     const unsubMessages = window.orbitMail.sync.onMessagesUpdated(() => {
@@ -118,6 +109,7 @@ function MainApp() {
     })
 
     return () => {
+      unsubSyncComplete()
       unsubStatus()
       unsubMessages()
       window.removeEventListener('online', updateOnline)

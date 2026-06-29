@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { MessageSummary } from '../../../shared/types'
 import { useMailStore, selectMessage, loadMoreMessages } from '../../stores/mailStore'
+import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
-import { Tray, Flag } from '../icons'
 import { flagColorHex } from '../../constants/flags'
+import { Tray, Flag, MagnifyingGlass } from '../icons'
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
@@ -38,6 +39,9 @@ export function MessageList() {
   const searchQuery = useMailStore((s) => s.searchQuery)
   const searchResults = useMailStore((s) => s.searchResults)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
+  const selectedFolderId = useMailStore((s) => s.selectedFolderId)
+  const folders = useMailStore((s) => s.folders)
+  const accounts = useMailStore((s) => s.accounts)
   const loading = useMailStore((s) => s.loading)
   const setToast = useMailStore((s) => s.setToast)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -47,8 +51,16 @@ export function MessageList() {
     y: number
   } | null>(null)
 
-  const displayMessages = searchQuery.trim() ? searchResults : messages
-  const hasMore = !searchQuery.trim() && messages.length < messageTotal
+  const isSearching = searchQuery.trim().length > 0
+  const displayMessages = isSearching ? searchResults : messages
+  const hasMore = !isSearching && messages.length < messageTotal
+  const searchAccountId = resolveSearchAccountId(selectedFolderId, folders)
+  const searchScopeLabel = searchAccountLabel(searchAccountId, accounts)
+
+  const folderNameById = useMemo(
+    () => new Map(folders.map((folder) => [folder.id, folder.name])),
+    [folders]
+  )
 
   if (loading && displayMessages.length === 0) {
     return <EmptyState title="Loading messages…" description="Syncing your mail" />
@@ -57,11 +69,19 @@ export function MessageList() {
   if (displayMessages.length === 0) {
     return (
       <EmptyState
-        icon={<Tray size={40} weight="duotone" />}
-        title={searchQuery.trim() ? 'No results' : 'No messages'}
+        icon={
+          isSearching ? (
+            <MagnifyingGlass size={40} weight="duotone" />
+          ) : (
+            <Tray size={40} weight="duotone" />
+          )
+        }
+        title={isSearching ? 'No results' : 'No messages'}
         description={
-          searchQuery.trim()
-            ? 'Try a different search term'
+          isSearching
+            ? searchScopeLabel
+              ? `Nothing matched “${searchQuery.trim()}” in ${searchScopeLabel}`
+              : `Nothing matched “${searchQuery.trim()}”`
             : 'Your inbox is clear — enjoy the calm'
         }
       />
@@ -90,6 +110,13 @@ export function MessageList() {
 
   return (
     <div>
+      {isSearching && (
+        <div className="search-results-banner">
+          {searchResults.length} result{searchResults.length === 1 ? '' : 's'}
+          {searchScopeLabel ? ` in ${searchScopeLabel}` : ''}
+        </div>
+      )}
+
       {displayMessages.map((msg) => (
         <div
           key={msg.id}
@@ -120,6 +147,9 @@ export function MessageList() {
               </span>
             </div>
             <div className="message-subject">{msg.subject}</div>
+            {isSearching && (
+              <div className="message-folder">{folderNameById.get(msg.folderId) ?? 'Mailbox'}</div>
+            )}
             <div className="message-snippet">{msg.snippet}</div>
           </div>
         </div>

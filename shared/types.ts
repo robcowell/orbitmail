@@ -169,7 +169,7 @@ export interface OrbitMailAPI {
     onMessagesUpdated: (callback: () => void) => () => void
   }
   search: {
-    query: (text: string, limit?: number) => Promise<MessageSummary[]>
+    query: (text: string, accountId: string, limit?: number) => Promise<MessageSummary[]>
   }
   compose: {
     open: (payload?: Partial<ComposePayload>) => Promise<void>

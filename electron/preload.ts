@@ -61,7 +61,7 @@ const api: OrbitMailAPI = {
     }
   },
   search: {
-    query: (text, limit) => ipcRenderer.invoke('search:query', text, limit)
+    query: (text, accountId, limit) => ipcRenderer.invoke('search:query', text, accountId, limit)
   },
   compose: {
     open: (payload) => ipcRenderer.invoke('compose:open', payload),

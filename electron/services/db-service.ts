@@ -20,6 +20,7 @@ import {
   type AccountCredentials
 } from './account-credentials'
 import { DEFAULT_SYNC_DAYS, getSyncCutoffTimestamp } from './sync-policy'
+import { buildFtsQuery, buildLikePattern } from './search-index'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
@@ -588,7 +589,7 @@ export function upsertMessage(data: {
     }).run()
   }
 
-  upsertFts(id, data.subject, data.snippet, data.bodyText ?? '')
+  upsertFts(id, data.subject, data.snippet, data.bodyText, data.bodyHtml)
   return { id, isNew }
 }
 
@@ -795,39 +796,24 @@ export function getAttachment(attachmentId: string) {
   return db.select().from(attachments).where(eq(attachments.id, attachmentId)).get()
 }
 
-export function searchMessages(text: string, accountId: string, limit = 50): MessageSummary[] {
-  const sqlite = getRawSqlite()
-  const query = text.replace(/[^\w\s@.]/g, ' ').trim()
-  if (!query || !accountId) return []
+type SearchRow = {
+  id: string
+  folder_id: string
+  account_id: string
+  uid: number
+  message_id: string | null
+  from_addr: string
+  to_addr: string
+  subject: string
+  snippet: string
+  date: number
+  is_read: number
+  is_starred: number
+  flag_color: string | null
+  has_attachments: number
+}
 
-  const rows = sqlite
-    .prepare(
-      `SELECT m.id, m.folder_id, m.account_id, m.uid, m.message_id,
-              m.from_addr, m.to_addr, m.subject, m.snippet, m.date,
-              m.is_read, m.is_starred, m.flag_color, m.has_attachments
-       FROM messages_fts fts
-       JOIN messages m ON m.id = fts.message_id
-       WHERE messages_fts MATCH ? AND m.account_id = ?
-       ORDER BY rank, m.date DESC
-       LIMIT ?`
-    )
-    .all(query + '*', accountId, limit) as Array<{
-    id: string
-    folder_id: string
-    account_id: string
-    uid: number
-    message_id: string | null
-    from_addr: string
-    to_addr: string
-    subject: string
-    snippet: string
-    date: number
-    is_read: number
-    is_starred: number
-    flag_color: string | null
-    has_attachments: number
-  }>
-
+function mapSearchRows(rows: SearchRow[]): MessageSummary[] {
   return rows.map((r) => ({
     id: r.id,
     folderId: r.folder_id,
@@ -844,4 +830,75 @@ export function searchMessages(text: string, accountId: string, limit = 50): Mes
     flagColor: (r.flag_color as FlagColor | null) ?? null,
     hasAttachments: Boolean(r.has_attachments)
   }))
+}
+
+const SEARCH_SELECT = `SELECT m.id, m.folder_id, m.account_id, m.uid, m.message_id,
+              m.from_addr, m.to_addr, m.subject, m.snippet, m.date,
+              m.is_read, m.is_starred, m.flag_color, m.has_attachments`
+
+function searchMessagesFts(
+  sqlite: ReturnType<typeof getRawSqlite>,
+  ftsQuery: string,
+  accountId: string,
+  limit: number
+): MessageSummary[] {
+  const rows = sqlite
+    .prepare(
+      `${SEARCH_SELECT}
+       FROM messages_fts fts
+       JOIN messages m ON m.id = fts.message_id
+       WHERE messages_fts MATCH ? AND m.account_id = ?
+       ORDER BY rank, m.date DESC
+       LIMIT ?`
+    )
+    .all(ftsQuery, accountId, limit) as SearchRow[]
+
+  return mapSearchRows(rows)
+}
+
+function searchMessagesLike(
+  sqlite: ReturnType<typeof getRawSqlite>,
+  likePattern: string,
+  accountId: string,
+  limit: number
+): MessageSummary[] {
+  const rows = sqlite
+    .prepare(
+      `${SEARCH_SELECT}
+       FROM messages m
+       WHERE m.account_id = ?
+         AND (
+           m.subject LIKE ? COLLATE NOCASE OR
+           m.snippet LIKE ? COLLATE NOCASE OR
+           m.body_text LIKE ? COLLATE NOCASE OR
+           m.body_html LIKE ? COLLATE NOCASE
+         )
+       ORDER BY m.date DESC
+       LIMIT ?`
+    )
+    .all(accountId, likePattern, likePattern, likePattern, likePattern, limit) as SearchRow[]
+
+  return mapSearchRows(rows)
+}
+
+export function searchMessages(text: string, accountId: string, limit = 50): MessageSummary[] {
+  const sqlite = getRawSqlite()
+  const ftsQuery = buildFtsQuery(text)
+  const likePattern = buildLikePattern(text)
+  if ((!ftsQuery && !likePattern) || !accountId) return []
+
+  if (ftsQuery) {
+    try {
+      const ftsResults = searchMessagesFts(sqlite, ftsQuery, accountId, limit)
+      if (ftsResults.length > 0) return ftsResults
+    } catch {
+      // Fall back to LIKE if the FTS query is malformed.
+    }
+  }
+
+  if (likePattern) {
+    return searchMessagesLike(sqlite, likePattern, accountId, limit)
+  }
+
+  return []
 }

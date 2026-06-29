@@ -4,6 +4,7 @@ import { existsSync, mkdirSync } from 'fs'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
+import { indexMessageInFts, migrateFtsIndex } from '../services/search-index'
 
 let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null
 let sqliteInstance: Database.Database | null = null
@@ -152,6 +153,7 @@ export function getDb() {
     sqliteInstance.pragma('foreign_keys = ON')
     initTables(sqliteInstance)
     initFts(sqliteInstance)
+    migrateFtsIndex(sqliteInstance)
     dbInstance = drizzle(sqliteInstance, { schema })
   }
   return dbInstance
@@ -166,15 +168,10 @@ export function upsertFts(
   messageId: string,
   subject: string,
   snippet: string,
-  bodyText: string
+  bodyText?: string | null,
+  bodyHtml?: string | null
 ): void {
-  const db = getRawSqlite()
-  db.prepare('DELETE FROM messages_fts WHERE message_id = ?').run(messageId)
-  db
-    .prepare(
-      'INSERT INTO messages_fts (message_id, subject, snippet, body_text) VALUES (?, ?, ?, ?)'
-    )
-    .run(messageId, subject, snippet, bodyText ?? '')
+  indexMessageInFts(getRawSqlite(), messageId, subject, snippet, bodyText, bodyHtml)
 }
 
 export function deleteFts(messageId: string): void {

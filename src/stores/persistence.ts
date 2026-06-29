@@ -10,7 +10,8 @@ export function getUiSnapshot(): UiPreferences {
     darkMode: useThemeStore.getState().darkMode,
     selectedFolderId: mail.selectedFolderId,
     selectedMessageId: mail.selectedMessageId,
-    collapsedAccountIds: mail.collapsedAccountIds
+    collapsedAccountIds: mail.collapsedAccountIds,
+    favoriteFolderIds: mail.favoriteFolderIds
   }
 }
 
@@ -19,7 +20,8 @@ export function applyUiPreferences(ui: UiPreferences): void {
   useMailStore.setState({
     selectedFolderId: ui.selectedFolderId,
     selectedMessageId: ui.selectedMessageId,
-    collapsedAccountIds: ui.collapsedAccountIds
+    collapsedAccountIds: ui.collapsedAccountIds,
+    favoriteFolderIds: ui.favoriteFolderIds
   })
 }
 

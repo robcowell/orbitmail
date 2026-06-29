@@ -33,6 +33,18 @@ export interface Account {
   displayName: string
 }
 
+export interface AccountInfo {
+  id: string
+  provider: Provider
+  providerLabel: string
+  email: string
+  displayName: string
+  createdAt: number
+  folderCount: number
+  messageCount: number
+  unreadCount: number
+}
+
 export interface Folder {
   id: string
   accountId: string
@@ -105,6 +117,7 @@ export interface UiPreferences {
   selectedFolderId: string | 'unified'
   selectedMessageId: string | null
   collapsedAccountIds: Record<string, boolean>
+  favoriteFolderIds: string[]
 }
 
 export interface PersistedAppState {
@@ -121,15 +134,22 @@ export interface PersistedAppState {
 }
 
 export interface OrbitMailAPI {
+  folders: {
+    list: (accountId?: string) => Promise<Folder[]>
+    create: (accountId: string, name: string) => Promise<void>
+    export: (folderId: string) => Promise<number>
+    emptyTrash: (accountId: string) => Promise<number>
+    emptyJunk: (accountId: string) => Promise<number>
+    markAllRead: (folderId: string) => Promise<number>
+  }
   accounts: {
     list: () => Promise<Account[]>
     add: (provider: 'gmail' | 'o365') => Promise<Account>
     addManual: (input: ManualAccountInput) => Promise<Account>
     autodetect: (email: string) => Promise<AutodetectResult>
     remove: (accountId: string) => Promise<void>
-  }
-  folders: {
-    list: (accountId?: string) => Promise<Folder[]>
+    getInfo: (accountId: string) => Promise<AccountInfo>
+    updateDisplayName: (accountId: string, displayName: string) => Promise<Account>
   }
   messages: {
     list: (folderId: string | 'unified', limit?: number, offset?: number) => Promise<MessageSummary[]>

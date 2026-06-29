@@ -17,7 +17,8 @@ import {
   deleteMessage,
   getFolderById,
   searchMessages,
-  getAttachment
+  getAttachment,
+  updateAccountDisplayName
 } from './services/db-service'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
@@ -48,6 +49,13 @@ import {
 import { sendMail, buildReplyPayload } from './services/smtp-send'
 import { autodetectMailSettings } from './services/mail-autoconfig'
 import { addManualAccount } from './services/manual-account'
+import {
+  getAccountInfo,
+  createMailbox,
+  exportMailboxToMbox,
+  emptySpecialFolder,
+  markFolderAllRead
+} from './services/folder-actions'
 import {
   getAppState,
   patchAppState,
@@ -314,6 +322,51 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('folders:list', (_, accountId?: string) => listFolders(accountId))
+
+  ipcMain.handle('folders:create', async (_, accountId: string, name: string) => {
+    await createMailbox(accountId, name)
+    await pollForNewMessages()
+  })
+
+  ipcMain.handle('folders:export', async (_, folderId: string) => {
+    const folder = getFolderById(folderId)
+    if (!folder) throw new Error('Folder not found')
+
+    const safeName = folder.name.replace(/[^\w\s-]/g, '').trim() || 'mailbox'
+    const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+      defaultPath: `${safeName}.mbox`,
+      filters: [{ name: 'Mailbox', extensions: ['mbox'] }]
+    })
+    if (result.canceled || !result.filePath) return -1
+
+    return exportMailboxToMbox(folderId, result.filePath)
+  })
+
+  ipcMain.handle('folders:emptyTrash', async (_, accountId: string) => {
+    const count = await emptySpecialFolder(accountId, 'trash')
+    await pollForNewMessages()
+    mainWindow?.webContents.send('sync:messagesUpdated')
+    return count
+  })
+
+  ipcMain.handle('folders:emptyJunk', async (_, accountId: string) => {
+    const count = await emptySpecialFolder(accountId, 'junk')
+    await pollForNewMessages()
+    mainWindow?.webContents.send('sync:messagesUpdated')
+    return count
+  })
+
+  ipcMain.handle('folders:markAllRead', async (_, folderId: string) => {
+    const count = await markFolderAllRead(folderId)
+    mainWindow?.webContents.send('sync:messagesUpdated')
+    return count
+  })
+
+  ipcMain.handle('accounts:getInfo', (_, accountId: string) => getAccountInfo(accountId))
+
+  ipcMain.handle('accounts:updateDisplayName', (_, accountId: string, displayName: string) =>
+    updateAccountDisplayName(accountId, displayName)
+  )
 
   ipcMain.handle(
     'messages:list',

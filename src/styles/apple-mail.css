@@ -765,6 +765,32 @@ textarea {
   flex-direction: column;
 }
 
+.account-info-list {
+  margin: 0 0 20px;
+  display: grid;
+  gap: 10px;
+}
+
+.account-info-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.account-info-row dt {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.account-info-row dd {
+  margin: 0;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
 .account-field {
   display: flex;
   flex-direction: column;

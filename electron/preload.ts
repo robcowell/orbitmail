@@ -16,10 +16,18 @@ const api: OrbitMailAPI = {
     addManual: (input: ManualAccountInput) =>
       ipcRenderer.invoke('accounts:addManual', input),
     autodetect: (email) => ipcRenderer.invoke('accounts:autodetect', email),
-    remove: (accountId) => ipcRenderer.invoke('accounts:remove', accountId)
+    remove: (accountId) => ipcRenderer.invoke('accounts:remove', accountId),
+    getInfo: (accountId) => ipcRenderer.invoke('accounts:getInfo', accountId),
+    updateDisplayName: (accountId, displayName) =>
+      ipcRenderer.invoke('accounts:updateDisplayName', accountId, displayName)
   },
   folders: {
-    list: (accountId) => ipcRenderer.invoke('folders:list', accountId)
+    list: (accountId) => ipcRenderer.invoke('folders:list', accountId),
+    create: (accountId, name) => ipcRenderer.invoke('folders:create', accountId, name),
+    export: (folderId) => ipcRenderer.invoke('folders:export', folderId),
+    emptyTrash: (accountId) => ipcRenderer.invoke('folders:emptyTrash', accountId),
+    emptyJunk: (accountId) => ipcRenderer.invoke('folders:emptyJunk', accountId),
+    markAllRead: (folderId) => ipcRenderer.invoke('folders:markAllRead', folderId)
   },
   messages: {
     list: (folderId, limit, offset) =>

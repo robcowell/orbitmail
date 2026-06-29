@@ -1,5 +1,5 @@
-import { useMemo, useState, useRef, useEffect } from 'react'
-import type { Account, FolderType } from '../../../shared/types'
+import { useMemo, useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react'
+import type { Account, Folder, FolderType } from '../../../shared/types'
 import {
   useMailStore,
   selectFolder,
@@ -7,6 +7,8 @@ import {
   syncAccountById
 } from '../../stores/mailStore'
 import { AppBrand } from '../brand/AppBrand'
+import { FolderContextMenu } from './FolderContextMenu'
+import { AccountInfoDialog } from './AccountInfoDialog'
 import {
   sidebarIconProps,
   FOLDER_ICON_MAP,
@@ -23,6 +25,40 @@ const STANDARD_TYPES: FolderType[] = ['inbox', 'sent', 'drafts', 'trash', 'junk'
 function accountLabel(account: Account): string {
   if (account.displayName === account.email) return account.email
   return `${account.displayName} (${account.email})`
+}
+
+interface FolderContextTarget {
+  folder: Folder
+  account: Account
+  x: number
+  y: number
+}
+
+function FolderRow({
+  folder,
+  isActive,
+  onSelect,
+  onContextMenu
+}: {
+  folder: Folder
+  isActive: boolean
+  onSelect: () => void
+  onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>) => void
+}) {
+  const Icon = FOLDER_ICON_MAP[folder.type]
+  const colorClass = FOLDER_COLOR_CLASS[folder.type]
+
+  return (
+    <button
+      className={`sidebar-item${isActive ? ' active' : ''}`}
+      onClick={onSelect}
+      onContextMenu={onContextMenu}
+    >
+      <Icon {...sidebarIconProps} className={`sidebar-item-icon ${colorClass}`} />
+      <span className="sidebar-item-label">{folder.name}</span>
+      {folder.unreadCount > 0 && <span className="sidebar-badge">{folder.unreadCount}</span>}
+    </button>
+  )
 }
 
 function AccountMenu({
@@ -60,7 +96,13 @@ function AccountMenu({
   )
 }
 
-function AccountSection({ account }: { account: Account }) {
+function AccountSection({
+  account,
+  onFolderContextMenu
+}: {
+  account: Account
+  onFolderContextMenu: (target: FolderContextTarget) => void
+}) {
   const folders = useMailStore((s) => s.folders)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const collapsed = useMailStore((s) => s.collapsedAccountIds[account.id] ?? false)
@@ -86,6 +128,16 @@ function AccountSection({ account }: { account: Account }) {
 
   const byType = (type: FolderType) => accountFolders.find((f) => f.type === type)
   const customFolders = accountFolders.filter((f) => f.type === 'custom')
+
+  const openFolderMenu = (folder: Folder) => (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    onFolderContextMenu({
+      folder,
+      account,
+      x: event.clientX,
+      y: event.clientY
+    })
+  }
 
   return (
     <div className="sidebar-section">
@@ -119,37 +171,24 @@ function AccountSection({ account }: { account: Account }) {
           {STANDARD_TYPES.map((type) => {
             const folder = byType(type)
             if (!folder) return null
-            const Icon = FOLDER_ICON_MAP[type]
-            const isActive = selectedFolderId === folder.id
             return (
-              <button
+              <FolderRow
                 key={folder.id}
-                className={`sidebar-item${isActive ? ' active' : ''}`}
-                onClick={() => selectFolder(folder.id)}
-              >
-                <Icon
-                  {...sidebarIconProps}
-                  className={`sidebar-item-icon ${FOLDER_COLOR_CLASS[type]}`}
-                />
-                <span className="sidebar-item-label">{folder.name}</span>
-                {folder.unreadCount > 0 && (
-                  <span className="sidebar-badge">{folder.unreadCount}</span>
-                )}
-              </button>
+                folder={folder}
+                isActive={selectedFolderId === folder.id}
+                onSelect={() => selectFolder(folder.id)}
+                onContextMenu={openFolderMenu(folder)}
+              />
             )
           })}
           {customFolders.map((folder) => (
-            <button
+            <FolderRow
               key={folder.id}
-              className={`sidebar-item${selectedFolderId === folder.id ? ' active' : ''}`}
-              onClick={() => selectFolder(folder.id)}
-            >
-              <FOLDER_ICON_MAP.custom
-                {...sidebarIconProps}
-                className={`sidebar-item-icon ${FOLDER_COLOR_CLASS.custom}`}
-              />
-              <span className="sidebar-item-label">{folder.name}</span>
-            </button>
+              folder={folder}
+              isActive={selectedFolderId === folder.id}
+              onSelect={() => selectFolder(folder.id)}
+              onContextMenu={openFolderMenu(folder)}
+            />
           ))}
         </div>
       )}
@@ -159,8 +198,24 @@ function AccountSection({ account }: { account: Account }) {
 
 export function Sidebar() {
   const accounts = useMailStore((s) => s.accounts)
+  const folders = useMailStore((s) => s.folders)
+  const favoriteFolderIds = useMailStore((s) => s.favoriteFolderIds)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
+  const [folderMenu, setFolderMenu] = useState<FolderContextTarget | null>(null)
+  const [accountInfoId, setAccountInfoId] = useState<string | null>(null)
+
+  const favoriteFolders = useMemo(() => {
+    const byId = new Map(folders.map((folder) => [folder.id, folder]))
+    return favoriteFolderIds
+      .map((id) => byId.get(id))
+      .filter((folder): folder is Folder => Boolean(folder))
+  }, [favoriteFolderIds, folders])
+
+  const accountById = useMemo(
+    () => new Map(accounts.map((account) => [account.id, account])),
+    [accounts]
+  )
 
   return (
     <div>
@@ -181,8 +236,39 @@ export function Sidebar() {
         </button>
       </div>
 
+      {favoriteFolders.length > 0 && (
+        <div className="sidebar-section">
+          <div className="sidebar-section-title">Favourites</div>
+          {favoriteFolders.map((folder) => {
+            const account = accountById.get(folder.accountId)
+            if (!account) return null
+            return (
+              <FolderRow
+                key={folder.id}
+                folder={folder}
+                isActive={selectedFolderId === folder.id}
+                onSelect={() => selectFolder(folder.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  setFolderMenu({
+                    folder,
+                    account,
+                    x: event.clientX,
+                    y: event.clientY
+                  })
+                }}
+              />
+            )
+          })}
+        </div>
+      )}
+
       {accounts.map((account) => (
-        <AccountSection key={account.id} account={account} />
+        <AccountSection
+          key={account.id}
+          account={account}
+          onFolderContextMenu={setFolderMenu}
+        />
       ))}
 
       <div className="sidebar-section">
@@ -191,6 +277,24 @@ export function Sidebar() {
           <span className="sidebar-item-label">Add Account</span>
         </button>
       </div>
+
+      {folderMenu && (
+        <FolderContextMenu
+          folder={folderMenu.folder}
+          account={folderMenu.account}
+          x={folderMenu.x}
+          y={folderMenu.y}
+          onClose={() => setFolderMenu(null)}
+          onShowAccountInfo={(accountId) => {
+            setFolderMenu(null)
+            setAccountInfoId(accountId)
+          }}
+        />
+      )}
+
+      {accountInfoId && (
+        <AccountInfoDialog accountId={accountInfoId} onClose={() => setAccountInfoId(null)} />
+      )}
     </div>
   )
 }

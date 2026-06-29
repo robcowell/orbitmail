@@ -7,6 +7,7 @@ export interface UiPreferences {
   selectedFolderId: string | 'unified'
   selectedMessageId: string | null
   collapsedAccountIds: Record<string, boolean>
+  favoriteFolderIds: string[]
 }
 
 export interface WindowPreferences {
@@ -26,7 +27,8 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   darkMode: false,
   selectedFolderId: 'unified',
   selectedMessageId: null,
-  collapsedAccountIds: {}
+  collapsedAccountIds: {},
+  favoriteFolderIds: []
 }
 
 export const DEFAULT_APP_STATE: PersistedAppState = {

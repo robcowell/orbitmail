@@ -33,6 +33,7 @@ interface MailState {
   loading: boolean
   isOnline: boolean
   collapsedAccountIds: Record<string, boolean>
+  favoriteFolderIds: string[]
 
   setAccounts: (accounts: Account[]) => void
   setFolders: (folders: Folder[]) => void
@@ -52,6 +53,7 @@ interface MailState {
   setIsOnline: (online: boolean) => void
   toggleAccountCollapsed: (accountId: string) => void
   expandAccount: (accountId: string) => void
+  toggleFavoriteFolder: (folderId: string) => void
 }
 
 export const useMailStore = create<MailState>((set) => ({
@@ -71,6 +73,7 @@ export const useMailStore = create<MailState>((set) => ({
   loading: false,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   collapsedAccountIds: {},
+  favoriteFolderIds: [],
 
   setAccounts: (accounts) => set({ accounts }),
   setFolders: (folders) => set({ folders }),
@@ -106,6 +109,15 @@ export const useMailStore = create<MailState>((set) => ({
       }
       scheduleSaveUiPreferences({ collapsedAccountIds })
       return { collapsedAccountIds }
+    }),
+  toggleFavoriteFolder: (folderId) =>
+    set((state) => {
+      const has = state.favoriteFolderIds.includes(folderId)
+      const favoriteFolderIds = has
+        ? state.favoriteFolderIds.filter((id) => id !== folderId)
+        : [...state.favoriteFolderIds, folderId]
+      scheduleSaveUiPreferences({ favoriteFolderIds })
+      return { favoriteFolderIds }
     })
 }))
 
@@ -286,8 +298,83 @@ export async function syncAccountById(accountId: string): Promise<void> {
   try {
     await window.orbitMail.sync.refresh(accountId)
     store.setToast('Account synced')
+    await refreshMessages()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Sync failed')
+  }
+}
+
+export async function createMailboxForAccount(accountId: string, name: string): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    await window.orbitMail.folders.create(accountId, name)
+    const folders = await window.orbitMail.folders.list()
+    store.setFolders(folders)
+    store.setToast(`Created mailbox “${name.trim()}”`)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Failed to create mailbox')
+    throw err
+  }
+}
+
+export async function exportMailbox(folderId: string): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    const exported = await window.orbitMail.folders.export(folderId)
+    if (exported < 0) return
+    store.setToast(
+      exported === 0 ? 'Mailbox exported (no messages)' : `Exported ${exported} messages`
+    )
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Export failed')
+  }
+}
+
+export async function emptyTrashForAccount(accountId: string): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    const count = await window.orbitMail.folders.emptyTrash(accountId)
+    await refreshMessages()
+    store.setToast(count === 0 ? 'Trash is already empty' : `Erased ${count} deleted items`)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Failed to erase deleted items')
+  }
+}
+
+export async function emptyJunkForAccount(accountId: string): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    const count = await window.orbitMail.folders.emptyJunk(accountId)
+    await refreshMessages()
+    store.setToast(count === 0 ? 'Junk is already empty' : `Erased ${count} junk messages`)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Failed to erase junk mail')
+  }
+}
+
+export async function markAllReadInFolder(folderId: string): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    const count = await window.orbitMail.folders.markAllRead(folderId)
+    await refreshMessages()
+    store.setToast(count === 0 ? 'All messages already read' : `Marked ${count} messages as read`)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Failed to mark messages as read')
+  }
+}
+
+export async function updateAccountDisplayName(
+  accountId: string,
+  displayName: string
+): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    const account = await window.orbitMail.accounts.updateDisplayName(accountId, displayName)
+    store.setAccounts(store.accounts.map((a) => (a.id === accountId ? account : a)))
+    store.setToast('Account updated')
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Failed to update account')
+    throw err
   }
 }
 

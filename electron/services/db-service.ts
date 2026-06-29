@@ -150,6 +150,53 @@ export function listAccounts(): Account[] {
   }))
 }
 
+export function getAccountById(accountId: string): (Account & { createdAt: number }) | null {
+  const db = getDb()
+  const row = db.select().from(accounts).where(eq(accounts.id, accountId)).get()
+  if (!row) return null
+  return {
+    id: row.id,
+    provider: row.provider as Provider,
+    email: row.email,
+    displayName: row.displayName,
+    createdAt: row.createdAt
+  }
+}
+
+export function updateAccountDisplayName(accountId: string, displayName: string): Account {
+  const db = getDb()
+  db.update(accounts).set({ displayName }).where(eq(accounts.id, accountId)).run()
+  const row = db.select().from(accounts).where(eq(accounts.id, accountId)).get()
+  if (!row) throw new Error('Account not found')
+  return {
+    id: row.id,
+    provider: row.provider as Provider,
+    email: row.email,
+    displayName: row.displayName
+  }
+}
+
+export function markAllMessagesReadInFolder(folderId: string): number {
+  const db = getDb()
+  const unread = db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.folderId, folderId), eq(messages.isRead, false)))
+    .all()
+
+  if (unread.length === 0) {
+    recalculateFolderUnread(folderId)
+    return 0
+  }
+
+  db.update(messages)
+    .set({ isRead: true })
+    .where(and(eq(messages.folderId, folderId), eq(messages.isRead, false)))
+    .run()
+  recalculateFolderUnread(folderId)
+  return unread.length
+}
+
 export function removeAccount(accountId: string): void {
   const db = getDb()
   db.delete(accounts).where(eq(accounts.id, accountId)).run()

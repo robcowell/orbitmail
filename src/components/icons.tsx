@@ -29,7 +29,11 @@ import {
   ArrowBendDoubleUpLeft,
   ShareNetwork,
   EnvelopeOpen,
-  ListChecks
+  ListChecks,
+  FolderPlus,
+  Export,
+  PencilSimple,
+  Info
 } from '@phosphor-icons/react'
 import type { FolderType } from '../../shared/types'
 
@@ -91,7 +95,11 @@ export {
   ArrowBendDoubleUpLeft,
   ShareNetwork,
   EnvelopeOpen,
-  ListChecks
+  ListChecks,
+  FolderPlus,
+  Export,
+  PencilSimple,
+  Info
 }
 
 export type { IconProps }

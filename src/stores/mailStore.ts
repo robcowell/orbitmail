@@ -109,6 +109,15 @@ export const useMailStore = create<MailState>((set) => ({
     })
 }))
 
+function messageListSignature(messages: MessageSummary[]): string {
+  return messages
+    .map(
+      (m) =>
+        `${m.id}:${m.isRead ? 1 : 0}:${m.isStarred ? 1 : 0}:${m.flagColor ?? ''}:${m.date}`
+    )
+    .join('|')
+}
+
 async function loadFolderMessages(
   folderId: string | 'unified',
   offset = 0
@@ -120,12 +129,27 @@ async function loadFolderMessages(
   ])
 
   if (offset === 0) {
-    store.setMessages(messages)
+    if (messageListSignature(store.messages) !== messageListSignature(messages)) {
+      store.setMessages(messages)
+    }
   } else {
     store.appendMessages(messages)
   }
   store.setMessageOffset(offset + messages.length)
-  store.setMessageTotal(total)
+  if (store.messageTotal !== total) {
+    store.setMessageTotal(total)
+  }
+}
+
+let refreshMessagesTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Debounced refresh for background sync (IDLE / polling). Avoids list flicker. */
+export function scheduleRefreshMessages(delayMs = 400): void {
+  if (refreshMessagesTimer) clearTimeout(refreshMessagesTimer)
+  refreshMessagesTimer = setTimeout(() => {
+    refreshMessagesTimer = null
+    void refreshMessages()
+  }, delayMs)
 }
 
 export async function loadInitialData(): Promise<void> {
@@ -167,9 +191,20 @@ export async function loadInitialData(): Promise<void> {
 
 export async function refreshMessages(): Promise<void> {
   const store = useMailStore.getState()
-  store.setMessageOffset(0)
-  await loadFolderMessages(store.selectedFolderId, 0)
-  const folders = await window.orbitMail.folders.list()
+  const folderId = store.selectedFolderId
+  const [messages, total, folders] = await Promise.all([
+    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, 0),
+    window.orbitMail.messages.count(folderId),
+    window.orbitMail.folders.list()
+  ])
+
+  if (messageListSignature(store.messages) !== messageListSignature(messages)) {
+    store.setMessages(messages)
+  }
+  store.setMessageOffset(messages.length)
+  if (store.messageTotal !== total) {
+    store.setMessageTotal(total)
+  }
   store.setFolders(folders)
 }
 
@@ -225,7 +260,6 @@ export async function syncAccountById(accountId: string): Promise<void> {
   const store = useMailStore.getState()
   try {
     await window.orbitMail.sync.refresh(accountId)
-    await refreshMessages()
     store.setToast('Account synced')
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Sync failed')

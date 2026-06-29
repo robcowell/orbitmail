@@ -113,7 +113,11 @@ function setSyncStatus(patch: Partial<SyncStatusState>): void {
 }
 
 function incrementSyncProgress(by = 1): void {
-  setSyncStatus({ syncCurrent: syncStatus.syncCurrent + by })
+  const syncCurrent = syncStatus.syncCurrent + by
+  setSyncStatus({
+    syncCurrent,
+    syncTotal: Math.max(syncStatus.syncTotal, syncCurrent)
+  })
 }
 
 const SYNC_BATCH_SIZE = 200
@@ -149,7 +153,20 @@ async function countNewMessagesForAccount(
         detectFolderType(mb.name, mb.specialUse)
       )
       const status = await client.status(mb.path, { uidNext: true, uidValidity: true })
-      total += estimateNewMessagesInFolder(getFolderMaxUid(folder.id), status.uidNext ?? 1)
+      const storedValidity = getFolderUidValidity(folder.id)
+      const serverValidity = status.uidValidity ?? null
+      const highestUid = Math.max(0, (status.uidNext ?? 1) - 1)
+
+      if (
+        storedValidity != null &&
+        serverValidity != null &&
+        storedValidity !== serverValidity
+      ) {
+        // Folder will be re-synced from scratch; initial batch can exceed incremental estimate.
+        total += Math.min(SYNC_BATCH_SIZE, highestUid)
+      } else {
+        total += estimateNewMessagesInFolder(getFolderMaxUid(folder.id), status.uidNext ?? 1)
+      }
     }
   } finally {
     await client.logout()
@@ -481,10 +498,13 @@ export async function syncFolder(
     serverValidity != null &&
     storedValidity !== serverValidity
   ) {
+    // UID space was reset on the server — drop stale local UIDs before fetching fresh ones.
     clearFolderMessages(folderId)
+    maxLocalUid = null
+  } else {
+    maxLocalUid = getFolderMaxUid(folderId)
   }
 
-  let maxLocalUid = getFolderMaxUid(folderId)
   const uidNext = status.uidNext ?? 1
 
   if (maxLocalUid != null && uidNext <= maxLocalUid + 1) {
@@ -563,7 +583,6 @@ export async function syncAccount(
         )
         if (fetched > 0) {
           newCount += fetched
-          onFolderSynced?.()
         }
       }
     } finally {
@@ -603,6 +622,10 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
       syncCurrent: fetched,
       syncTotal: Math.max(fetched, total, 1)
     })
+
+    if (fetched > 0) {
+      onFolderSynced?.()
+    }
   } catch (err) {
     const message = accountSyncError(
       getAccountTokens(accountId)?.email ?? accountId,
@@ -655,6 +678,10 @@ export async function refreshAllAccounts(): Promise<void> {
     syncCurrent: fetchedTotal,
     syncTotal: Math.max(fetchedTotal, estimatedTotal, 1)
   })
+
+  if (fetchedTotal > 0) {
+    onFolderSynced?.()
+  }
 
   if (errors.length === accounts.length && accounts.length > 0) {
     throw new Error(errors.join('\n\n'))

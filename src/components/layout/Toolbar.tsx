@@ -122,7 +122,6 @@ export function Toolbar() {
     }
     try {
       await window.orbitMail.sync.refresh()
-      await refreshMessages()
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Sync failed')
     }

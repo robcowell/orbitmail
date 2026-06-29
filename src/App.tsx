@@ -9,6 +9,7 @@ import {
   useMailStore,
   loadInitialData,
   refreshMessages,
+  scheduleRefreshMessages,
   saveUiPreferencesNow,
   moveMessageToTrash
 } from './stores/mailStore'
@@ -22,13 +23,14 @@ function StatusBar() {
 
   const syncLabel =
     syncStatus.syncTotal > 0
-      ? `Syncing ${syncStatus.syncCurrent} of ${syncStatus.syncTotal}…`
+      ? syncStatus.syncCurrent >= syncStatus.syncTotal
+        ? `Syncing ${syncStatus.syncCurrent} messages…`
+        : `Syncing ${syncStatus.syncCurrent} of ${syncStatus.syncTotal}…`
       : 'Syncing…'
 
   const handleRetrySync = async () => {
     try {
       await window.orbitMail.sync.refresh()
-      await refreshMessages()
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Sync failed')
     }
@@ -90,8 +92,7 @@ function MainApp() {
   useEffect(() => {
     exposeFlushHook()
     loadInitialData()
-    let lastRefreshAt = 0
-    let lastSyncCurrent = -1
+    let wasSyncing = false
 
     const updateOnline = () => setIsOnline(navigator.onLine)
     updateOnline()
@@ -102,27 +103,18 @@ function MainApp() {
       setSyncStatus(status)
 
       if (status.syncing) {
-        const shouldRefresh =
-          status.syncCurrent !== lastSyncCurrent &&
-          (status.syncCurrent - lastSyncCurrent >= 10 ||
-            status.syncCurrent === 0 ||
-            Date.now() - lastRefreshAt >= 1000)
-
-        if (shouldRefresh) {
-          lastSyncCurrent = status.syncCurrent
-          lastRefreshAt = Date.now()
-          refreshMessages()
-        }
+        wasSyncing = true
         return
       }
 
-      if (status.lastSyncAt) {
-        refreshMessages()
+      if (wasSyncing) {
+        wasSyncing = false
+        void refreshMessages()
       }
     })
 
     const unsubMessages = window.orbitMail.sync.onMessagesUpdated(() => {
-      refreshMessages()
+      scheduleRefreshMessages()
     })
 
     return () => {

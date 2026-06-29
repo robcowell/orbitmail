@@ -1,92 +1,121 @@
-import {
-  Inbox,
-  Send,
-  FileText,
-  Trash2,
-  AlertOctagon,
-  Folder,
-  Plus,
-  Mail
-} from 'lucide-react'
-import type { FolderType } from '../../../shared/types'
+import { useMemo } from 'react'
+import type { Account, FolderType } from '../../../shared/types'
 import { useMailStore, selectFolder } from '../../stores/mailStore'
+import { AppBrand } from '../brand/AppBrand'
+import {
+  sidebarIconProps,
+  FOLDER_ICON_MAP,
+  FOLDER_COLOR_CLASS,
+  TrayArrowDown,
+  PlusCircle
+} from '../icons'
 
-const FOLDER_ICONS: Record<FolderType, typeof Inbox> = {
-  inbox: Inbox,
-  sent: Send,
-  drafts: FileText,
-  trash: Trash2,
-  junk: AlertOctagon,
-  custom: Folder
+const STANDARD_TYPES: FolderType[] = ['inbox', 'sent', 'drafts', 'trash', 'junk']
+
+function accountLabel(account: Account): string {
+  if (account.displayName === account.email) return account.email
+  return `${account.displayName} (${account.email})`
+}
+
+function AccountSection({ account }: { account: Account }) {
+  const folders = useMailStore((s) => s.folders)
+  const selectedFolderId = useMailStore((s) => s.selectedFolderId)
+  const collapsed = useMailStore((s) => s.collapsedAccountIds[account.id] ?? false)
+  const toggleAccountCollapsed = useMailStore((s) => s.toggleAccountCollapsed)
+
+  const accountFolders = useMemo(
+    () => folders.filter((f) => f.accountId === account.id),
+    [folders, account.id]
+  )
+
+  const byType = (type: FolderType) => accountFolders.find((f) => f.type === type)
+  const customFolders = accountFolders.filter((f) => f.type === 'custom')
+
+  return (
+    <div className="sidebar-section">
+      <button
+        type="button"
+        className="sidebar-account-header"
+        onClick={() => toggleAccountCollapsed(account.id)}
+        aria-expanded={!collapsed}
+      >
+        <span className="sidebar-account-label">{accountLabel(account)}</span>
+      </button>
+
+      {!collapsed && (
+        <div className="sidebar-account-folders">
+          {STANDARD_TYPES.map((type) => {
+            const folder = byType(type)
+            if (!folder) return null
+            const Icon = FOLDER_ICON_MAP[type]
+            const isActive = selectedFolderId === folder.id
+            return (
+              <button
+                key={folder.id}
+                className={`sidebar-item${isActive ? ' active' : ''}`}
+                onClick={() => selectFolder(folder.id)}
+              >
+                <Icon
+                  {...sidebarIconProps}
+                  className={`sidebar-item-icon ${FOLDER_COLOR_CLASS[type]}`}
+                />
+                <span className="sidebar-item-label">{folder.name}</span>
+                {folder.unreadCount > 0 && (
+                  <span className="sidebar-badge">{folder.unreadCount}</span>
+                )}
+              </button>
+            )
+          })}
+          {customFolders.map((folder) => (
+            <button
+              key={folder.id}
+              className={`sidebar-item${selectedFolderId === folder.id ? ' active' : ''}`}
+              onClick={() => selectFolder(folder.id)}
+            >
+              <FOLDER_ICON_MAP.custom
+                {...sidebarIconProps}
+                className={`sidebar-item-icon ${FOLDER_COLOR_CLASS.custom}`}
+              />
+              <span className="sidebar-item-label">{folder.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function Sidebar() {
   const accounts = useMailStore((s) => s.accounts)
-  const folders = useMailStore((s) => s.folders)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
 
-  const standardTypes: FolderType[] = ['inbox', 'sent', 'drafts', 'trash', 'junk']
-
   return (
     <div>
+      <div className="sidebar-brand">
+        <AppBrand />
+      </div>
+
       <div className="sidebar-section">
         <button
-          className="sidebar-item"
+          className={`sidebar-item${selectedFolderId === 'unified' ? ' active' : ''}`}
           onClick={() => selectFolder('unified')}
-          style={{ fontWeight: selectedFolderId === 'unified' ? 600 : 400 }}
         >
-          <Mail size={16} className="sidebar-item-icon" />
+          <TrayArrowDown
+            {...sidebarIconProps}
+            className="sidebar-item-icon folder-icon-unified"
+          />
           <span className="sidebar-item-label">All Inboxes</span>
         </button>
       </div>
 
-      {accounts.map((account) => {
-        const accountFolders = folders.filter((f) => f.accountId === account.id)
-        const byType = (type: FolderType) =>
-          accountFolders.find((f) => f.type === type)
-
-        return (
-          <div className="sidebar-section" key={account.id}>
-            <div className="sidebar-section-title">{account.displayName}</div>
-            {standardTypes.map((type) => {
-              const folder = byType(type)
-              if (!folder) return null
-              const Icon = FOLDER_ICONS[type]
-              const isActive = selectedFolderId === folder.id
-              return (
-                <button
-                  key={folder.id}
-                  className={`sidebar-item${isActive ? ' active' : ''}`}
-                  onClick={() => selectFolder(folder.id)}
-                >
-                  <Icon size={16} className="sidebar-item-icon" />
-                  <span className="sidebar-item-label">{folder.name}</span>
-                  {folder.unreadCount > 0 && (
-                    <span className="sidebar-badge">{folder.unreadCount}</span>
-                  )}
-                </button>
-              )
-            })}
-            {accountFolders
-              .filter((f) => f.type === 'custom')
-              .map((folder) => (
-                <button
-                  key={folder.id}
-                  className={`sidebar-item${selectedFolderId === folder.id ? ' active' : ''}`}
-                  onClick={() => selectFolder(folder.id)}
-                >
-                  <Folder size={16} className="sidebar-item-icon" />
-                  <span className="sidebar-item-label">{folder.name}</span>
-                </button>
-              ))}
-          </div>
-        )
-      })}
+      {accounts.map((account) => (
+        <AccountSection key={account.id} account={account} />
+      ))}
 
       <div className="sidebar-section">
-        <button className="sidebar-item" onClick={() => setShowAddAccount(true)}>
-          <Plus size={16} className="sidebar-item-icon" />
+        <button className="sidebar-item sidebar-item-accent" onClick={() => setShowAddAccount(true)}>
+          <PlusCircle {...sidebarIconProps} className="sidebar-item-icon folder-icon-unified" />
           <span className="sidebar-item-label">Add Account</span>
         </button>
       </div>

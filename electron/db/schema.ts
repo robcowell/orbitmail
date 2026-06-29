@@ -2,7 +2,7 @@ import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core'
 
 export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
-  provider: text('provider', { enum: ['gmail', 'o365'] }).notNull(),
+  provider: text('provider', { enum: ['gmail', 'o365', 'imap', 'pop3'] }).notNull(),
   email: text('email').notNull(),
   displayName: text('display_name').notNull(),
   tokenBlob: text('token_blob').notNull(),
@@ -21,7 +21,13 @@ export const folders = sqliteTable(
     type: text('type', {
       enum: ['inbox', 'sent', 'drafts', 'trash', 'junk', 'custom']
     }).notNull(),
-    unreadCount: integer('unread_count').notNull().default(0)
+    unreadCount: integer('unread_count').notNull().default(0),
+    uidValidity: integer('uid_validity'),
+    highestSyncedUid: integer('highest_synced_uid').notNull().default(0),
+    lastSyncAt: integer('last_sync_at'),
+    initialSyncComplete: integer('initial_sync_complete', { mode: 'boolean' })
+      .notNull()
+      .default(false)
   },
   (t) => [index('folders_account_idx').on(t.accountId)]
 )
@@ -65,4 +71,9 @@ export const attachments = sqliteTable('attachments', {
   mimeType: text('mime_type').notNull(),
   size: integer('size').notNull(),
   localPath: text('local_path')
+})
+
+export const appPreferences = sqliteTable('app_preferences', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull()
 })

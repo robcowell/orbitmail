@@ -85,6 +85,50 @@ function initTables(db: Database.Database): void {
       size INTEGER NOT NULL,
       local_path TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS app_preferences (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `)
+
+  migrateSchema(db)
+}
+
+function migrateSchema(db: Database.Database): void {
+  const folderCols = db.prepare('PRAGMA table_info(folders)').all() as Array<{ name: string }>
+  const folderNames = new Set(folderCols.map((c) => c.name))
+
+  if (!folderNames.has('uid_validity')) {
+    db.exec('ALTER TABLE folders ADD COLUMN uid_validity INTEGER')
+  }
+  if (!folderNames.has('highest_synced_uid')) {
+    db.exec('ALTER TABLE folders ADD COLUMN highest_synced_uid INTEGER NOT NULL DEFAULT 0')
+  }
+  if (!folderNames.has('last_sync_at')) {
+    db.exec('ALTER TABLE folders ADD COLUMN last_sync_at INTEGER')
+  }
+  if (!folderNames.has('initial_sync_complete')) {
+    db.exec('ALTER TABLE folders ADD COLUMN initial_sync_complete INTEGER NOT NULL DEFAULT 0')
+  }
+
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS messages_folder_uid_idx ON messages(folder_id, uid)'
+  )
+
+  db.exec(`
+    UPDATE folders
+    SET highest_synced_uid = (
+      SELECT COALESCE(MAX(uid), 0) FROM messages WHERE messages.folder_id = folders.id
+    )
+    WHERE highest_synced_uid = 0
+      AND EXISTS (SELECT 1 FROM messages WHERE messages.folder_id = folders.id)
+  `)
+
+  db.exec(`
+    UPDATE folders
+    SET initial_sync_complete = 1
+    WHERE highest_synced_uid > 0
   `)
 }
 

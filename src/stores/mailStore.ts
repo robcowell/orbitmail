@@ -5,8 +5,12 @@ import type {
   MessageSummary,
   MessageDetail,
   SyncStatus,
-  Provider
+  ManualAccountInput
 } from '../../shared/types'
+import {
+  loadPersistedPreferences,
+  scheduleSaveUiPreferences
+} from './persistence'
 
 interface MailState {
   accounts: Account[]
@@ -21,6 +25,7 @@ interface MailState {
   showAddAccount: boolean
   toast: string | null
   loading: boolean
+  collapsedAccountIds: Record<string, boolean>
 
   setAccounts: (accounts: Account[]) => void
   setFolders: (folders: Folder[]) => void
@@ -34,6 +39,8 @@ interface MailState {
   setShowAddAccount: (show: boolean) => void
   setToast: (msg: string | null) => void
   setLoading: (loading: boolean) => void
+  toggleAccountCollapsed: (accountId: string) => void
+  expandAccount: (accountId: string) => void
 }
 
 export const useMailStore = create<MailState>((set) => ({
@@ -49,6 +56,7 @@ export const useMailStore = create<MailState>((set) => ({
   showAddAccount: false,
   toast: null,
   loading: false,
+  collapsedAccountIds: {},
 
   setAccounts: (accounts) => set({ accounts }),
   setFolders: (folders) => set({ folders }),
@@ -61,21 +69,56 @@ export const useMailStore = create<MailState>((set) => ({
   setSyncStatus: (status) => set({ syncStatus: status }),
   setShowAddAccount: (show) => set({ showAddAccount: show }),
   setToast: (msg) => set({ toast: msg }),
-  setLoading: (loading) => set({ loading })
+  setLoading: (loading) => set({ loading }),
+  toggleAccountCollapsed: (accountId) =>
+    set((state) => {
+      const collapsedAccountIds = {
+        ...state.collapsedAccountIds,
+        [accountId]: !state.collapsedAccountIds[accountId]
+      }
+      scheduleSaveUiPreferences({ collapsedAccountIds })
+      return { collapsedAccountIds }
+    }),
+  expandAccount: (accountId) =>
+    set((state) => {
+      const collapsedAccountIds = {
+        ...state.collapsedAccountIds,
+        [accountId]: false
+      }
+      scheduleSaveUiPreferences({ collapsedAccountIds })
+      return { collapsedAccountIds }
+    })
 }))
 
 export async function loadInitialData(): Promise<void> {
   const store = useMailStore.getState()
   store.setLoading(true)
   try {
+    await loadPersistedPreferences()
+    const persisted = useMailStore.getState()
+
     const accounts = await window.orbitMail.accounts.list()
     const folders = await window.orbitMail.folders.list()
-    const messages = await window.orbitMail.messages.list(store.selectedFolderId)
+    const messages = await window.orbitMail.messages.list(persisted.selectedFolderId)
     const syncStatus = await window.orbitMail.sync.getStatus()
+
     store.setAccounts(accounts)
     store.setFolders(folders)
     store.setMessages(messages)
     store.setSyncStatus(syncStatus)
+
+    if (persisted.selectedMessageId) {
+      const msg = await window.orbitMail.messages.get(persisted.selectedMessageId)
+      if (msg) {
+        store.setSelectedMessageId(msg.id)
+        store.setSelectedMessage(msg)
+      } else {
+        store.setSelectedMessageId(null)
+        store.setSelectedMessage(null)
+        scheduleSaveUiPreferences({ selectedMessageId: null })
+      }
+    }
+
     if (accounts.length === 0) {
       store.setShowAddAccount(true)
     }
@@ -92,12 +135,13 @@ export async function refreshMessages(): Promise<void> {
   store.setFolders(folders)
 }
 
-export async function addAccount(provider: Provider): Promise<void> {
+export async function addAccount(provider: 'gmail' | 'o365'): Promise<void> {
   const store = useMailStore.getState()
   try {
-    await window.orbitMail.accounts.add(provider)
+    const account = await window.orbitMail.accounts.add(provider)
     store.setShowAddAccount(false)
     store.setToast('Account added successfully')
+    store.expandAccount(account.id)
     await loadInitialData()
     await window.orbitMail.sync.refresh()
     await refreshMessages()
@@ -106,9 +150,26 @@ export async function addAccount(provider: Provider): Promise<void> {
   }
 }
 
+export async function addManualAccount(input: ManualAccountInput): Promise<void> {
+  const store = useMailStore.getState()
+  try {
+    const account = await window.orbitMail.accounts.addManual(input)
+    store.setShowAddAccount(false)
+    store.setToast('Account added successfully')
+    store.expandAccount(account.id)
+    await loadInitialData()
+    await window.orbitMail.sync.refresh()
+    await refreshMessages()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Failed to add account')
+    throw err
+  }
+}
+
 export async function selectMessage(messageId: string): Promise<void> {
   const store = useMailStore.getState()
   store.setSelectedMessageId(messageId)
+  scheduleSaveUiPreferences({ selectedMessageId: messageId })
   const msg = await window.orbitMail.messages.get(messageId)
   store.setSelectedMessage(msg)
   if (msg && !msg.isRead) {
@@ -122,9 +183,15 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
   store.setSelectedFolderId(folderId)
   store.setSelectedMessageId(null)
   store.setSelectedMessage(null)
+  scheduleSaveUiPreferences({
+    selectedFolderId: folderId,
+    selectedMessageId: null
+  })
   const messages = await window.orbitMail.messages.list(folderId)
   store.setMessages(messages)
 }
+
+export { saveUiPreferencesNow } from './persistence'
 
 export async function runSearch(query: string): Promise<void> {
   const store = useMailStore.getState()

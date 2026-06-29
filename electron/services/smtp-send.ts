@@ -4,15 +4,14 @@ import { readFileSync } from 'fs'
 import type { Provider, ComposePayload } from '../../shared/types'
 import {
   getAccountTokens,
+  getManualCredentials,
   updateAccountTokens,
   getMessage,
   type TokenData
 } from './db-service'
-import {
-  appendToSentFolder,
-  getProviderSmtpConfig
-} from './imap-sync'
-import { refreshGoogleToken } from './oauth-google'
+import { appendToSentFolder, getAccountSmtpConfig } from './imap-sync'
+import { smtpTransportOptions } from './account-credentials'
+import { resolveGoogleAccessToken } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
 
 async function ensureFreshToken(
@@ -20,30 +19,28 @@ async function ensureFreshToken(
   provider: Provider,
   tokens: TokenData
 ): Promise<TokenData> {
+  if (provider === 'gmail') {
+    const resolved = await resolveGoogleAccessToken(accountId, tokens)
+    return resolved.tokenData
+  }
+
   const needsRefresh =
     !tokens.expiryDate || tokens.expiryDate < Date.now() + 120000
 
   if (!needsRefresh) return tokens
 
-  let refreshed: TokenData
-  if (provider === 'gmail' && tokens.refreshToken) {
-    refreshed = await refreshGoogleToken(tokens)
-  } else if (provider === 'o365') {
-    refreshed = await refreshMicrosoftToken(tokens, tokens.email)
-  } else {
-    return tokens
-  }
-
+  const refreshed = await refreshMicrosoftToken(tokens, tokens.email)
   updateAccountTokens(accountId, refreshed)
   return refreshed
 }
 
-function createTransport(
+function createOAuthTransport(
+  accountId: string,
   provider: Provider,
   email: string,
   accessToken: string
 ): nodemailer.Transporter {
-  const smtp = getProviderSmtpConfig(provider)
+  const smtp = getAccountSmtpConfig(accountId, provider)
   return nodemailer.createTransport({
     host: smtp.host,
     port: smtp.port,
@@ -56,18 +53,45 @@ function createTransport(
   })
 }
 
+function createPasswordTransport(
+  accountId: string,
+  provider: Provider
+): nodemailer.Transporter {
+  const manual = getManualCredentials(accountId)
+  if (!manual) throw new Error('Account credentials not found')
+  return nodemailer.createTransport(
+    smtpTransportOptions(manual.outgoing, manual.username, manual.password)
+  )
+}
+
 export async function sendMail(
   payload: ComposePayload,
   provider: Provider
 ): Promise<void> {
-  let tokens = getAccountTokens(payload.accountId)
-  if (!tokens) throw new Error('Account not found')
+  let transport: nodemailer.Transporter
+  let fromAddress: string
 
-  tokens = await ensureFreshToken(payload.accountId, provider, tokens)
-  const transport = createTransport(provider, tokens.email, tokens.accessToken)
+  if (provider === 'imap' || provider === 'pop3') {
+    const manual = getManualCredentials(payload.accountId)
+    if (!manual) throw new Error('Account not found')
+    fromAddress = manual.email
+    transport = createPasswordTransport(payload.accountId, provider)
+  } else {
+    let tokens = getAccountTokens(payload.accountId)
+    if (!tokens) throw new Error('Account not found')
+
+    tokens = await ensureFreshToken(payload.accountId, provider, tokens)
+    fromAddress = tokens.email
+    transport = createOAuthTransport(
+      payload.accountId,
+      provider,
+      tokens.email,
+      tokens.accessToken
+    )
+  }
 
   const mailOptions: Mail.Options = {
-    from: tokens.email,
+    from: fromAddress,
     to: payload.to,
     cc: payload.cc,
     bcc: payload.bcc,
@@ -86,8 +110,8 @@ export async function sendMail(
   }
 
   const info = await transport.sendMail(mailOptions)
+  transport.close()
 
-  // Append to Sent folder via IMAP
   if (info.message) {
     const raw =
       typeof info.message === 'string'

@@ -1,10 +1,13 @@
 [Desktop Entry]
 Name=Orbit Mail
-Comment=Apple Mail-style email client
+GenericName=Email Client
+Comment=Desktop email client for Linux with IMAP, SMTP, and OAuth
 Exec=orbit-mail %U
 Icon=orbit-mail
 Terminal=false
 Type=Application
 Categories=Network;Email;
+Keywords=email;mail;inbox;imap;smtp;gmail;outlook;
+StartupNotify=true
 StartupWMClass=orbit-mail
 MimeType=x-scheme-handler/mailto;

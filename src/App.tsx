@@ -8,8 +8,10 @@ import { AddAccountWizard } from './components/accounts/AddAccountWizard'
 import {
   useMailStore,
   loadInitialData,
-  refreshMessages
+  refreshMessages,
+  saveUiPreferencesNow
 } from './stores/mailStore'
+import { exposeFlushHook } from './stores/persistence'
 
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
@@ -50,6 +52,7 @@ function MainApp() {
   const setSyncStatus = useMailStore((s) => s.setSyncStatus)
 
   useEffect(() => {
+    exposeFlushHook()
     loadInitialData()
     let lastRefreshAt = 0
     let lastSyncCurrent = -1
@@ -124,6 +127,12 @@ function MainApp() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  useEffect(() => {
+    const flush = () => saveUiPreferencesNow()
+    window.addEventListener('beforeunload', flush)
+    return () => window.removeEventListener('beforeunload', flush)
+  }, [])
+
   return (
     <div className="app-shell">
       <Toolbar />
@@ -140,9 +149,16 @@ function MainApp() {
 }
 
 import { ComposeWindow } from './components/compose/ComposeWindow'
+import { loadPersistedPreferences } from './stores/persistence'
 
 export default function App() {
   const isCompose = window.location.hash === '#/compose'
+
+  useEffect(() => {
+    if (isCompose) {
+      void loadPersistedPreferences()
+    }
+  }, [isCompose])
 
   if (isCompose) {
     return (

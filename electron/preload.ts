@@ -1,10 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { OrbitMailAPI, ComposePayload, SyncStatus } from '../shared/types'
+import type {
+  OrbitMailAPI,
+  ComposePayload,
+  SyncStatus,
+  ManualAccountInput,
+  UiPreferences,
+  PersistedAppState
+} from '../shared/types'
 
 const api: OrbitMailAPI = {
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     add: (provider) => ipcRenderer.invoke('accounts:add', provider),
+    addManual: (input: ManualAccountInput) =>
+      ipcRenderer.invoke('accounts:addManual', input),
+    autodetect: (email) => ipcRenderer.invoke('accounts:autodetect', email),
     remove: (accountId) => ipcRenderer.invoke('accounts:remove', accountId)
   },
   folders: {
@@ -49,6 +59,11 @@ const api: OrbitMailAPI = {
   attachments: {
     download: (attachmentId) => ipcRenderer.invoke('attachments:download', attachmentId),
     open: (attachmentId) => ipcRenderer.invoke('attachments:open', attachmentId)
+  },
+  preferences: {
+    get: () => ipcRenderer.invoke('preferences:get'),
+    saveUi: (ui: Partial<UiPreferences>) => ipcRenderer.invoke('preferences:saveUi', ui),
+    save: (state: Partial<PersistedAppState>) => ipcRenderer.invoke('preferences:save', state)
   }
 }
 

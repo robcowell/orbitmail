@@ -1,6 +1,5 @@
-import { safeStorage } from 'electron'
 import { randomUUID } from 'crypto'
-import { eq, desc, and, inArray } from 'drizzle-orm'
+import { eq, desc, and, inArray, max } from 'drizzle-orm'
 import { getDb, getRawSqlite, upsertFts, deleteFts } from '../db'
 import { accounts, folders, messages, attachments } from '../db/schema'
 import type {
@@ -11,36 +10,44 @@ import type {
   FolderType,
   Provider
 } from '../../shared/types'
+import {
+  encryptCredentials,
+  decryptCredentials,
+  type TokenData,
+  type ManualAccountCredentials,
+  type AccountCredentials
+} from './account-credentials'
 
-export interface TokenData {
-  accessToken: string
-  refreshToken?: string
-  expiryDate?: number
-  email: string
-  displayName: string
-}
-
-function encryptToken(data: TokenData): string {
-  const json = JSON.stringify(data)
-  if (safeStorage.isEncryptionAvailable()) {
-    return safeStorage.encryptString(json).toString('base64')
-  }
-  return Buffer.from(json).toString('base64')
-}
-
-function decryptToken(blob: string): TokenData {
-  const raw = Buffer.from(blob, 'base64')
-  if (safeStorage.isEncryptionAvailable()) {
-    return JSON.parse(safeStorage.decryptString(raw)) as TokenData
-  }
-  return JSON.parse(raw.toString('utf8')) as TokenData
-}
+export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
 export function saveAccount(
   provider: Provider,
   tokenData: TokenData
 ): Account {
   const db = getDb()
+  const existing = db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.email, tokenData.email))
+    .get()
+
+  if (existing) {
+    db.update(accounts)
+      .set({
+        provider,
+        displayName: tokenData.displayName,
+        tokenBlob: encryptCredentials({ authType: 'oauth', ...tokenData })
+      })
+      .where(eq(accounts.id, existing.id))
+      .run()
+    return {
+      id: existing.id,
+      provider,
+      email: tokenData.email,
+      displayName: tokenData.displayName
+    }
+  }
+
   const id = randomUUID()
   const account: Account = {
     id,
@@ -53,23 +60,81 @@ export function saveAccount(
     provider,
     email: tokenData.email,
     displayName: tokenData.displayName,
-    tokenBlob: encryptToken(tokenData),
+    tokenBlob: encryptCredentials({ authType: 'oauth', ...tokenData }),
     createdAt: Date.now()
   }).run()
   return account
 }
 
-export function getAccountTokens(accountId: string): TokenData | null {
+export function saveManualAccount(
+  provider: 'imap' | 'pop3',
+  creds: ManualAccountCredentials
+): Account {
+  const db = getDb()
+  const existing = db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.email, creds.email))
+    .get()
+
+  if (existing) {
+    db.update(accounts)
+      .set({
+        provider,
+        displayName: creds.displayName,
+        tokenBlob: encryptCredentials(creds)
+      })
+      .where(eq(accounts.id, existing.id))
+      .run()
+    return {
+      id: existing.id,
+      provider,
+      email: creds.email,
+      displayName: creds.displayName
+    }
+  }
+
+  const id = randomUUID()
+  db.insert(accounts).values({
+    id,
+    provider,
+    email: creds.email,
+    displayName: creds.displayName,
+    tokenBlob: encryptCredentials(creds),
+    createdAt: Date.now()
+  }).run()
+
+  return {
+    id,
+    provider,
+    email: creds.email,
+    displayName: creds.displayName
+  }
+}
+
+export function getAccountCredentials(accountId: string): AccountCredentials | null {
   const db = getDb()
   const row = db.select().from(accounts).where(eq(accounts.id, accountId)).get()
   if (!row) return null
-  return decryptToken(row.tokenBlob)
+  return decryptCredentials(row.tokenBlob)
+}
+
+export function getAccountTokens(accountId: string): TokenData | null {
+  const creds = getAccountCredentials(accountId)
+  if (!creds || creds.authType !== 'oauth') return null
+  return creds
+}
+
+export function getManualCredentials(accountId: string): ManualAccountCredentials | null {
+  const creds = getAccountCredentials(accountId)
+  if (!creds || creds.authType !== 'password') return null
+  return creds
 }
 
 export function updateAccountTokens(accountId: string, tokenData: TokenData): void {
   const db = getDb()
   db.update(accounts)
-    .set({ tokenBlob: encryptToken(tokenData) })
+    .set({ tokenBlob: encryptCredentials({ authType: 'oauth', ...tokenData }) })
     .where(eq(accounts.id, accountId))
     .run()
 }
@@ -232,6 +297,93 @@ export function getMessage(messageId: string): MessageDetail | null {
   }
 }
 
+export function getFolderMaxUid(folderId: string): number | null {
+  const db = getDb()
+  const folder = db.select().from(folders).where(eq(folders.id, folderId)).get()
+  const row = db
+    .select({ maxUid: max(messages.uid) })
+    .from(messages)
+    .where(eq(messages.folderId, folderId))
+    .get()
+
+  const messageMax = row?.maxUid ?? 0
+  const storedMax = folder?.highestSyncedUid ?? 0
+  const effective = Math.max(messageMax, storedMax)
+  return effective > 0 ? effective : null
+}
+
+export function getFolderUidValidity(folderId: string): number | null {
+  const db = getDb()
+  const folder = db.select().from(folders).where(eq(folders.id, folderId)).get()
+  return folder?.uidValidity ?? null
+}
+
+export function updateFolderSyncState(
+  folderId: string,
+  patch: {
+    uidValidity?: number | null
+    highestSyncedUid?: number
+    lastSyncAt?: number
+    initialSyncComplete?: boolean
+  }
+): void {
+  const db = getDb()
+  const updates: Partial<typeof folders.$inferInsert> = {}
+
+  if (patch.uidValidity !== undefined) updates.uidValidity = patch.uidValidity
+  if (patch.highestSyncedUid !== undefined) {
+    updates.highestSyncedUid = patch.highestSyncedUid
+  }
+  if (patch.lastSyncAt !== undefined) updates.lastSyncAt = patch.lastSyncAt
+  if (patch.initialSyncComplete !== undefined) {
+    updates.initialSyncComplete = patch.initialSyncComplete
+  }
+
+  if (Object.keys(updates).length === 0) return
+
+  db.update(folders).set(updates).where(eq(folders.id, folderId)).run()
+}
+
+export function clearFolderMessages(folderId: string): void {
+  const db = getDb()
+  const messageRows = db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(eq(messages.folderId, folderId))
+    .all()
+
+  for (const row of messageRows) {
+    deleteFts(row.id)
+  }
+
+  db.delete(messages).where(eq(messages.folderId, folderId)).run()
+  updateFolderSyncState(folderId, {
+    highestSyncedUid: 0,
+    initialSyncComplete: false,
+    lastSyncAt: null
+  })
+}
+
+export function hasMessageUid(folderId: string, uid: number): boolean {
+  const db = getDb()
+  const row = db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.folderId, folderId), eq(messages.uid, uid)))
+    .get()
+  return Boolean(row)
+}
+
+export function getFolderUidSet(folderId: string): Set<number> {
+  const db = getDb()
+  const rows = db
+    .select({ uid: messages.uid })
+    .from(messages)
+    .where(eq(messages.folderId, folderId))
+    .all()
+  return new Set(rows.map((r) => r.uid))
+}
+
 export function upsertMessage(data: {
   folderId: string
   accountId: string
@@ -248,7 +400,7 @@ export function upsertMessage(data: {
   hasAttachments: boolean
   bodyHtml?: string | null
   bodyText?: string | null
-}): string {
+}): { id: string; isNew: boolean } {
   const db = getDb()
   const existing = db
     .select()
@@ -257,6 +409,7 @@ export function upsertMessage(data: {
     .get()
 
   const id = existing?.id ?? randomUUID()
+  const isNew = !existing
 
   if (existing) {
     db.update(messages)
@@ -298,7 +451,7 @@ export function upsertMessage(data: {
   }
 
   upsertFts(id, data.subject, data.snippet, data.bodyText ?? '')
-  return id
+  return { id, isNew }
 }
 
 export function setMessageRead(messageId: string, isRead: boolean): void {

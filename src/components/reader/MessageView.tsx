@@ -1,13 +1,20 @@
 import DOMPurify from 'dompurify'
-import { Paperclip } from 'lucide-react'
 import { useMailStore } from '../../stores/mailStore'
+import { EmptyState } from '../EmptyState'
+import { Paperclip, EnvelopeSimpleOpen } from '../icons'
 
 export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
 
   if (!selectedMessageId || !selectedMessage) {
-    return <div className="reader-empty">Select a message to read</div>
+    return (
+      <EmptyState
+        icon={<EnvelopeSimpleOpen size={48} weight="duotone" />}
+        title="Select a message"
+        description="Choose a conversation from the list to read it here"
+      />
+    )
   }
 
   const sanitizedHtml = selectedMessage.bodyHtml
@@ -48,7 +55,7 @@ export function MessageView() {
               className="attachment-chip"
               onClick={() => window.orbitMail.attachments.open(att.id)}
             >
-              <Paperclip size={14} />
+              <Paperclip size={14} weight="duotone" />
               {att.filename}
               <span style={{ color: 'var(--text-muted)' }}>
                 ({formatSize(att.size)})

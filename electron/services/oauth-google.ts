@@ -1,6 +1,6 @@
 import { OAuth2Client } from 'google-auth-library'
 import { startLoopbackServer, openExternalAuthUrl } from './oauth-loopback'
-import type { TokenData } from './db-service'
+import { updateAccountTokens, type TokenData } from './db-service'
 
 const GMAIL_SCOPE = 'https://mail.google.com/'
 
@@ -13,6 +13,27 @@ function getGoogleClient(): OAuth2Client {
   return new OAuth2Client(clientId, clientSecret)
 }
 
+async function validateGoogleMailScope(accessToken: string): Promise<void> {
+  const res = await fetch(
+    `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`
+  )
+  const info = (await res.json()) as { scope?: string; error_description?: string; error?: string }
+
+  if (!res.ok || info.error) {
+    throw new Error(
+      info.error_description ??
+        info.error ??
+        'Google token validation failed. Try adding the account again.'
+    )
+  }
+
+  if (!info.scope?.includes('mail.google.com')) {
+    throw new Error(
+      'Gmail access was not granted. Add the account again and approve all requested permissions.'
+    )
+  }
+}
+
 export async function authenticateGoogle(): Promise<TokenData> {
   const client = getGoogleClient()
   const loopback = await startLoopbackServer()
@@ -20,7 +41,8 @@ export async function authenticateGoogle(): Promise<TokenData> {
 
   const authUrl = client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'select_account consent',
+    include_granted_scopes: true,
     scope: [GMAIL_SCOPE, 'openid', 'email', 'profile'],
     redirect_uri: redirectUri
   })
@@ -32,14 +54,29 @@ export async function authenticateGoogle(): Promise<TokenData> {
   const { tokens } = await client.getToken({ code, redirect_uri: redirectUri })
   client.setCredentials(tokens)
 
-  const accessToken = tokens.access_token!
+  const accessToken = tokens.access_token
   const refreshToken = tokens.refresh_token
   const expiryDate = tokens.expiry_date
 
-  // Fetch user profile
+  if (!accessToken) {
+    throw new Error('Google did not return an access token.')
+  }
+
+  if (!refreshToken) {
+    throw new Error(
+      'Google did not provide a refresh token for this account. ' +
+        'Remove Orbit Mail at https://myaccount.google.com/permissions, then add the account again.'
+    )
+  }
+
+  await validateGoogleMailScope(accessToken)
+
   const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
     headers: { Authorization: `Bearer ${accessToken}` }
   })
+  if (!res.ok) {
+    throw new Error('Failed to fetch Google profile after sign-in.')
+  }
   const profile = (await res.json()) as { email: string; name?: string }
 
   return {
@@ -51,9 +88,54 @@ export async function authenticateGoogle(): Promise<TokenData> {
   }
 }
 
-export async function refreshGoogleToken(
+export async function resolveGoogleAccessToken(
+  accountId: string,
   tokenData: TokenData
-): Promise<TokenData> {
+): Promise<{ accessToken: string; tokenData: TokenData }> {
+  if (!tokenData.refreshToken) {
+    if (tokenData.expiryDate && tokenData.expiryDate > Date.now() + 60000) {
+      return { accessToken: tokenData.accessToken, tokenData }
+    }
+    throw new Error(
+      `No refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+    )
+  }
+
+  const client = getGoogleClient()
+  client.setCredentials({
+    access_token: tokenData.accessToken,
+    refresh_token: tokenData.refreshToken,
+    expiry_date: tokenData.expiryDate
+  })
+
+  const response = await client.getAccessToken()
+  const accessToken = response?.token
+  if (!accessToken) {
+    throw new Error(
+      `Unable to refresh Google access for ${tokenData.email}. Remove the account and sign in again.`
+    )
+  }
+
+  const credentials = client.credentials
+  const updated: TokenData = {
+    ...tokenData,
+    accessToken: credentials.access_token ?? accessToken,
+    expiryDate: credentials.expiry_date ?? tokenData.expiryDate,
+    refreshToken: credentials.refresh_token ?? tokenData.refreshToken
+  }
+
+  if (
+    updated.accessToken !== tokenData.accessToken ||
+    updated.expiryDate !== tokenData.expiryDate ||
+    updated.refreshToken !== tokenData.refreshToken
+  ) {
+    updateAccountTokens(accountId, updated)
+  }
+
+  return { accessToken, tokenData: updated }
+}
+
+export async function refreshGoogleToken(tokenData: TokenData): Promise<TokenData> {
   const client = getGoogleClient()
   client.setCredentials({
     access_token: tokenData.accessToken,
@@ -70,9 +152,22 @@ export async function refreshGoogleToken(
   }
 }
 
-export function getGoogleAccessToken(tokenData: TokenData): string {
-  if (tokenData.expiryDate && tokenData.expiryDate < Date.now() + 60000) {
-    throw new Error('Token expired — refresh required')
+export function formatGmailAuthError(err: unknown, email: string): Error {
+  const message = err instanceof Error ? err.message : String(err)
+  const authFailed =
+    message.includes('AUTHENTICATIONFAILED') ||
+    message.includes('Invalid credentials') ||
+    message.includes('invalid_request')
+
+  if (!authFailed) {
+    return err instanceof Error ? err : new Error(message)
   }
-  return tokenData.accessToken
+
+  return new Error(
+    `Gmail sign-in failed for ${email}. Check that:\n` +
+      `• This address is listed as a test user in Google Cloud Console (OAuth consent screen), or the app is published\n` +
+      `• IMAP is enabled in Gmail settings\n` +
+      `• You approved all permissions including Gmail access\n` +
+      `Then remove the account in Orbit Mail and add it again.`
+  )
 }

@@ -1,12 +1,36 @@
-import {
-  PenSquare,
-  Trash2,
-  Archive,
-  RefreshCw,
-  Reply,
-  Forward
-} from 'lucide-react'
 import { useMailStore, refreshMessages } from '../../stores/mailStore'
+import { useThemeStore } from '../../stores/themeStore'
+import { AppBrand } from '../brand/AppBrand'
+import {
+  iconProps,
+  PencilLine,
+  ArrowBendUpLeft,
+  ArrowBendUpRight,
+  Trash,
+  Archive,
+  ArrowsClockwise,
+  MagnifyingGlass
+} from '../icons'
+
+function ThemeToggle() {
+  const darkMode = useThemeStore((s) => s.darkMode)
+  const setDarkMode = useThemeStore((s) => s.setDarkMode)
+
+  return (
+    <div className="theme-toggle">
+      <span className="theme-toggle-label">Dark</span>
+      <button
+        type="button"
+        className="theme-switch"
+        role="switch"
+        aria-checked={darkMode}
+        aria-label="Toggle dark mode"
+        title="Toggle dark mode"
+        onClick={() => setDarkMode(!darkMode)}
+      />
+    </div>
+  )
+}
 
 export function Toolbar() {
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
@@ -89,48 +113,71 @@ export function Toolbar() {
 
   return (
     <div className="toolbar">
-      <button className="toolbar-btn primary" title="Compose (C)" onClick={handleCompose}>
-        <PenSquare size={18} />
+      <AppBrand compact />
+
+      <div className="toolbar-divider" />
+
+      <button className="toolbar-btn-compose" title="Compose (C)" onClick={handleCompose}>
+        <PencilLine {...iconProps} weight="bold" />
+        Compose
       </button>
-      <button
-        className="toolbar-btn"
-        title="Reply (R)"
-        onClick={handleReply}
-        disabled={!selectedMessage}
-      >
-        <Reply size={18} />
-      </button>
-      <button className="toolbar-btn" title="Forward" onClick={handleForward} disabled={!selectedMessage}>
-        <Forward size={18} />
-      </button>
-      <button
-        className="toolbar-btn"
-        title="Delete"
-        onClick={handleDelete}
-        disabled={!selectedMessageId}
-      >
-        <Trash2 size={18} />
-      </button>
-      <button className="toolbar-btn" title="Archive" disabled>
-        <Archive size={18} />
-      </button>
-      <button
-        className="toolbar-btn"
-        title="Refresh"
-        onClick={handleRefresh}
-        disabled={syncStatus.syncing}
-      >
-        <RefreshCw size={18} className={syncStatus.syncing ? 'spin' : ''} />
-      </button>
+
+      <div className="toolbar-divider" />
+
+      <div className="toolbar-group">
+        <button
+          className="toolbar-btn"
+          title="Reply (R)"
+          onClick={handleReply}
+          disabled={!selectedMessage}
+        >
+          <ArrowBendUpLeft {...iconProps} />
+        </button>
+        <button
+          className="toolbar-btn"
+          title="Forward"
+          onClick={handleForward}
+          disabled={!selectedMessage}
+        >
+          <ArrowBendUpRight {...iconProps} />
+        </button>
+        <button
+          className="toolbar-btn"
+          title="Delete"
+          onClick={handleDelete}
+          disabled={!selectedMessageId}
+        >
+          <Trash {...iconProps} />
+        </button>
+        <button className="toolbar-btn" title="Archive" disabled>
+          <Archive {...iconProps} />
+        </button>
+        <button
+          className="toolbar-btn"
+          title="Refresh"
+          onClick={handleRefresh}
+          disabled={syncStatus.syncing}
+        >
+          <ArrowsClockwise
+            {...iconProps}
+            className={syncStatus.syncing ? 'spin' : undefined}
+          />
+        </button>
+      </div>
 
       <div className="toolbar-spacer" />
 
-      <input
-        className="search-input"
-        placeholder="Search mail…"
-        value={searchQuery}
-        onChange={(e) => handleSearch(e.target.value)}
-      />
+      <ThemeToggle />
+
+      <div className="search-wrap">
+        <MagnifyingGlass {...iconProps} size={16} className="search-icon" />
+        <input
+          className="search-input"
+          placeholder="Search mail…"
+          value={searchQuery}
+          onChange={(e) => handleSearch(e.target.value)}
+        />
+      </div>
     </div>
   )
 }

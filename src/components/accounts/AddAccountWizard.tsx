@@ -1,36 +1,300 @@
-import { useMailStore, addAccount } from '../../stores/mailStore'
+import { useState } from 'react'
+import type {
+  AutodetectResult,
+  ConnectionSecurity,
+  ManualAccountInput,
+  ServerConfig
+} from '../../../shared/types'
+import { useMailStore, addAccount, addManualAccount } from '../../stores/mailStore'
+import { AppBrand } from '../brand/AppBrand'
+
+type WizardView = 'choose' | 'manual'
+
+const DEFAULT_INCOMING: ServerConfig = {
+  host: '',
+  port: 993,
+  security: 'ssl'
+}
+
+const DEFAULT_OUTGOING: ServerConfig = {
+  host: '',
+  port: 587,
+  security: 'starttls'
+}
+
+const EMPTY_FORM: ManualAccountInput = {
+  email: '',
+  displayName: '',
+  username: '',
+  password: '',
+  incomingProtocol: 'imap',
+  incoming: { ...DEFAULT_INCOMING },
+  outgoing: { ...DEFAULT_OUTGOING }
+}
+
+function applyAutodetect(
+  current: ManualAccountInput,
+  result: AutodetectResult
+): ManualAccountInput {
+  if (!result.settings) return current
+  return {
+    ...current,
+    email: result.settings.email ?? current.email,
+    username: result.settings.username ?? current.username,
+    incomingProtocol: result.settings.incomingProtocol ?? current.incomingProtocol,
+    incoming: { ...current.incoming, ...result.settings.incoming },
+    outgoing: { ...current.outgoing, ...result.settings.outgoing }
+  }
+}
+
+function ServerFields({
+  label,
+  value,
+  onChange
+}: {
+  label: string
+  value: ServerConfig
+  onChange: (next: ServerConfig) => void
+}) {
+  return (
+    <fieldset className="account-fieldset">
+      <legend>{label}</legend>
+      <label className="account-field">
+        <span>Server</span>
+        <input
+          value={value.host}
+          onChange={(e) => onChange({ ...value, host: e.target.value })}
+          placeholder="mail.example.com"
+        />
+      </label>
+      <div className="account-field-row">
+        <label className="account-field">
+          <span>Port</span>
+          <input
+            type="number"
+            value={value.port}
+            onChange={(e) => onChange({ ...value, port: Number(e.target.value) || 0 })}
+          />
+        </label>
+        <label className="account-field">
+          <span>Security</span>
+          <select
+            value={value.security}
+            onChange={(e) =>
+              onChange({ ...value, security: e.target.value as ConnectionSecurity })
+            }
+          >
+            <option value="ssl">SSL/TLS</option>
+            <option value="starttls">STARTTLS</option>
+            <option value="none">None</option>
+          </select>
+        </label>
+      </div>
+    </fieldset>
+  )
+}
+
+function ManualAccountForm({ onBack }: { onBack: () => void }) {
+  const [form, setForm] = useState<ManualAccountInput>(EMPTY_FORM)
+  const [autodetectMessage, setAutodetectMessage] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [detecting, setDetecting] = useState(false)
+
+  const update = (patch: Partial<ManualAccountInput>) => {
+    setForm((current) => ({ ...current, ...patch }))
+  }
+
+  const runAutodetect = async () => {
+    setDetecting(true)
+    setAutodetectMessage(null)
+    try {
+      const result = await window.orbitMail.accounts.autodetect(form.email)
+      setForm((current) => applyAutodetect(current, result))
+      setAutodetectMessage(result.message)
+    } catch (err) {
+      setAutodetectMessage(err instanceof Error ? err.message : 'Autodetect failed')
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  const onSubmit = async () => {
+    setSubmitting(true)
+    try {
+      await addManualAccount(form)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const canSubmit =
+    form.email.trim() &&
+    form.username.trim() &&
+    form.password &&
+    form.incoming.host.trim() &&
+    form.outgoing.host.trim()
+
+  return (
+    <>
+      <p>
+        Connect with your email address, username, and password. Use autodetect when
+        possible, or enter incoming (IMAP/POP3) and outgoing (SMTP) server settings
+        manually.
+      </p>
+
+      <label className="account-field">
+        <span>Email address</span>
+        <input
+          type="email"
+          value={form.email}
+          onChange={(e) => {
+            const email = e.target.value
+            update({
+              email,
+              username: form.username === form.email ? email : form.username
+            })
+          }}
+          placeholder="you@example.com"
+        />
+      </label>
+
+      <label className="account-field">
+        <span>Display name</span>
+        <input
+          value={form.displayName}
+          onChange={(e) => update({ displayName: e.target.value })}
+          placeholder="Optional"
+        />
+      </label>
+
+      <label className="account-field">
+        <span>Username</span>
+        <input
+          value={form.username}
+          onChange={(e) => update({ username: e.target.value })}
+          placeholder="Often your full email address"
+        />
+      </label>
+
+      <label className="account-field">
+        <span>Password</span>
+        <input
+          type="password"
+          value={form.password}
+          onChange={(e) => update({ password: e.target.value })}
+          autoComplete="current-password"
+        />
+      </label>
+
+      <div className="account-field-row">
+        <label className="account-field">
+          <span>Incoming protocol</span>
+          <select
+            value={form.incomingProtocol}
+            onChange={(e) =>
+              update({
+                incomingProtocol: e.target.value as 'imap' | 'pop3',
+                incoming: {
+                  ...form.incoming,
+                  port: e.target.value === 'pop3' ? 995 : 993,
+                  security: 'ssl'
+                }
+              })
+            }
+          >
+            <option value="imap">IMAP</option>
+            <option value="pop3">POP3</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={runAutodetect}
+          disabled={!form.email.trim() || detecting}
+        >
+          {detecting ? 'Detecting…' : 'Autodetect'}
+        </button>
+      </div>
+
+      {autodetectMessage && <p className="account-hint">{autodetectMessage}</p>}
+
+      <ServerFields
+        label="Incoming mail server"
+        value={form.incoming}
+        onChange={(incoming) => update({ incoming })}
+      />
+
+      <ServerFields
+        label="Outgoing mail server (SMTP)"
+        value={form.outgoing}
+        onChange={(outgoing) => update({ outgoing })}
+      />
+
+      <div className="modal-actions">
+        <button type="button" className="btn btn-secondary" onClick={onBack}>
+          Back
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={onSubmit}
+          disabled={!canSubmit || submitting}
+        >
+          {submitting ? 'Connecting…' : 'Add Account'}
+        </button>
+      </div>
+    </>
+  )
+}
 
 export function AddAccountWizard() {
   const show = useMailStore((s) => s.showAddAccount)
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
   const accounts = useMailStore((s) => s.accounts)
+  const [view, setView] = useState<WizardView>('choose')
 
   if (!show) return null
 
+  const close = () => {
+    setView('choose')
+    setShowAddAccount(false)
+  }
+
   return (
-    <div className="modal-overlay" onClick={() => setShowAddAccount(false)}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Add Email Account</h2>
-        <p>
-          Connect a Gmail or Microsoft 365 account using OAuth. Ensure your OAuth
-          credentials are configured in <code>.env</code>.
-        </p>
-        <div className="modal-actions">
-          <button className="btn btn-secondary" onClick={() => addAccount('gmail')}>
-            Gmail
-          </button>
-          <button className="btn btn-primary" onClick={() => addAccount('o365')}>
-            Microsoft 365
-          </button>
-        </div>
-        {accounts.length > 0 && (
-          <button
-            className="btn btn-secondary"
-            style={{ marginTop: 12, width: '100%' }}
-            onClick={() => setShowAddAccount(false)}
-          >
-            Cancel
-          </button>
+    <div className="modal-overlay" onClick={close}>
+      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <AppBrand />
+        <h2 style={{ marginTop: 16 }}>Add Email Account</h2>
+
+        {view === 'choose' ? (
+          <>
+            <p>
+              Connect Gmail or Microsoft 365 with OAuth, or add any provider using
+              standard IMAP/POP3 and SMTP with your username and password.
+            </p>
+            <div className="modal-actions modal-actions-stack">
+              <button className="btn btn-secondary" onClick={() => addAccount('gmail')}>
+                Gmail (OAuth)
+              </button>
+              <button className="btn btn-primary" onClick={() => addAccount('o365')}>
+                Microsoft 365 (OAuth)
+              </button>
+              <button className="btn btn-secondary" onClick={() => setView('manual')}>
+                Other (IMAP / POP3)
+              </button>
+            </div>
+            {accounts.length > 0 && (
+              <button
+                className="btn btn-secondary"
+                style={{ marginTop: 12, width: '100%' }}
+                onClick={close}
+              >
+                Cancel
+              </button>
+            )}
+          </>
+        ) : (
+          <ManualAccountForm onBack={() => setView('choose')} />
         )}
       </div>
     </div>

@@ -1,6 +1,30 @@
-export type Provider = 'gmail' | 'o365'
+export type Provider = 'gmail' | 'o365' | 'imap' | 'pop3'
 
 export type FolderType = 'inbox' | 'sent' | 'drafts' | 'trash' | 'junk' | 'custom'
+
+export type ConnectionSecurity = 'ssl' | 'starttls' | 'none'
+
+export interface ServerConfig {
+  host: string
+  port: number
+  security: ConnectionSecurity
+}
+
+export interface ManualAccountInput {
+  email: string
+  displayName?: string
+  username: string
+  password: string
+  incomingProtocol: 'imap' | 'pop3'
+  incoming: ServerConfig
+  outgoing: ServerConfig
+}
+
+export interface AutodetectResult {
+  settings: Partial<ManualAccountInput> | null
+  source: 'autoconfig' | 'guess' | null
+  message: string
+}
 
 export interface Account {
   id: string
@@ -73,10 +97,30 @@ export interface SyncStatus {
   syncTotal: number
 }
 
+export interface UiPreferences {
+  darkMode: boolean
+  selectedFolderId: string | 'unified'
+  selectedMessageId: string | null
+  collapsedAccountIds: Record<string, boolean>
+}
+
+export interface PersistedAppState {
+  ui: UiPreferences
+  lastSyncAt: number | null
+  window?: {
+    width: number
+    height: number
+    x?: number
+    y?: number
+  }
+}
+
 export interface OrbitMailAPI {
   accounts: {
     list: () => Promise<Account[]>
-    add: (provider: Provider) => Promise<Account>
+    add: (provider: 'gmail' | 'o365') => Promise<Account>
+    addManual: (input: ManualAccountInput) => Promise<Account>
+    autodetect: (email: string) => Promise<AutodetectResult>
     remove: (accountId: string) => Promise<void>
   }
   folders: {
@@ -106,6 +150,11 @@ export interface OrbitMailAPI {
   attachments: {
     download: (attachmentId: string) => Promise<string>
     open: (attachmentId: string) => Promise<void>
+  }
+  preferences: {
+    get: () => Promise<PersistedAppState>
+    saveUi: (ui: Partial<UiPreferences>) => Promise<UiPreferences>
+    save: (state: Partial<PersistedAppState>) => Promise<PersistedAppState>
   }
 }
 

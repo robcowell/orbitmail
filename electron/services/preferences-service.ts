@@ -1,0 +1,111 @@
+import { getRawSqlite } from '../db'
+
+const PREFERENCES_KEY = 'app_state'
+
+export interface UiPreferences {
+  darkMode: boolean
+  selectedFolderId: string | 'unified'
+  selectedMessageId: string | null
+  collapsedAccountIds: Record<string, boolean>
+}
+
+export interface WindowPreferences {
+  width: number
+  height: number
+  x?: number
+  y?: number
+}
+
+export interface PersistedAppState {
+  ui: UiPreferences
+  lastSyncAt: number | null
+  window?: WindowPreferences
+}
+
+export const DEFAULT_UI_PREFERENCES: UiPreferences = {
+  darkMode: false,
+  selectedFolderId: 'unified',
+  selectedMessageId: null,
+  collapsedAccountIds: {}
+}
+
+export const DEFAULT_APP_STATE: PersistedAppState = {
+  ui: DEFAULT_UI_PREFERENCES,
+  lastSyncAt: null
+}
+
+function readRawState(): PersistedAppState {
+  const db = getRawSqlite()
+  const row = db
+    .prepare('SELECT value FROM app_preferences WHERE key = ?')
+    .get(PREFERENCES_KEY) as { value: string } | undefined
+
+  if (!row) return { ...DEFAULT_APP_STATE, ui: { ...DEFAULT_UI_PREFERENCES } }
+
+  try {
+    const parsed = JSON.parse(row.value) as Partial<PersistedAppState>
+    return {
+      ui: { ...DEFAULT_UI_PREFERENCES, ...parsed.ui },
+      lastSyncAt: parsed.lastSyncAt ?? null,
+      window: parsed.window
+    }
+  } catch {
+    return { ...DEFAULT_APP_STATE, ui: { ...DEFAULT_UI_PREFERENCES } }
+  }
+}
+
+function writeRawState(state: PersistedAppState): void {
+  const db = getRawSqlite()
+  db.prepare(
+    `INSERT INTO app_preferences (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(PREFERENCES_KEY, JSON.stringify(state))
+}
+
+let cachedState: PersistedAppState | null = null
+
+export function getAppState(): PersistedAppState {
+  if (!cachedState) {
+    cachedState = readRawState()
+  }
+  return cachedState
+}
+
+export function saveAppState(state: PersistedAppState): void {
+  cachedState = state
+  writeRawState(state)
+}
+
+export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppState {
+  const current = getAppState()
+  const next: PersistedAppState = {
+    ...current,
+    ...patch,
+    ui: { ...current.ui, ...patch.ui }
+  }
+  saveAppState(next)
+  return next
+}
+
+export function patchUiPreferences(patch: Partial<UiPreferences>): UiPreferences {
+  const current = getAppState()
+  const ui = { ...current.ui, ...patch }
+  saveAppState({ ...current, ui })
+  return ui
+}
+
+export function setLastSyncAt(lastSyncAt: number | null): void {
+  patchAppState({ lastSyncAt })
+}
+
+export function getLastSyncAt(): number | null {
+  return getAppState().lastSyncAt
+}
+
+export function setWindowPreferences(window: WindowPreferences | undefined): void {
+  patchAppState({ window })
+}
+
+export function getWindowPreferences(): WindowPreferences | undefined {
+  return getAppState().window
+}

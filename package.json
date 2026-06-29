@@ -1,7 +1,7 @@
 {
   "name": "orbit-mail",
   "version": "0.1.0",
-  "description": "Apple Mail-style email client for Linux",
+  "description": "Orbit Mail — a polished desktop email client for Linux",
   "main": "out/main/index.js",
   "homepage": "https://github.com/orbit-mail/orbit-mail",
   "author": {
@@ -13,21 +13,24 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "npm run build && electron-builder",
-    "dist:deb": "npm run build && electron-builder --linux deb",
-    "dist:appimage": "npm run build && electron-builder --linux AppImage",
+    "icons": "node scripts/generate-icons.mjs",
+    "install:desktop": "bash scripts/install-dev-desktop.sh",
+    "dist": "npm run icons && npm run build && electron-builder",
+    "dist:deb": "npm run icons && npm run build && electron-builder --linux deb",
+    "dist:appimage": "npm run icons && npm run build && electron-builder --linux AppImage",
     "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh"
   },
   "dependencies": {
     "@azure/msal-node": "^2.16.2",
+    "@phosphor-icons/react": "^2.1.10",
     "better-sqlite3": "^11.8.1",
     "dompurify": "^3.2.4",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.39.1",
     "google-auth-library": "^9.15.1",
     "imapflow": "^1.0.184",
-    "lucide-react": "^0.474.0",
     "mailparser": "^3.7.2",
+    "node-pop3": "^0.11.0",
     "nodemailer": "^6.10.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -44,18 +47,30 @@
     "electron": "^34.0.2",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
+    "sharp": "^0.34.5",
     "typescript": "^5.7.3",
     "vite": "^6.0.11"
   },
   "build": {
     "appId": "com.orbitmail.app",
     "productName": "Orbit Mail",
+    "icon": "build/icon.png",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icons",
+        "to": "icons",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "linux": {
       "target": [
@@ -64,9 +79,18 @@
       ],
       "category": "Network;Email",
       "executableName": "orbit-mail",
+      "synopsis": "Desktop email client for Linux",
+      "description": "Orbit Mail is a desktop email client with IMAP, SMTP, POP3, and OAuth support.",
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "icon": "build/icons",
       "desktop": {
-        "StartupWMClass": "orbit-mail"
+        "Name": "Orbit Mail",
+        "GenericName": "Email Client",
+        "Comment": "Desktop email client for Linux with IMAP, SMTP, and OAuth",
+        "StartupWMClass": "orbit-mail",
+        "Categories": "Network;Email;",
+        "MimeType": "x-scheme-handler/mailto;",
+        "Keywords": "email;mail;inbox;imap;smtp;gmail;outlook;"
       }
     },
     "deb": {

@@ -1,4 +1,6 @@
 import { useMailStore, selectMessage } from '../../stores/mailStore'
+import { EmptyState } from '../EmptyState'
+import { Tray } from '../icons'
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
@@ -36,18 +38,20 @@ export function MessageList() {
   const displayMessages = searchQuery.trim() ? searchResults : messages
 
   if (loading && displayMessages.length === 0) {
-    return (
-      <div className="reader-empty" style={{ height: '200px' }}>
-        Loading messages…
-      </div>
-    )
+    return <EmptyState title="Loading messages…" description="Syncing your mail" />
   }
 
   if (displayMessages.length === 0) {
     return (
-      <div className="reader-empty" style={{ height: '200px' }}>
-        No messages
-      </div>
+      <EmptyState
+        icon={<Tray size={40} weight="duotone" />}
+        title={searchQuery.trim() ? 'No results' : 'No messages'}
+        description={
+          searchQuery.trim()
+            ? 'Try a different search term'
+            : 'Your inbox is clear — enjoy the calm'
+        }
+      />
     )
   }
 

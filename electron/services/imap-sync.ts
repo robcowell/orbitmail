@@ -6,19 +6,34 @@ import type { Provider, FolderType, SyncStatus } from '../../shared/types'
 import { getAttachmentsDir } from '../db'
 import {
   getAccountTokens,
+  getManualCredentials,
   updateAccountTokens,
   upsertFolder,
   upsertMessage,
   updateFolderUnread,
   addAttachment,
   listAccounts,
+  getFolderMaxUid,
+  getFolderUidValidity,
+  updateFolderSyncState,
+  clearFolderMessages,
+  hasMessageUid,
   type TokenData
 } from './db-service'
-import { refreshGoogleToken } from './oauth-google'
+import { getLastSyncAt, setLastSyncAt } from './preferences-service'
+import { imapFlowSecure } from './account-credentials'
+import { refreshGoogleToken, resolveGoogleAccessToken, formatGmailAuthError } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
+import {
+  estimatePop3NewMessageCount,
+  syncPop3Account,
+  deletePop3MessageOnServer
+} from './pop3-sync'
+
+const POLL_INTERVAL_MS = 20_000
 
 const PROVIDER_CONFIG: Record<
-  Provider,
+  'gmail' | 'o365',
   { imap: { host: string; port: number }; smtp: { host: string; port: number } }
 > = {
   gmail: {
@@ -62,8 +77,18 @@ let syncStatus: SyncStatusState = {
   syncTotal: 0
 }
 
+export function initSyncFromPersistence(): void {
+  syncStatus = {
+    ...syncStatus,
+    lastSyncAt: getLastSyncAt()
+  }
+}
+
 let statusListeners: ((s: SyncStatusState) => void)[] = []
-let syncInterval: ReturnType<typeof setInterval> | null = null
+let pollInterval: ReturnType<typeof setInterval> | null = null
+let syncLock = false
+
+export type SyncProgressHandler = () => void
 
 export function getSyncStatus(): SyncStatusState {
   return { ...syncStatus }
@@ -78,6 +103,9 @@ export function onSyncStatusChange(listener: (s: SyncStatusState) => void): () =
 
 function setSyncStatus(patch: Partial<SyncStatusState>): void {
   syncStatus = { ...syncStatus, ...patch }
+  if (patch.lastSyncAt !== undefined) {
+    setLastSyncAt(patch.lastSyncAt)
+  }
   statusListeners.forEach((l) => l({ ...syncStatus }))
 }
 
@@ -87,17 +115,23 @@ function incrementSyncProgress(by = 1): void {
 
 const SYNC_BATCH_SIZE = 200
 
-function countMessagesInSyncRange(messageCount: number | undefined, uidNext: number): number {
-  if (messageCount != null && messageCount > 0) {
-    return Math.min(SYNC_BATCH_SIZE, messageCount)
+function estimateNewMessagesInFolder(maxLocalUid: number | null, uidNext: number): number {
+  const highestUid = Math.max(0, uidNext - 1)
+  if (maxLocalUid == null) {
+    return Math.min(SYNC_BATCH_SIZE, highestUid)
   }
-  return Math.min(SYNC_BATCH_SIZE, Math.max(0, uidNext - 1))
+  if (uidNext <= maxLocalUid + 1) return 0
+  return highestUid - maxLocalUid
 }
 
-async function estimateAccountMessageCount(
+async function countNewMessagesForAccount(
   accountId: string,
   provider: Provider
 ): Promise<number> {
+  if (provider === 'pop3') {
+    return estimatePop3NewMessageCount(accountId)
+  }
+
   const client = await createImapClient(accountId, provider)
   let total = 0
 
@@ -105,8 +139,14 @@ async function estimateAccountMessageCount(
     const mailboxes = await client.list()
     for (const mb of mailboxes) {
       if (mb.flags?.has('\\Noselect')) continue
-      const status = await client.status(mb.path, { uidNext: true, unseen: true, messages: true })
-      total += countMessagesInSyncRange(status.messages, status.uidNext ?? 1)
+      const folder = upsertFolder(
+        accountId,
+        mb.path,
+        mb.name,
+        detectFolderType(mb.name, mb.specialUse)
+      )
+      const status = await client.status(mb.path, { uidNext: true, uidValidity: true })
+      total += estimateNewMessagesInFolder(getFolderMaxUid(folder.id), status.uidNext ?? 1)
     }
   } finally {
     await client.logout()
@@ -138,28 +178,76 @@ async function ensureFreshToken(
   return refreshed
 }
 
-async function createImapClient(
+export async function createImapClient(
   accountId: string,
   provider: Provider
 ): Promise<ImapFlow> {
-  let tokens = getAccountTokens(accountId)
-  if (!tokens) throw new Error('Account tokens not found')
+  if (provider === 'pop3') {
+    throw new Error('POP3 accounts do not use IMAP')
+  }
 
-  tokens = await ensureFreshToken(accountId, provider, tokens)
-  const config = PROVIDER_CONFIG[provider]
+  const manual = provider === 'imap' ? getManualCredentials(accountId) : null
+
+  if (manual) {
+    const client = new ImapFlow({
+      host: manual.incoming.host,
+      port: manual.incoming.port,
+      secure: imapFlowSecure(manual.incoming.security),
+      auth: {
+        user: manual.username,
+        pass: manual.password
+      },
+      logger: false
+    })
+    await client.connect()
+    return client
+  }
+
+  const stored = getAccountTokens(accountId)
+  if (!stored) throw new Error('Account tokens not found')
+
+  let email = stored.email
+  let accessToken = stored.accessToken
+
+  try {
+    if (provider === 'gmail') {
+      const resolved = await resolveGoogleAccessToken(accountId, stored)
+      accessToken = resolved.accessToken
+      email = resolved.tokenData.email
+    } else {
+      const tokens = await ensureFreshToken(accountId, provider, stored)
+      accessToken = tokens.accessToken
+      email = tokens.email
+    }
+  } catch (err) {
+    if (provider === 'gmail') {
+      throw formatGmailAuthError(err, email)
+    }
+    throw err
+  }
+
+  const config = PROVIDER_CONFIG[provider as 'gmail' | 'o365']
 
   const client = new ImapFlow({
     host: config.imap.host,
     port: config.imap.port,
     secure: true,
     auth: {
-      user: tokens.email,
-      accessToken: tokens.accessToken
+      user: email,
+      accessToken
     },
     logger: false
   })
 
-  await client.connect()
+  try {
+    await client.connect()
+  } catch (err) {
+    if (provider === 'gmail') {
+      throw formatGmailAuthError(err, email)
+    }
+    throw err
+  }
+
   return client
 }
 
@@ -192,7 +280,7 @@ function sortMailboxesForSync<
   })
 }
 
-async function getMessageUidsToSync(client: ImapFlow, batchSize: number): Promise<number[]> {
+async function getRecentMessageUids(client: ImapFlow, batchSize: number): Promise<number[]> {
   try {
     const sorted = await client.sort(['REVERSE DATE'], ['ALL'], { uid: true })
     if (sorted?.length) {
@@ -213,7 +301,39 @@ export function setOnFolderSynced(callback: (() => void) | null): void {
   onFolderSynced = callback
 }
 
-function detectFolderType(name: string, specialUse?: string[]): FolderType {
+async function resolveUidsToFetch(
+  client: ImapFlow,
+  folderId: string,
+  maxLocalUid: number | null,
+  uidNext: number
+): Promise<number[]> {
+  if (maxLocalUid != null && uidNext <= maxLocalUid + 1) {
+    return []
+  }
+
+  let candidates: number[]
+  if (maxLocalUid == null) {
+    candidates = await getRecentMessageUids(client, SYNC_BATCH_SIZE)
+  } else {
+    candidates = (await client.search({ uid: `${maxLocalUid + 1}:*` }, { uid: true })) ?? []
+  }
+
+  return candidates.filter((uid) => !hasMessageUid(folderId, uid))
+}
+
+export function findInboxMailbox<
+  T extends { name: string; path: string; specialUse?: string[]; flags?: Set<string> }
+>(mailboxes: T[]): T | undefined {
+  return mailboxes.find(
+    (mb) =>
+      !mb.flags?.has('\\Noselect') &&
+      (mb.path === 'INBOX' ||
+        mb.name === 'INBOX' ||
+        mb.specialUse?.includes('\\Inbox'))
+  )
+}
+
+export function detectFolderType(name: string, specialUse?: string[]): FolderType {
   if (specialUse) {
     for (const flag of specialUse) {
       const mapped = SPECIAL_USE_MAP[flag]
@@ -262,100 +382,197 @@ async function saveAttachments(
   }
 }
 
-export async function syncAccount(accountId: string, provider: Provider): Promise<void> {
-  const client = await createImapClient(accountId, provider)
+async function fetchMessagesByUid(
+  client: ImapFlow,
+  accountId: string,
+  folderId: string,
+  uids: number[],
+  onProgress?: SyncProgressHandler
+): Promise<{ newCount: number; maxUid: number | null }> {
+  if (uids.length === 0) return { newCount: 0, maxUid: null }
 
+  let newCount = 0
+  let maxUid: number | null = null
+
+  for await (const msg of client.fetch(
+    uids.join(','),
+    {
+      uid: true,
+      envelope: true,
+      flags: true,
+      source: true
+    },
+    { uid: true }
+  )) {
+    if (!msg.source) continue
+
+    maxUid = maxUid == null ? msg.uid : Math.max(maxUid, msg.uid)
+
+    const parsed = await simpleParser(msg.source)
+    const from = formatAddress(parsed.from?.value[0])
+    const to = formatAddressList(parsed.to?.value)
+    const cc = formatAddressList(parsed.cc?.value)
+    const subject = parsed.subject ?? '(No subject)'
+    const bodyText = parsed.text ?? ''
+    const bodyHtml = parsed.html ? String(parsed.html) : null
+    const snippet = makeSnippet(bodyText || (parsed.textAsHtml ?? subject))
+    const date = parsed.date?.getTime() ?? Date.now()
+    const isRead = msg.flags?.has('\\Seen') ?? false
+    const isStarred = msg.flags?.has('\\Flagged') ?? false
+    const hasAttachments = (parsed.attachments?.length ?? 0) > 0
+
+    const { id, isNew } = upsertMessage({
+      folderId,
+      accountId,
+      uid: msg.uid,
+      messageId: parsed.messageId,
+      from,
+      to,
+      cc,
+      subject,
+      snippet,
+      date,
+      isRead,
+      isStarred,
+      hasAttachments,
+      bodyHtml,
+      bodyText
+    })
+
+    if (!isNew) continue
+
+    if (parsed.attachments?.length) {
+      await saveAttachments(id, msg.uid, parsed.attachments)
+    }
+
+    newCount++
+    onProgress?.()
+  }
+
+  return { newCount, maxUid }
+}
+
+export async function syncFolder(
+  client: ImapFlow,
+  accountId: string,
+  folderId: string,
+  imapPath: string,
+  onProgress?: SyncProgressHandler
+): Promise<number> {
+  const status = await client.status(imapPath, {
+    uidNext: true,
+    unseen: true,
+    uidValidity: true
+  })
+  updateFolderUnread(folderId, status.unseen ?? 0)
+
+  const storedValidity = getFolderUidValidity(folderId)
+  const serverValidity = status.uidValidity ?? null
+  if (
+    storedValidity != null &&
+    serverValidity != null &&
+    storedValidity !== serverValidity
+  ) {
+    clearFolderMessages(folderId)
+  }
+
+  let maxLocalUid = getFolderMaxUid(folderId)
+  const uidNext = status.uidNext ?? 1
+
+  if (maxLocalUid != null && uidNext <= maxLocalUid + 1) {
+    updateFolderSyncState(folderId, {
+      uidValidity: serverValidity,
+      lastSyncAt: Date.now()
+    })
+    return 0
+  }
+
+  const lock = await client.getMailboxLock(imapPath)
   try {
-    const mailboxes = await client.list()
-    const folderMap: Record<string, string> = {}
+    const uids = await resolveUidsToFetch(client, folderId, maxLocalUid, uidNext)
+    const { newCount, maxUid } = await fetchMessagesByUid(
+      client,
+      accountId,
+      folderId,
+      uids,
+      onProgress
+    )
 
-    for (const mb of mailboxes) {
-      if (mb.flags?.has('\\Noselect')) continue
-      const type = detectFolderType(mb.name, mb.specialUse)
-      const folder = upsertFolder(accountId, mb.path, mb.name, type)
-      folderMap[mb.path] = folder.id
-    }
+    const highestSyncedUid = Math.max(maxLocalUid ?? 0, maxUid ?? 0)
+    updateFolderSyncState(folderId, {
+      uidValidity: serverValidity,
+      highestSyncedUid,
+      lastSyncAt: Date.now(),
+      initialSyncComplete: highestSyncedUid > 0
+    })
 
-    for (const mb of sortMailboxesForSync(mailboxes)) {
-      if (mb.flags?.has('\\Noselect')) continue
-      const folderId = folderMap[mb.path]
-      if (!folderId) continue
-
-      const lock = await client.getMailboxLock(mb.path)
-      try {
-        const status = await client.status(mb.path, {
-          uidNext: true,
-          unseen: true,
-          messages: true
-        })
-        updateFolderUnread(folderId, status.unseen ?? 0)
-
-        const uids = await getMessageUidsToSync(client, SYNC_BATCH_SIZE)
-        if (uids.length === 0) continue
-
-        for await (const msg of client.fetch(
-          uids.join(','),
-          {
-            uid: true,
-            envelope: true,
-            flags: true,
-            source: true
-          },
-          { uid: true }
-        )) {
-          if (!msg.source) continue
-
-          const parsed = await simpleParser(msg.source)
-          const from = formatAddress(parsed.from?.value[0])
-          const to = formatAddressList(parsed.to?.value)
-          const cc = formatAddressList(parsed.cc?.value)
-          const subject = parsed.subject ?? '(No subject)'
-          const bodyText = parsed.text ?? ''
-          const bodyHtml = parsed.html ? String(parsed.html) : null
-          const snippet = makeSnippet(bodyText || (parsed.textAsHtml ?? subject))
-          const date = parsed.date?.getTime() ?? Date.now()
-          const isRead = msg.flags?.has('\\Seen') ?? false
-          const isStarred = msg.flags?.has('\\Flagged') ?? false
-          const hasAttachments = (parsed.attachments?.length ?? 0) > 0
-
-          const messageId = upsertMessage({
-            folderId,
-            accountId,
-            uid: msg.uid,
-            messageId: parsed.messageId,
-            from,
-            to,
-            cc,
-            subject,
-            snippet,
-            date,
-            isRead,
-            isStarred,
-            hasAttachments,
-            bodyHtml,
-            bodyText
-          })
-
-          if (parsed.attachments?.length) {
-            await saveAttachments(messageId, msg.uid, parsed.attachments)
-          }
-
-          incrementSyncProgress()
-        }
-
-        onFolderSynced?.()
-      } finally {
-        lock.release()
-      }
-    }
+    return newCount
   } finally {
-    await client.logout()
+    lock.release()
   }
 }
 
-export async function refreshAccount(accountId: string, provider: Provider): Promise<void> {
-  if (syncStatus.syncing) return
+export async function syncAccount(
+  accountId: string,
+  provider: Provider,
+  options: { onProgress?: SyncProgressHandler; silent?: boolean } = {}
+): Promise<number> {
+  if (syncLock) return 0
+  syncLock = true
 
+  try {
+    if (provider === 'pop3') {
+      const newCount = await syncPop3Account(accountId, options.onProgress ?? incrementSyncProgress)
+      if (newCount > 0) onFolderSynced?.()
+      return newCount
+    }
+
+    const client = await createImapClient(accountId, provider)
+    let newCount = 0
+
+    try {
+      const mailboxes = await client.list()
+      const folderMap: Record<string, string> = {}
+
+      for (const mb of mailboxes) {
+        if (mb.flags?.has('\\Noselect')) continue
+        const type = detectFolderType(mb.name, mb.specialUse)
+        const folder = upsertFolder(accountId, mb.path, mb.name, type)
+        folderMap[mb.path] = folder.id
+      }
+
+      for (const mb of sortMailboxesForSync(mailboxes)) {
+        if (mb.flags?.has('\\Noselect')) continue
+        const folderId = folderMap[mb.path]
+        if (!folderId) continue
+
+        const fetched = await syncFolder(
+          client,
+          accountId,
+          folderId,
+          mb.path,
+          options.onProgress
+        )
+        if (fetched > 0) {
+          newCount += fetched
+          onFolderSynced?.()
+        }
+      }
+    } finally {
+      await client.logout()
+    }
+
+    return newCount
+  } finally {
+    syncLock = false
+  }
+}
+
+function accountSyncError(email: string, err: unknown): string {
+  return err instanceof Error ? err.message : `Sync failed for ${email}`
+}
+
+export async function refreshAccount(accountId: string, provider: Provider): Promise<void> {
   setSyncStatus({
     syncing: true,
     error: null,
@@ -364,20 +581,27 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
   })
 
   try {
-    const total = await estimateAccountMessageCount(accountId, provider)
-    setSyncStatus({ syncTotal: total })
-    await syncAccount(accountId, provider)
+    const total = await countNewMessagesForAccount(accountId, provider)
+    setSyncStatus({ syncTotal: Math.max(total, 1) })
+
+    const fetched = await syncAccount(accountId, provider, {
+      onProgress: incrementSyncProgress
+    })
+
     setSyncStatus({
       syncing: false,
       lastSyncAt: Date.now(),
       error: null,
-      syncCurrent: total,
-      syncTotal: total
+      syncCurrent: fetched,
+      syncTotal: Math.max(fetched, total, 1)
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = accountSyncError(
+      getAccountTokens(accountId)?.email ?? accountId,
+      err
+    )
     setSyncStatus({ syncing: false, error: message })
-    throw err
+    throw err instanceof Error ? err : new Error(message)
   }
 }
 
@@ -391,42 +615,106 @@ export async function refreshAllAccounts(): Promise<void> {
     syncTotal: 0
   })
 
-  try {
-    const accounts = listAccounts()
-    let total = 0
-    for (const account of accounts) {
-      total += await estimateAccountMessageCount(account.id, account.provider)
-    }
-    setSyncStatus({ syncTotal: total })
+  const accounts = listAccounts()
+  const errors: string[] = []
+  let estimatedTotal = 0
 
-    for (const account of accounts) {
-      await syncAccount(account.id, account.provider)
+  for (const account of accounts) {
+    try {
+      estimatedTotal += await countNewMessagesForAccount(account.id, account.provider)
+    } catch (err) {
+      errors.push(accountSyncError(account.email, err))
     }
-    setSyncStatus({
-      syncing: false,
-      lastSyncAt: Date.now(),
-      error: null,
-      syncCurrent: total,
-      syncTotal: total
-    })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    setSyncStatus({ syncing: false, error: message })
-    throw err
+  }
+
+  setSyncStatus({ syncTotal: Math.max(estimatedTotal, 1) })
+
+  let fetchedTotal = 0
+  for (const account of accounts) {
+    try {
+      fetchedTotal += await syncAccount(account.id, account.provider, {
+        onProgress: incrementSyncProgress
+      })
+    } catch (err) {
+      errors.push(accountSyncError(account.email, err))
+    }
+  }
+
+  setSyncStatus({
+    syncing: false,
+    lastSyncAt: Date.now(),
+    error: errors.length ? errors.join('\n\n') : null,
+    syncCurrent: fetchedTotal,
+    syncTotal: Math.max(fetchedTotal, estimatedTotal, 1)
+  })
+
+  if (errors.length === accounts.length && accounts.length > 0) {
+    throw new Error(errors.join('\n\n'))
   }
 }
 
-export function startBackgroundSync(intervalMs = 60000): void {
-  if (syncInterval) return
-  syncInterval = setInterval(() => {
-    refreshAllAccounts().catch(() => {})
+export async function pollForNewMessages(): Promise<void> {
+  if (syncStatus.syncing) return
+
+  const accounts = listAccounts()
+  if (accounts.length === 0) return
+
+  let estimatedTotal = 0
+  for (const account of accounts) {
+    try {
+      estimatedTotal += await countNewMessagesForAccount(account.id, account.provider)
+    } catch {
+      // polling should not surface transient errors in the UI
+    }
+  }
+
+  if (estimatedTotal === 0) {
+    setSyncStatus({ lastSyncAt: Date.now() })
+    return
+  }
+
+  setSyncStatus({
+    syncing: true,
+    error: null,
+    syncCurrent: 0,
+    syncTotal: estimatedTotal
+  })
+
+  let fetchedTotal = 0
+  for (const account of accounts) {
+    try {
+      fetchedTotal += await syncAccount(account.id, account.provider, {
+        onProgress: incrementSyncProgress,
+        silent: true
+      })
+    } catch {
+      // keep polling on the next interval
+    }
+  }
+
+  setSyncStatus({
+    syncing: false,
+    lastSyncAt: Date.now(),
+    syncCurrent: fetchedTotal,
+    syncTotal: Math.max(fetchedTotal, estimatedTotal)
+  })
+
+  if (fetchedTotal > 0) {
+    onFolderSynced?.()
+  }
+}
+
+export function startBackgroundSync(intervalMs = POLL_INTERVAL_MS): void {
+  if (pollInterval) return
+  pollInterval = setInterval(() => {
+    pollForNewMessages().catch(() => {})
   }, intervalMs)
 }
 
 export function stopBackgroundSync(): void {
-  if (syncInterval) {
-    clearInterval(syncInterval)
-    syncInterval = null
+  if (pollInterval) {
+    clearInterval(pollInterval)
+    pollInterval = null
   }
 }
 
@@ -437,6 +725,8 @@ export async function markMessageReadOnServer(
   uid: number,
   isRead: boolean
 ): Promise<void> {
+  if (provider === 'pop3') return
+
   const client = await createImapClient(accountId, provider)
   try {
     const lock = await client.getMailboxLock(folderPath)
@@ -460,6 +750,11 @@ export async function deleteMessageOnServer(
   folderPath: string,
   uid: number
 ): Promise<void> {
+  if (provider === 'pop3') {
+    await deletePop3MessageOnServer(accountId, uid)
+    return
+  }
+
   const client = await createImapClient(accountId, provider)
   try {
     const lock = await client.getMailboxLock(folderPath)
@@ -480,6 +775,10 @@ export async function moveMessageOnServer(
   targetPath: string,
   uid: number
 ): Promise<void> {
+  if (provider === 'pop3') {
+    throw new Error('Moving messages is not supported for POP3 accounts')
+  }
+
   const client = await createImapClient(accountId, provider)
   try {
     const lock = await client.getMailboxLock(sourcePath)
@@ -498,6 +797,8 @@ export async function appendToSentFolder(
   provider: Provider,
   rawMessage: Buffer
 ): Promise<void> {
+  if (provider === 'pop3') return
+
   const client = await createImapClient(accountId, provider)
   try {
     const mailboxes = await client.list()
@@ -513,6 +814,18 @@ export async function appendToSentFolder(
   }
 }
 
+export function getAccountSmtpConfig(accountId: string, provider: Provider) {
+  if (provider === 'imap' || provider === 'pop3') {
+    const manual = getManualCredentials(accountId)
+    if (!manual) throw new Error('SMTP settings not found')
+    return manual.outgoing
+  }
+  return PROVIDER_CONFIG[provider as 'gmail' | 'o365'].smtp
+}
+
 export function getProviderSmtpConfig(provider: Provider) {
+  if (provider === 'imap' || provider === 'pop3') {
+    throw new Error('Use getAccountSmtpConfig for manual accounts')
+  }
   return PROVIDER_CONFIG[provider].smtp
 }

@@ -1,7 +1,8 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
-import type { Provider, ComposePayload, SyncStatus } from '../shared/types'
+import type { ComposePayload, SyncStatus, ManualAccountInput } from '../shared/types'
+import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
 import {
   listAccounts,
   saveAccount,
@@ -27,21 +28,51 @@ import {
   deleteMessageOnServer,
   moveMessageOnServer,
   refreshAccount,
-  setOnFolderSynced
+  pollForNewMessages,
+  setOnFolderSynced,
+  initSyncFromPersistence
 } from './services/imap-sync'
+import {
+  startIdleMonitoring,
+  stopIdleMonitoring,
+  restartIdleMonitoring,
+  setIdleNewMailHandler
+} from './services/imap-idle'
 import { sendMail, buildReplyPayload } from './services/smtp-send'
+import { autodetectMailSettings } from './services/mail-autoconfig'
+import { addManualAccount } from './services/manual-account'
+import {
+  getAppState,
+  patchAppState,
+  patchUiPreferences,
+  setWindowPreferences,
+  getWindowPreferences
+} from './services/preferences-service'
 
 let mainWindow: BrowserWindow | null = null
 let composeWindow: BrowserWindow | null = null
 
+configureLinuxDesktopIntegration()
+
+function getWindowIcon(): string | undefined {
+  return getAppIconPath()
+}
+
 function createMainWindow(): void {
+  const windowPrefs = getWindowPreferences()
+  const icon = getWindowIcon()
+
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: windowPrefs?.width ?? 1280,
+    height: windowPrefs?.height ?? 800,
+    x: windowPrefs?.x,
+    y: windowPrefs?.y,
     minWidth: 900,
     minHeight: 600,
     show: false,
     title: 'Orbit Mail',
+    icon,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -52,6 +83,17 @@ function createMainWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+  })
+
+  mainWindow.on('close', () => {
+    if (!mainWindow) return
+    const bounds = mainWindow.getBounds()
+    setWindowPreferences({
+      width: bounds.width,
+      height: bounds.height,
+      x: bounds.x,
+      y: bounds.y
+    })
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -79,6 +121,8 @@ function createComposeWindow(payload?: Partial<ComposePayload>): void {
     minWidth: 480,
     minHeight: 400,
     title: 'New Message',
+    icon: getWindowIcon(),
+    autoHideMenuBar: true,
     parent: mainWindow ?? undefined,
     modal: false,
     show: false,
@@ -109,18 +153,31 @@ function createComposeWindow(payload?: Partial<ComposePayload>): void {
 function registerIpc(): void {
   ipcMain.handle('accounts:list', () => listAccounts())
 
-  ipcMain.handle('accounts:add', async (_, provider: Provider) => {
+  ipcMain.handle('accounts:add', async (_, provider: 'gmail' | 'o365') => {
     const tokenData =
       provider === 'gmail'
         ? await authenticateGoogle()
         : await authenticateMicrosoft()
     const account = saveAccount(provider, tokenData)
-    await refreshAllAccounts()
+    await refreshAccount(account.id, account.provider)
+    restartIdleMonitoring()
     return account
   })
 
+  ipcMain.handle('accounts:addManual', async (_, input: ManualAccountInput) => {
+    const account = await addManualAccount(input)
+    await refreshAccount(account.id, account.provider)
+    restartIdleMonitoring()
+    return account
+  })
+
+  ipcMain.handle('accounts:autodetect', async (_, email: string) =>
+    autodetectMailSettings(email)
+  )
+
   ipcMain.handle('accounts:remove', async (_, accountId: string) => {
     removeAccount(accountId)
+    restartIdleMonitoring()
   })
 
   ipcMain.handle('folders:list', (_, accountId?: string) => listFolders(accountId))
@@ -212,7 +269,7 @@ function registerIpc(): void {
     const account = accounts.find((a) => a.id === payload.accountId)
     if (!account) throw new Error('Account not found')
     await sendMail(payload, account.provider)
-    await refreshAllAccounts()
+    await pollForNewMessages()
   })
 
   ipcMain.handle('attachments:download', async (_, attachmentId: string) => {
@@ -226,6 +283,12 @@ function registerIpc(): void {
     if (!att?.localPath) throw new Error('Attachment not found')
     await shell.openPath(att.localPath)
   })
+
+  ipcMain.handle('preferences:get', () => getAppState())
+
+  ipcMain.handle('preferences:saveUi', (_, ui) => patchUiPreferences(ui))
+
+  ipcMain.handle('preferences:save', (_, state) => patchAppState(state))
 }
 
 app.whenReady().then(() => {
@@ -233,13 +296,23 @@ app.whenReady().then(() => {
     app.setAppUserModelId('com.orbitmail.app')
   }
 
+  if (process.platform === 'linux') {
+    app.setName('Orbit Mail')
+  }
+
   registerIpc()
+  initSyncFromPersistence()
   createMainWindow()
   startBackgroundSync()
 
   setOnFolderSynced(() => {
     mainWindow?.webContents.send('sync:messagesUpdated')
   })
+
+  setIdleNewMailHandler(() => {
+    mainWindow?.webContents.send('sync:messagesUpdated')
+  })
+  startIdleMonitoring()
 
   // Push sync status to renderer
   onSyncStatusChange((status: SyncStatus) => {
@@ -253,7 +326,17 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('before-quit', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.executeJavaScript(
+      'window.__orbitMailFlush?.()',
+      true
+    )
+  }
+})
+
 app.on('window-all-closed', () => {
   stopBackgroundSync()
+  stopIdleMonitoring()
   if (process.platform !== 'darwin') app.quit()
 })

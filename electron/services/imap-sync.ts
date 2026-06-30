@@ -28,6 +28,7 @@ import {
 import { getLastSyncAt, setLastSyncAt } from './preferences-service'
 import { recordAttachmentsMetadata } from './attachment-fetch'
 import { isWithinSyncWindow, syncSinceDate } from './sync-policy'
+import { isVirtualViewFolder } from '../../shared/folders'
 import { imapFlowSecure } from './account-credentials'
 import { refreshGoogleToken, resolveGoogleAccessToken, formatGmailAuthError } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
@@ -166,7 +167,8 @@ async function countNewMessagesForAccount(
         accountId,
         mb.path,
         mb.name,
-        detectFolderType(mb.name, mb.specialUse)
+        detectFolderType(mb.name, mb.specialUse),
+        isVirtualViewFolder(provider, mb.path)
       )
       const status = await client.status(mb.path, { uidNext: true, uidValidity: true })
       const storedValidity = normalizeImapUint(getFolderUidValidity(folder.id))
@@ -619,7 +621,13 @@ export async function syncAccount(
       for (const mb of mailboxes) {
         if (mb.flags?.has('\\Noselect')) continue
         const type = detectFolderType(mb.name, mb.specialUse)
-        const folder = upsertFolder(accountId, mb.path, mb.name, type)
+        const folder = upsertFolder(
+          accountId,
+          mb.path,
+          mb.name,
+          type,
+          isVirtualViewFolder(provider, mb.path)
+        )
         folderMap[mb.path] = folder.id
       }
 

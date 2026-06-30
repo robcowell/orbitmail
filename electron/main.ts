@@ -186,10 +186,29 @@ function showNewMailNotification(count: number): void {
   notification.show()
 }
 
-function handleMailtoArgv(argv: string[]): void {
+function handleMailtoArgv(argv: string[]): boolean {
   const mailtoUrl = argv.find((arg) => arg.toLowerCase().startsWith('mailto:'))
-  if (mailtoUrl) {
-    openComposeFromMailto(mailtoUrl)
+  if (!mailtoUrl) return false
+  openComposeFromMailto(mailtoUrl)
+  return true
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow) return
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+function configureMailtoProtocolClient(enabled: boolean): void {
+  if (process.platform === 'darwin' || process.platform === 'win32' || process.platform === 'linux') {
+    if (enabled) {
+      if (!app.isDefaultProtocolClient('mailto')) {
+        app.setAsDefaultProtocolClient('mailto')
+      }
+    } else if (app.isDefaultProtocolClient('mailto')) {
+      app.removeAsDefaultProtocolClient('mailto')
+    }
   }
 }
 
@@ -558,6 +577,12 @@ function registerIpc(): void {
 
   ipcMain.handle('preferences:save', (_, state) => patchAppState(state))
 
+  ipcMain.handle('preferences:setHandleMailtoLinks', (_, enabled: boolean) => {
+    patchAppState({ handleMailtoLinks: enabled })
+    configureMailtoProtocolClient(enabled)
+    return enabled
+  })
+
   ipcMain.handle('preferences:muteSender', (_, email: string) => {
     muteSender(email)
   })
@@ -573,11 +598,8 @@ if (!gotSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', (_, argv) => {
-    handleMailtoArgv(argv)
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.show()
-      mainWindow.focus()
+    if (handleMailtoArgv(argv)) {
+      focusMainWindow()
     }
   })
 
@@ -590,9 +612,7 @@ if (!gotSingleInstanceLock) {
       app.setName('Orbit Mail')
     }
 
-    if (!app.isDefaultProtocolClient('mailto')) {
-      app.setAsDefaultProtocolClient('mailto')
-    }
+    configureMailtoProtocolClient(getAppState().handleMailtoLinks === true)
 
     registerIpc()
     initSyncFromPersistence()

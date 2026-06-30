@@ -94,6 +94,8 @@ const api: OrbitMailAPI = {
     get: () => ipcRenderer.invoke('preferences:get'),
     saveUi: (ui: Partial<UiPreferences>) => ipcRenderer.invoke('preferences:saveUi', ui),
     save: (state: Partial<PersistedAppState>) => ipcRenderer.invoke('preferences:save', state),
+    setHandleMailtoLinks: (enabled: boolean) =>
+      ipcRenderer.invoke('preferences:setHandleMailtoLinks', enabled),
     muteSender: (email: string) => ipcRenderer.invoke('preferences:muteSender', email),
     blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email)
   }

@@ -23,6 +23,7 @@ export const folders = sqliteTable(
       enum: ['inbox', 'sent', 'drafts', 'trash', 'junk', 'custom']
     }).notNull(),
     unreadCount: integer('unread_count').notNull().default(0),
+    isVirtualView: integer('is_virtual_view', { mode: 'boolean' }).notNull().default(false),
     uidValidity: integer('uid_validity'),
     highestSyncedUid: integer('highest_synced_uid').notNull().default(0),
     lastSyncAt: integer('last_sync_at'),

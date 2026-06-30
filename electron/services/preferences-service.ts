@@ -20,7 +20,10 @@ export interface WindowPreferences {
 export interface PersistedAppState {
   ui: UiPreferences
   lastSyncAt: number | null
+  handleMailtoLinks?: boolean
   window?: WindowPreferences
+  mutedSenders?: string[]
+  blockedSenders?: string[]
 }
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
@@ -34,6 +37,7 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
 export const DEFAULT_APP_STATE: PersistedAppState = {
   ui: DEFAULT_UI_PREFERENCES,
   lastSyncAt: null,
+  handleMailtoLinks: false,
   mutedSenders: [],
   blockedSenders: []
 }
@@ -51,6 +55,7 @@ function readRawState(): PersistedAppState {
     return {
       ui: { ...DEFAULT_UI_PREFERENCES, ...parsed.ui },
       lastSyncAt: parsed.lastSyncAt ?? null,
+      handleMailtoLinks: parsed.handleMailtoLinks ?? false,
       mutedSenders: parsed.mutedSenders ?? [],
       blockedSenders: parsed.blockedSenders ?? [],
       window: parsed.window
@@ -88,8 +93,9 @@ export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppSt
     ...current,
     ...patch,
     ui: { ...current.ui, ...patch.ui },
-    mutedSenders: patch.mutedSenders ?? current.mutedSenders,
-    blockedSenders: patch.blockedSenders ?? current.blockedSenders
+    handleMailtoLinks: patch.handleMailtoLinks ?? current.handleMailtoLinks ?? false,
+    mutedSenders: patch.mutedSenders ?? current.mutedSenders ?? [],
+    blockedSenders: patch.blockedSenders ?? current.blockedSenders ?? []
   }
   saveAppState(next)
   return next
@@ -127,14 +133,14 @@ export function muteSender(email: string): void {
   const normalized = normalizeEmail(email)
   if (!normalized) return
   const current = getAppState()
-  if (current.mutedSenders.includes(normalized)) return
-  patchAppState({ mutedSenders: [...current.mutedSenders, normalized] })
+  if (current.mutedSenders?.includes(normalized)) return
+  patchAppState({ mutedSenders: [...(current.mutedSenders ?? []), normalized] })
 }
 
 export function blockSender(email: string): void {
   const normalized = normalizeEmail(email)
   if (!normalized) return
   const current = getAppState()
-  if (current.blockedSenders.includes(normalized)) return
-  patchAppState({ blockedSenders: [...current.blockedSenders, normalized] })
+  if (current.blockedSenders?.includes(normalized)) return
+  patchAppState({ blockedSenders: [...(current.blockedSenders ?? []), normalized] })
 }

@@ -57,6 +57,7 @@ export interface Folder {
   name: string
   type: FolderType
   unreadCount: number
+  isVirtualView: boolean
 }
 
 export type FlagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'gray'
@@ -128,6 +129,7 @@ export interface UiPreferences {
 export interface PersistedAppState {
   ui: UiPreferences
   lastSyncAt: number | null
+  handleMailtoLinks?: boolean
   mutedSenders: string[]
   blockedSenders: string[]
   window?: {
@@ -198,6 +200,7 @@ export interface OrbitMailAPI {
     get: () => Promise<PersistedAppState>
     saveUi: (ui: Partial<UiPreferences>) => Promise<UiPreferences>
     save: (state: Partial<PersistedAppState>) => Promise<PersistedAppState>
+    setHandleMailtoLinks: (enabled: boolean) => Promise<boolean>
     muteSender: (email: string) => Promise<void>
     blockSender: (email: string) => Promise<void>
   }

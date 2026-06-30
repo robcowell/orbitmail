@@ -1,5 +1,6 @@
 import { writeFileSync } from 'fs'
 import type { AccountInfo, Provider } from '../../shared/types'
+import { accountUnreadCount } from '../../shared/folders'
 import {
   clearFolderMessages,
   countMessages,
@@ -61,7 +62,7 @@ export function getAccountInfo(accountId: string): AccountInfo {
     createdAt: account.createdAt,
     folderCount: folders.length,
     messageCount,
-    unreadCount: folders.reduce((sum, folder) => sum + folder.unreadCount, 0),
+    unreadCount: accountUnreadCount(account, folders),
     syncDays: account.syncDays,
     localStorageBytes: storage.contentBytes + storage.attachmentBytes,
     attachmentCount: storage.attachmentCount,

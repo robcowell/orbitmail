@@ -112,6 +112,20 @@ function migrateSchema(db: Database.Database): void {
   if (!folderNames.has('initial_sync_complete')) {
     db.exec('ALTER TABLE folders ADD COLUMN initial_sync_complete INTEGER NOT NULL DEFAULT 0')
   }
+  if (!folderNames.has('is_virtual_view')) {
+    db.exec('ALTER TABLE folders ADD COLUMN is_virtual_view INTEGER NOT NULL DEFAULT 0')
+    db.exec(`
+      UPDATE folders
+      SET is_virtual_view = 1
+      WHERE imap_path IN (
+        '[Gmail]/All Mail',
+        '[Gmail]/Important',
+        '[Gmail]/Starred',
+        '[Gmail]/Snoozed'
+      )
+      AND account_id IN (SELECT id FROM accounts WHERE provider = 'gmail')
+    `)
+  }
 
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS messages_folder_uid_idx ON messages(folder_id, uid)'

@@ -209,7 +209,7 @@ Install the Debian package:
 sudo dpkg -i release/Orbit\ Mail-*.deb
 ```
 
-Packaged builds register as a `mailto:` handler and install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops.
+Packaged builds install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops. `mailto:` handling is opt-in so the app does not hijack links from browsers or admin consoles.
 
 OAuth credentials from `.env` are embedded at build time via electron-vite environment loading — rebuild after changing `.env`.
 

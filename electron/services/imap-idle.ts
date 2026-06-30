@@ -1,5 +1,6 @@
 import type { ImapFlow } from 'imapflow'
 import type { Provider } from '../../shared/types'
+import { isVirtualViewFolder } from '../../shared/folders'
 import { listAccounts, upsertFolder } from './db-service'
 import {
   createImapClient,
@@ -144,7 +145,8 @@ async function handleMailboxActivity(
     accountId,
     mailbox.path,
     mailbox.name,
-    detectFolderType(mailbox.name, mailbox.specialUse)
+    detectFolderType(mailbox.name, mailbox.specialUse),
+    isVirtualViewFolder(provider, mailbox.path)
   )
 
   const newCount = await syncFolder(client, accountId, folder.id, mailbox.path)

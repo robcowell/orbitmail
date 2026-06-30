@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Account, Folder, FolderType } from '../../../shared/types'
+import { accountUnreadCount, shouldShowFolderUnreadBadge } from '../../../shared/folders'
 import {
   useMailStore,
   selectFolder,
@@ -56,7 +57,9 @@ function FolderRow({
     >
       <Icon {...sidebarIconProps} className={`sidebar-item-icon ${colorClass}`} />
       <span className="sidebar-item-label">{folder.name}</span>
-      {folder.unreadCount > 0 && <span className="sidebar-badge">{folder.unreadCount}</span>}
+      {shouldShowFolderUnreadBadge(folder) && (
+        <span className="sidebar-badge">{folder.unreadCount}</span>
+      )}
     </button>
   )
 }
@@ -126,9 +129,9 @@ function AccountSection({
     [folders, account.id]
   )
 
-  const accountUnreadCount = useMemo(
-    () => accountFolders.reduce((sum, folder) => sum + folder.unreadCount, 0),
-    [accountFolders]
+  const accountUnreadCountValue = useMemo(
+    () => accountUnreadCount(account, folders),
+    [account, folders]
   )
 
   const byType = (type: FolderType) => accountFolders.find((f) => f.type === type)
@@ -154,9 +157,9 @@ function AccountSection({
           aria-expanded={!collapsed}
         >
           <span className="sidebar-account-label">{accountLabel(account)}</span>
-          {collapsed && accountUnreadCount > 0 && (
-            <span className="sidebar-badge sidebar-account-badge" aria-label={`${accountUnreadCount} unread`}>
-              {accountUnreadCount}
+          {collapsed && accountUnreadCountValue > 0 && (
+            <span className="sidebar-badge sidebar-account-badge" aria-label={`${accountUnreadCountValue} unread`}>
+              {accountUnreadCountValue}
             </span>
           )}
         </button>

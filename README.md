@@ -31,7 +31,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 
 - Light and dark mode
 - Desktop notifications for new mail
-- `mailto:` link handler — opens compose from other apps and browsers
+- `mailto:` link handler — opens compose when enabled in preferences (not registered as the system default automatically)
 - Persistent UI state — selected folder/message, collapsed accounts, dark mode, window size
 - Offline-friendly — cached mail remains readable; status bar shows offline state
 - Sync error recovery — retry and re-authenticate actions in the status bar
@@ -56,7 +56,7 @@ chmod +x Orbit\ Mail-*.AppImage
 ./Orbit\ Mail-*.AppImage
 ```
 
-Packaged builds register as a `mailto:` handler and install a desktop launcher for correct taskbar/window grouping on Cinnamon and other desktops.
+Packaged builds install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops. They can handle `mailto:` links when you opt in via system default applications or `window.orbitMail.preferences.setHandleMailtoLinks(true)`.
 
 > **Note:** Gmail and Microsoft sign-in require OAuth credentials to be configured at build time. Pre-built packages from the project maintainer include these; if you build from source yourself, see [DEVELOPERS.md](DEVELOPERS.md).
 

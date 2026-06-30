@@ -294,7 +294,8 @@ export function upsertFolder(
   accountId: string,
   imapPath: string,
   name: string,
-  type: FolderType
+  type: FolderType,
+  isVirtualView = false
 ): Folder {
   const db = getDb()
   const existing = db
@@ -304,13 +305,17 @@ export function upsertFolder(
     .get()
 
   if (existing) {
+    if (existing.isVirtualView !== isVirtualView) {
+      db.update(folders).set({ isVirtualView }).where(eq(folders.id, existing.id)).run()
+    }
     return {
       id: existing.id,
       accountId: existing.accountId,
       imapPath: existing.imapPath,
       name: existing.name,
       type: existing.type as FolderType,
-      unreadCount: existing.unreadCount
+      unreadCount: existing.unreadCount,
+      isVirtualView
     }
   }
 
@@ -321,10 +326,11 @@ export function upsertFolder(
     imapPath,
     name,
     type,
-    unreadCount: 0
+    unreadCount: 0,
+    isVirtualView
   }).run()
 
-  return { id, accountId, imapPath, name, type, unreadCount: 0 }
+  return { id, accountId, imapPath, name, type, unreadCount: 0, isVirtualView }
 }
 
 export function listFolders(accountId?: string): Folder[] {
@@ -338,7 +344,8 @@ export function listFolders(accountId?: string): Folder[] {
     imapPath: r.imapPath,
     name: r.name,
     type: r.type as FolderType,
-    unreadCount: r.unreadCount
+    unreadCount: r.unreadCount,
+    isVirtualView: r.isVirtualView
   }))
 }
 
@@ -352,7 +359,8 @@ export function getFolderById(folderId: string): Folder | null {
     imapPath: r.imapPath,
     name: r.name,
     type: r.type as FolderType,
-    unreadCount: r.unreadCount
+    unreadCount: r.unreadCount,
+    isVirtualView: r.isVirtualView
   }
 }
 

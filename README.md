@@ -1,6 +1,6 @@
 # Orbit Mail
 
-A desktop email client for Linux with an Apple Mail–inspired three-pane layout. Orbit Mail supports Gmail and Microsoft 365, plus manual IMAP, POP3, and SMTP accounts. Mail is cached locally for fast search and offline reading.
+A desktop email client for Linux with an Apple Mail–inspired three-pane layout. Orbit Mail supports Gmail and Microsoft 365, plus manual IMAP, POP3, and SMTP accounts. Mail is cached locally for fast search and offline reading. Optional, bring-your-own-key AI features can summarise messages and surface outstanding tasks.
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-green)
@@ -31,11 +31,21 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 
 - Light and dark mode
 - Desktop notifications for new mail
+- Unread count badge on the taskbar / launcher and in the window title
 - `mailto:` link handler — opens compose when enabled in preferences (not registered as the system default automatically)
 - Persistent UI state — selected folder/message, collapsed accounts, dark mode, window size
 - Offline-friendly — cached mail remains readable; status bar shows offline state
 - Sync error recovery — retry and re-authenticate actions in the status bar
 - External link handling — links in HTML messages open in your default browser
+
+### AI (optional)
+
+Bring your own [Anthropic API key](https://console.anthropic.com/) to unlock optional AI features — **off by default**; nothing is sent anywhere until you add a key via the ✦ button in the toolbar (**AI settings**).
+
+- **Analyze** — the **Analyze** button in the message header turns the open email into action items, open questions, and key context, with sender awareness (what *you* need to do vs. what you asked of others). Results are cached per message.
+- **Tasks sweep** — the checklist button sweeps the current folder's unread mail into one prioritised, source-linked task list, so you can triage a whole inbox at once.
+
+Your API key is stored encrypted on your device — see [Data & privacy](#data--privacy).
 
 ## Install
 
@@ -151,6 +161,8 @@ Credentials are stored encrypted using your OS keychain.
 - **Star** — toggle flagged state on the server
 - **Mark unread** — mark the selected message as unread
 - **Refresh** — trigger a manual sync
+- **Tasks** — sweep the current folder's unread mail for outstanding tasks (requires an Anthropic API key)
+- **AI settings** (✦) — add or remove your Anthropic API key
 
 ### Sidebar and folders
 
@@ -176,6 +188,7 @@ All local data is stored under the Electron user data directory:
 
 - Mail is synced over IMAP/POP3 and cached locally for performance and search
 - OAuth tokens and passwords are stored in an encrypted blob per account
+- **AI is opt-in.** Nothing is sent to any AI provider unless you add an Anthropic API key. When you run **Analyze** or **Tasks**, the relevant message text is sent to Anthropic's API to produce the result. Your API key is stored encrypted (Electron `safeStorage`) in the local database and never leaves your device except to authenticate with Anthropic.
 - No telemetry or third-party analytics are included
 
 Removing an account from the sidebar deletes its local cached mail for that account.
@@ -190,6 +203,7 @@ See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 - **Compose** — plain-text body editor (HTML is generated as simple paragraphs)
 - **No local draft autosave** — Drafts folder syncs from the server only
 - **Linux only** — no Windows or macOS builds yet
+- **AI features are optional and BYO-key** — require your own Anthropic API key; when used, message text is sent to Anthropic (see [Data & privacy](#data--privacy))
 
 ## Troubleshooting
 

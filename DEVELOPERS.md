@@ -80,7 +80,7 @@ To let **any** Gmail account sign in: OAuth consent screen → **Audience** → 
 
 #### Full verification & CASA (public distribution only)
 
-You only need this to **remove the unverified-app warning and exceed 100 users** — i.e. to distribute Orbit Mail as a product strangers install without any setup. For personal use or a small group, the unverified-production path above costs nothing; skip this section.
+You only need this to **remove the unverified-app warning and exceed 100 users** — i.e. to distribute Orbit Mail so anyone can install it and sign in without registering their own credentials. For personal use or a small group, the unverified-production path above costs nothing; skip this section.
 
 Because `https://mail.google.com/` is a **restricted** scope (the strictest tier), full verification is two layers:
 
@@ -115,6 +115,12 @@ MICROSOFT_TENANT_ID=common
 - Your tenant administrator must allow OAuth-based IMAP/SMTP (some tenants disable IMAP/SMTP entirely).
 - `MICROSOFT_TENANT_ID=common` works for most cases; use your specific tenant GUID to restrict sign-in to one organization.
 
+## AI (optional)
+
+The AI features — per-message **Analyze** and the unread-folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
+
+`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with model `claude-opus-4-8` and structured output. Per-message analysis is cached on the `messages` row (`ai_analysis` / `ai_analysis_at`); the inbox sweep is a single batched call and is not cached. Message content is sent to Anthropic only when the user triggers a feature.
+
 ## Architecture
 
 ```
@@ -142,6 +148,7 @@ MICROSOFT_TENANT_ID=common
 | SMTP | nodemailer |
 | Parsing | mailparser |
 | OAuth | google-auth-library, @azure/msal-node |
+| AI (optional) | @anthropic-ai/sdk (Claude Opus 4.8) |
 | Storage | better-sqlite3, Drizzle ORM, FTS5 |
 | HTML sanitization | DOMPurify |
 
@@ -176,6 +183,7 @@ orbit-mail/
 | `electron/services/imap-sync.ts` | IMAP sync, UID tracking, background poll |
 | `electron/services/imap-idle.ts` | IMAP IDLE connections per account |
 | `electron/services/db-service.ts` | SQLite CRUD, unread recalculation |
+| `electron/services/ai-service.ts` | Optional AI: message analysis, inbox task sweep, encrypted Anthropic key storage |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
 | `shared/types.ts` | Shared types and `OrbitMailAPI` contract |
 | `src/stores/mailStore.ts` | Renderer state, message list refresh |

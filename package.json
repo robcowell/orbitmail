@@ -85,13 +85,15 @@
       "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
       "icon": "build/icons",
       "desktop": {
-        "Name": "Orbit Mail",
-        "GenericName": "Email Client",
-        "Comment": "Desktop email client for Linux with IMAP, SMTP, and OAuth",
-        "StartupWMClass": "orbit-mail",
-        "Categories": "Network;Email;",
-        "MimeType": "x-scheme-handler/mailto;",
-        "Keywords": "email;mail;inbox;imap;smtp;gmail;outlook;"
+        "entry": {
+          "Name": "Orbit Mail",
+          "GenericName": "Email Client",
+          "Comment": "Desktop email client for Linux with IMAP, SMTP, and OAuth",
+          "StartupWMClass": "orbit-mail",
+          "Categories": "Network;Email;",
+          "MimeType": "x-scheme-handler/mailto;",
+          "Keywords": "email;mail;inbox;imap;smtp;gmail;outlook;"
+        }
       }
     },
     "deb": {

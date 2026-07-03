@@ -32,7 +32,7 @@
     "imapflow": "^1.0.184",
     "mailparser": "^3.7.2",
     "node-pop3": "^0.11.0",
-    "nodemailer": "^6.10.0",
+    "nodemailer": "^9.0.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.3"

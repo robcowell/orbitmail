@@ -1,6 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MessageSummary } from '../../../shared/types'
-import { useMailStore, selectMessage, loadMoreMessages } from '../../stores/mailStore'
+import {
+  useMailStore,
+  selectMessage,
+  selectAdjacentMessage,
+  extendSelectionToAdjacent,
+  selectMessageRange,
+  toggleMessageSelection,
+  loadMoreMessages
+} from '../../stores/mailStore'
 import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
@@ -39,6 +47,7 @@ export function MessageList() {
   const searchQuery = useMailStore((s) => s.searchQuery)
   const searchResults = useMailStore((s) => s.searchResults)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
+  const selectedMessageIds = useMailStore((s) => s.selectedMessageIds)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const folders = useMailStore((s) => s.folders)
   const accounts = useMailStore((s) => s.accounts)
@@ -50,6 +59,35 @@ export function MessageList() {
     x: number
     y: number
   } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const selectedRowRef = useRef<HTMLDivElement>(null)
+
+  // Keep the selected row visible as the user navigates with the keyboard.
+  useEffect(() => {
+    selectedRowRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [selectedMessageId])
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    const direction = event.key === 'ArrowDown' ? 1 : -1
+    if (event.shiftKey) {
+      extendSelectionToAdjacent(direction)
+    } else {
+      selectAdjacentMessage(direction)
+    }
+  }
+
+  const handleRowClick = (event: React.MouseEvent, messageId: string) => {
+    containerRef.current?.focus()
+    if (event.shiftKey) {
+      void selectMessageRange(messageId)
+    } else if (event.metaKey || event.ctrlKey) {
+      void toggleMessageSelection(messageId)
+    } else {
+      void selectMessage(messageId)
+    }
+  }
 
   const isSearching = searchQuery.trim().length > 0
   const displayMessages = isSearching ? searchResults : messages
@@ -109,7 +147,7 @@ export function MessageList() {
   }
 
   return (
-    <div>
+    <div ref={containerRef} className="message-list" tabIndex={0} onKeyDown={handleKeyDown}>
       {isSearching && (
         <div className="search-results-banner">
           {searchResults.length} result{searchResults.length === 1 ? '' : 's'}
@@ -120,14 +158,20 @@ export function MessageList() {
       {displayMessages.map((msg) => (
         <div
           key={msg.id}
+          ref={selectedMessageId === msg.id ? selectedRowRef : undefined}
           className={[
             'message-row',
             !msg.isRead ? 'unread' : '',
-            selectedMessageId === msg.id ? 'selected' : ''
+            selectedMessageIds.includes(msg.id) ? 'selected' : '',
+            selectedMessageId === msg.id && selectedMessageIds.length > 1 ? 'active' : ''
           ]
             .filter(Boolean)
             .join(' ')}
-          onClick={() => selectMessage(msg.id)}
+          onMouseDown={(event) => {
+            // Stop Shift+click from selecting the row text as a side effect.
+            if (event.shiftKey) event.preventDefault()
+          }}
+          onClick={(event) => handleRowClick(event, msg.id)}
           onContextMenu={(event) => handleContextMenu(event, msg)}
         >
           <div className={`unread-dot${msg.isRead ? ' read' : ''}`} />

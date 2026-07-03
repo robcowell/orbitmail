@@ -140,6 +140,38 @@ export interface PersistedAppState {
   }
 }
 
+export interface AiAnalysis {
+  summary: string
+  actionItems: string[]
+  questions: string[]
+  keyContext: string[]
+  generatedAt: number
+  cached: boolean
+}
+
+export interface AiStatus {
+  configured: boolean
+}
+
+export type AiPriority = 'urgent' | 'high' | 'medium' | 'low'
+
+export interface SweepTask {
+  task: string
+  priority: AiPriority
+  sourceMessageId: string
+  sourceSubject: string
+  sourceFrom: string
+}
+
+export interface SweepResult {
+  tasks: SweepTask[]
+  analyzedCount: number
+}
+
+export type AiAnalysisResult = AiAnalysis | { error: string }
+
+export type AiSweepResult = SweepResult | { error: string }
+
 export interface OrbitMailAPI {
   folders: {
     list: (accountId?: string) => Promise<Folder[]>
@@ -203,6 +235,13 @@ export interface OrbitMailAPI {
     setHandleMailtoLinks: (enabled: boolean) => Promise<boolean>
     muteSender: (email: string) => Promise<void>
     blockSender: (email: string) => Promise<void>
+  }
+  ai: {
+    analyze: (messageId: string, force?: boolean) => Promise<AiAnalysisResult>
+    sweep: (folderId: string | 'unified') => Promise<AiSweepResult>
+    getStatus: () => Promise<AiStatus>
+    setApiKey: (key: string) => Promise<void>
+    clearApiKey: () => Promise<void>
   }
 }
 

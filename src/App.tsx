@@ -5,6 +5,8 @@ import { Sidebar } from './components/sidebar/Sidebar'
 import { MessageList } from './components/list/MessageList'
 import { MessageView } from './components/reader/MessageView'
 import { AddAccountWizard } from './components/accounts/AddAccountWizard'
+import { AiSettingsDialog } from './components/settings/AiSettingsDialog'
+import { TasksDialog } from './components/tasks/TasksDialog'
 import {
   useMailStore,
   loadInitialData,
@@ -12,7 +14,7 @@ import {
   cancelScheduledRefreshMessages,
   subscribeSyncCompleteRefresh,
   saveUiPreferencesNow,
-  moveMessageToTrash
+  deleteSelectedMessages
 } from './stores/mailStore'
 import { exposeFlushHook } from './stores/persistence'
 
@@ -89,6 +91,10 @@ function MainApp() {
   const setSyncStatus = useMailStore((s) => s.setSyncStatus)
   const setIsOnline = useMailStore((s) => s.setIsOnline)
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
+  const showAiSettings = useMailStore((s) => s.showAiSettings)
+  const setShowAiSettings = useMailStore((s) => s.setShowAiSettings)
+  const showTasks = useMailStore((s) => s.showTasks)
+  const setShowTasks = useMailStore((s) => s.setShowTasks)
 
   useEffect(() => {
     exposeFlushHook()
@@ -143,8 +149,12 @@ function MainApp() {
         e.preventDefault()
         document.querySelector<HTMLInputElement>('.search-input')?.focus()
       }
-      if (e.key === 'Delete' && store.selectedMessageId) {
-        moveMessageToTrash(store.selectedMessageId).catch(() => {})
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        (store.selectedMessageIds.length || store.selectedMessageId)
+      ) {
+        e.preventDefault()
+        deleteSelectedMessages().catch(() => {})
       }
     }
 
@@ -173,6 +183,10 @@ function MainApp() {
       />
       <StatusBar />
       <AddAccountWizard />
+      {showAiSettings && (
+        <AiSettingsDialog onClose={() => setShowAiSettings(false)} />
+      )}
+      {showTasks && <TasksDialog onClose={() => setShowTasks(false)} />}
       <Toast />
     </div>
   )

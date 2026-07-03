@@ -31,3 +31,10 @@ export function accountUnreadCount(account: Account, folders: Folder[]): number 
     .filter((folder) => !folder.isVirtualView && folder.type !== 'custom')
     .reduce((sum, folder) => sum + folder.unreadCount, 0)
 }
+
+export function totalUnreadCount(accounts: Account[], folders: Folder[]): number {
+  return accounts.reduce(
+    (sum, account) => sum + accountUnreadCount(account, folders),
+    0
+  )
+}

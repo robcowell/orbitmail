@@ -42,6 +42,8 @@ If the launcher icon is missing, run `npm run icons` before `npm run install:des
 
 OAuth client IDs are loaded from a `.env` file at dev/build time. End users of packaged builds need registered app credentials until in-app OAuth configuration is added (see [Known limitations](#known-limitations)).
 
+**Bring-your-own-credentials.** Orbit Mail does **not** ship with bundled Google/Microsoft credentials. Established open-source clients — Thunderbird (Mozilla), and Evolution/Geary via GNOME Online Accounts — each register one OAuth client, take it through full verification, and embed it so sign-in "just works" for every user. That approach carries a recurring verification and security-assessment burden (see [Full verification & CASA](#full-verification--casa-public-distribution-only)) that only an org can realistically sustain. Instead, each person running Orbit Mail (or building their own copy) registers their **own** OAuth app and drops the client ID into `.env`. The cost of that model is the one-time setup below, plus an "unverified app" click-through per account — in exchange for zero verification cost and no user cap beyond Google's unverified 100.
+
 ```bash
 cp .env.example .env
 ```
@@ -75,6 +77,21 @@ The code accepts any Gmail account; what limits sign-in is your OAuth app's publ
 | **In production**, verified | **Any** Gmail account | No warnings, no user cap; requires brand verification + an annual **CASA security assessment** for the restricted scope (weeks to complete) |
 
 To let **any** Gmail account sign in: OAuth consent screen → **Audience** → **Publish app**. Each new user clicks **Advanced → Go to Orbit Mail (unsafe)** past the unverified-app screen until you complete full restricted-scope verification (only needed for wide public distribution).
+
+#### Full verification & CASA (public distribution only)
+
+You only need this to **remove the unverified-app warning and exceed 100 users** — i.e. to distribute Orbit Mail as a product strangers install without any setup. For personal use or a small group, the unverified-production path above costs nothing; skip this section.
+
+Because `https://mail.google.com/` is a **restricted** scope (the strictest tier), full verification is two layers:
+
+1. **OAuth app verification** (brand + app review) — *free*, but requires a domain you own and have verified, a public homepage and **privacy policy** hosted on it, per-scope justifications, and a YouTube demo of the consent flow. Google reviews manually; expect days to weeks.
+2. **CASA** (Cloud Application Security Assessment) — an **annual, paid** security assessment by a Google-authorized third-party assessor (via the App Defense Alliance), plus ongoing compliance with Google's **Limited Use** policy (no ads, restricted human review, no data resale). Cost is assessor- and complexity-dependent — roughly **low single-thousands up to ~$15k USD per year** — and it **recurs every year**. A remediation round adds cost if the assessment finds gaps.
+
+There is no lighter Gmail scope that avoids this — the narrower Gmail API scopes (`gmail.modify`, `gmail.readonly`, …) are *also* restricted, so a full mail client can't design its way around CASA.
+
+**How the big OSS clients absorb it:** Thunderbird (Mozilla/MZLA) and Evolution/Geary (GNOME) each maintain one verified client and complete the assessment at the org level, so individual users never see a warning. A solo/indie project can't realistically sustain a recurring four-to-five-figure annual assessment for a free app — which is exactly why Orbit Mail uses bring-your-own-credentials instead.
+
+Figures are ballpark and the program changes over time; get current quotes from ADA-authorized assessors before budgeting. Microsoft's platform has **no equivalent** restricted-scope assessment for the IMAP/SMTP flow used here.
 
 ### Microsoft (Office 365 / Outlook)
 

@@ -421,6 +421,48 @@ export function listMessages(
   return rows.map(rowToSummary)
 }
 
+export interface SweepMessage {
+  id: string
+  from: string
+  subject: string
+  date: number
+  bodyText: string | null
+  bodyHtml: string | null
+}
+
+// Unread messages in a folder (or the unified inbox), most recent first, capped.
+export function listUnreadForSweep(folderId: string | 'unified', limit = 40): SweepMessage[] {
+  const db = getDb()
+  const cols = {
+    id: messages.id,
+    from: messages.from,
+    subject: messages.subject,
+    date: messages.date,
+    bodyText: messages.bodyText,
+    bodyHtml: messages.bodyHtml
+  }
+
+  if (folderId === 'unified') {
+    const inboxIds = getInboxFolderIds()
+    if (inboxIds.length === 0) return []
+    return db
+      .select(cols)
+      .from(messages)
+      .where(and(inArray(messages.folderId, inboxIds), eq(messages.isRead, false)))
+      .orderBy(desc(messages.date))
+      .limit(limit)
+      .all()
+  }
+
+  return db
+    .select(cols)
+    .from(messages)
+    .where(and(eq(messages.folderId, folderId), eq(messages.isRead, false)))
+    .orderBy(desc(messages.date))
+    .limit(limit)
+    .all()
+}
+
 export function getMessage(messageId: string): MessageDetail | null {
   const db = getDb()
   const r = db.select().from(messages).where(eq(messages.id, messageId)).get()
@@ -440,6 +482,27 @@ export function getMessage(messageId: string): MessageDetail | null {
       localPath: a.localPath
     }))
   }
+}
+
+export function getMessageAiAnalysis(
+  messageId: string
+): { json: string; at: number } | null {
+  const db = getDb()
+  const r = db
+    .select({ aiAnalysis: messages.aiAnalysis, aiAnalysisAt: messages.aiAnalysisAt })
+    .from(messages)
+    .where(eq(messages.id, messageId))
+    .get()
+  if (!r || !r.aiAnalysis) return null
+  return { json: r.aiAnalysis, at: r.aiAnalysisAt ?? 0 }
+}
+
+export function setMessageAiAnalysis(messageId: string, json: string, at: number): void {
+  const db = getDb()
+  db.update(messages)
+    .set({ aiAnalysis: json, aiAnalysisAt: at })
+    .where(eq(messages.id, messageId))
+    .run()
 }
 
 export function getFolderMaxUid(folderId: string): number | null {

@@ -3,6 +3,7 @@ import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electr
 import { join } from 'path'
 import type { ComposePayload, SyncStatus, ManualAccountInput, FlagColor } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
+import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
   saveAccount,
@@ -66,10 +67,22 @@ import {
   muteSender,
   blockSender
 } from './services/preferences-service'
+import {
+  analyzeMessage,
+  sweepTasks,
+  isConfigured,
+  setApiKey as setAiApiKey,
+  clearApiKey as clearAiApiKey
+} from './services/ai-service'
 
 let mainWindow: BrowserWindow | null = null
 let composeWindow: BrowserWindow | null = null
 let lastNotificationAt = 0
+
+function notifyMessagesUpdated(): void {
+  updateAppBadge(mainWindow)
+  mainWindow?.webContents.send('sync:messagesUpdated')
+}
 
 process.on('uncaughtException', (err) => {
   const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : ''
@@ -365,20 +378,20 @@ function registerIpc(): void {
   ipcMain.handle('folders:emptyTrash', async (_, accountId: string) => {
     const count = await emptySpecialFolder(accountId, 'trash')
     await pollForNewMessages()
-    mainWindow?.webContents.send('sync:messagesUpdated')
+    notifyMessagesUpdated()
     return count
   })
 
   ipcMain.handle('folders:emptyJunk', async (_, accountId: string) => {
     const count = await emptySpecialFolder(accountId, 'junk')
     await pollForNewMessages()
-    mainWindow?.webContents.send('sync:messagesUpdated')
+    notifyMessagesUpdated()
     return count
   })
 
   ipcMain.handle('folders:markAllRead', async (_, folderId: string) => {
     const count = await markFolderAllRead(folderId)
-    mainWindow?.webContents.send('sync:messagesUpdated')
+    notifyMessagesUpdated()
     return count
   })
 
@@ -421,6 +434,7 @@ function registerIpc(): void {
       msg.uid,
       isRead
     )
+    notifyMessagesUpdated()
   })
 
   ipcMain.handle('messages:toggleStar', async (_, messageId: string, isStarred: boolean) => {
@@ -472,6 +486,7 @@ function registerIpc(): void {
 
     await deleteMessageOnServer(account.id, account.provider, folder.imapPath, msg.uid)
     deleteMessage(messageId)
+    notifyMessagesUpdated()
   })
 
   ipcMain.handle('messages:move', async (_, messageId: string, targetFolderId: string) => {
@@ -492,7 +507,8 @@ function registerIpc(): void {
       msg.uid
     )
     deleteMessage(messageId)
-    await pollForNewMessages()
+    await pollForNewMessages({ announce: false })
+    notifyMessagesUpdated()
   })
 
   ipcMain.handle('messages:copy', async (_, messageId: string, targetFolderId: string) => {
@@ -512,7 +528,7 @@ function registerIpc(): void {
       targetFolder.imapPath,
       msg.uid
     )
-    await pollForNewMessages()
+    await pollForNewMessages({ announce: false })
   })
 
   ipcMain.handle('sync:refresh', async (_, accountId?: string) => {
@@ -590,6 +606,22 @@ function registerIpc(): void {
   ipcMain.handle('preferences:blockSender', (_, email: string) => {
     blockSender(email)
   })
+
+  ipcMain.handle('ai:analyze', (_, messageId: string, force?: boolean) =>
+    analyzeMessage(messageId, { force })
+  )
+
+  ipcMain.handle('ai:sweep', (_, folderId: string) => sweepTasks(folderId))
+
+  ipcMain.handle('ai:getStatus', () => ({ configured: isConfigured() }))
+
+  ipcMain.handle('ai:setApiKey', (_, key: string) => {
+    setAiApiKey(key)
+  })
+
+  ipcMain.handle('ai:clearApiKey', () => {
+    clearAiApiKey()
+  })
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
@@ -617,20 +649,22 @@ if (!gotSingleInstanceLock) {
     registerIpc()
     initSyncFromPersistence()
     createMainWindow()
+    updateAppBadge(mainWindow)
     startBackgroundSync()
 
     handleMailtoArgv(process.argv)
 
     setOnFolderSynced(() => {
-      mainWindow?.webContents.send('sync:messagesUpdated')
+      notifyMessagesUpdated()
     })
 
     setOnNewMailArrived((count) => {
+      updateAppBadge(mainWindow)
       showNewMailNotification(count)
     })
 
     setIdleNewMailHandler(() => {
-      mainWindow?.webContents.send('sync:messagesUpdated')
+      notifyMessagesUpdated()
       showNewMailNotification(1)
     })
     startIdleMonitoring()
@@ -638,6 +672,9 @@ if (!gotSingleInstanceLock) {
     onSyncStatusChange((status: SyncStatus) => {
       if (mainWindow) {
         mainWindow.webContents.send('sync:status', status)
+      }
+      if (!status.syncing) {
+        updateAppBadge(mainWindow)
       }
     })
 

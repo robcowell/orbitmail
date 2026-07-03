@@ -98,6 +98,14 @@ const api: OrbitMailAPI = {
       ipcRenderer.invoke('preferences:setHandleMailtoLinks', enabled),
     muteSender: (email: string) => ipcRenderer.invoke('preferences:muteSender', email),
     blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email)
+  },
+  ai: {
+    analyze: (messageId: string, force?: boolean) =>
+      ipcRenderer.invoke('ai:analyze', messageId, force),
+    sweep: (folderId: string) => ipcRenderer.invoke('ai:sweep', folderId),
+    getStatus: () => ipcRenderer.invoke('ai:getStatus'),
+    setApiKey: (key: string) => ipcRenderer.invoke('ai:setApiKey', key),
+    clearApiKey: () => ipcRenderer.invoke('ai:clearApiKey')
   }
 }
 

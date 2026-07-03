@@ -72,7 +72,9 @@ function initTables(db: Database.Database): void {
       is_starred INTEGER NOT NULL DEFAULT 0,
       has_attachments INTEGER NOT NULL DEFAULT 0,
       body_html TEXT,
-      body_text TEXT
+      body_text TEXT,
+      ai_analysis TEXT,
+      ai_analysis_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS messages_folder_date_idx ON messages(folder_id, date);
@@ -150,6 +152,12 @@ function migrateSchema(db: Database.Database): void {
   const messageNames = new Set(messageCols.map((c) => c.name))
   if (!messageNames.has('flag_color')) {
     db.exec('ALTER TABLE messages ADD COLUMN flag_color TEXT')
+  }
+  if (!messageNames.has('ai_analysis')) {
+    db.exec('ALTER TABLE messages ADD COLUMN ai_analysis TEXT')
+  }
+  if (!messageNames.has('ai_analysis_at')) {
+    db.exec('ALTER TABLE messages ADD COLUMN ai_analysis_at INTEGER')
   }
 
   const accountCols = db.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>

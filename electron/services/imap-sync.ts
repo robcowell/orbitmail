@@ -752,7 +752,10 @@ export async function refreshAllAccounts(): Promise<void> {
   }
 }
 
-export async function pollForNewMessages(): Promise<void> {
+export async function pollForNewMessages(
+  options: { announce?: boolean } = {}
+): Promise<void> {
+  const announce = options.announce ?? true
   if (syncStatus.syncing) return
 
   const accounts = listAccounts()
@@ -800,7 +803,10 @@ export async function pollForNewMessages(): Promise<void> {
 
   if (fetchedTotal > 0) {
     onFolderSynced?.()
-    onNewMailArrived?.(fetchedTotal)
+    // Suppress the "new mail" notification for user-initiated moves/copies —
+    // re-syncing a moved message into its destination folder (e.g. Trash) is not
+    // newly-arrived mail.
+    if (announce) onNewMailArrived?.(fetchedTotal)
   }
 }
 

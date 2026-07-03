@@ -6,7 +6,8 @@ import {
   markMessageUnread,
   toggleMessageStar,
   runSearch,
-  clearSearch
+  clearSearch,
+  runSweep
 } from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
@@ -21,7 +22,9 @@ import {
   ArrowsClockwise,
   MagnifyingGlass,
   Star,
-  Envelope
+  Envelope,
+  Sparkle,
+  ListChecks
 } from '../icons'
 
 function ThemeToggle() {
@@ -245,6 +248,22 @@ export function Toolbar() {
       </div>
 
       <div className="toolbar-spacer" />
+
+      <button
+        className="toolbar-btn"
+        title="Sweep unread for tasks"
+        onClick={() => void runSweep()}
+      >
+        <ListChecks {...iconProps} />
+      </button>
+
+      <button
+        className="toolbar-btn"
+        title="AI settings"
+        onClick={() => useMailStore.getState().setShowAiSettings(true)}
+      >
+        <Sparkle {...iconProps} />
+      </button>
 
       <ThemeToggle />
 

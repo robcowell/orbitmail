@@ -59,7 +59,9 @@ export const messages = sqliteTable(
     }),
     hasAttachments: integer('has_attachments', { mode: 'boolean' }).notNull().default(false),
     bodyHtml: text('body_html'),
-    bodyText: text('body_text')
+    bodyText: text('body_text'),
+    aiAnalysis: text('ai_analysis'),
+    aiAnalysisAt: integer('ai_analysis_at')
   },
   (t) => [
     index('messages_folder_date_idx').on(t.folderId, t.date),

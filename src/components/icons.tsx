@@ -33,7 +33,8 @@ import {
   FolderPlus,
   Export,
   PencilSimple,
-  Info
+  Info,
+  Sparkle
 } from '@phosphor-icons/react'
 import type { FolderType } from '../../shared/types'
 
@@ -99,7 +100,8 @@ export {
   FolderPlus,
   Export,
   PencilSimple,
-  Info
+  Info,
+  Sparkle
 }
 
 export type { IconProps }

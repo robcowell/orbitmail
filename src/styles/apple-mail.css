@@ -488,6 +488,10 @@ textarea {
   justify-content: center;
 }
 
+.message-list:focus {
+  outline: none;
+}
+
 .message-row {
   display: flex;
   align-items: flex-start;
@@ -497,6 +501,7 @@ textarea {
   cursor: pointer;
   border-bottom: 1px solid var(--border);
   transition: background 0.1s;
+  user-select: none;
 }
 
 .message-row:hover {
@@ -506,6 +511,11 @@ textarea {
 .message-row.selected {
   background: var(--bg-list-selected);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* The lead row within a multi-selection gets a stronger accent bar. */
+.message-row.active {
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
 }
 
 .message-row.unread .message-sender {
@@ -1005,6 +1015,198 @@ textarea {
 .reader-star-btn:hover {
   color: #f5a623;
   background: rgba(245, 166, 35, 0.12);
+}
+
+.reader-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.reader-ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.reader-ai-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.reader-ai-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.reader-ai-panel {
+  margin: 0 16px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+
+.reader-ai-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+}
+
+.reader-ai-regenerate {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 2px 4px;
+}
+
+.reader-ai-regenerate:hover {
+  text-decoration: underline;
+}
+
+.reader-ai-loading {
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.reader-ai-body {
+  padding: 12px;
+}
+
+.reader-ai-summary {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary, inherit);
+}
+
+.reader-ai-section {
+  margin-top: 10px;
+}
+
+.reader-ai-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.reader-ai-section ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.reader-ai-section li {
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 3px;
+}
+
+.tasks-modal {
+  max-width: 560px;
+  width: 100%;
+}
+
+.tasks-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tasks-loading,
+.tasks-subhead {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 4px 0 12px;
+}
+
+.tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.tasks-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.tasks-group-title.priority-urgent {
+  color: #e5484d;
+}
+.tasks-group-title.priority-high {
+  color: #f5a623;
+}
+.tasks-group-title.priority-medium {
+  color: var(--accent);
+}
+.tasks-group-title.priority-low {
+  color: var(--text-muted);
+}
+
+.tasks-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  padding: 9px 11px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.tasks-item:hover {
+  background: var(--bg-list-hover);
+  border-color: var(--accent);
+}
+
+.tasks-item-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary, inherit);
+}
+
+.tasks-item-source {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .reader-body a {

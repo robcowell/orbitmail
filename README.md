@@ -58,7 +58,57 @@ chmod +x Orbit\ Mail-*.AppImage
 
 Packaged builds install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops. They can handle `mailto:` links when you opt in via system default applications or `window.orbitMail.preferences.setHandleMailtoLinks(true)`.
 
-> **Note:** Gmail and Microsoft sign-in require OAuth credentials to be configured at build time. Pre-built packages from the project maintainer include these; if you build from source yourself, see [DEVELOPERS.md](DEVELOPERS.md).
+> **Note:** Gmail and Microsoft sign-in require OAuth credentials to be configured at build time. Pre-built packages from the project maintainer include these; to run your own copy with your own credentials, see [Run your own copy](#run-your-own-copy) below.
+
+## Run your own copy
+
+Orbit Mail doesn't ship with its own Gmail/Microsoft sign-in credentials — you supply your own ([why](DEVELOPERS.md#oauth-setup)). Running your own copy takes about 15 minutes and a terminal, but no coding. You only need to set up the provider(s) you actually use — skip the OAuth steps entirely if you only use plain IMAP/POP3.
+
+**1. Install the prerequisites** (Debian / Ubuntu / Mint):
+
+```bash
+sudo apt install git nodejs npm build-essential python3
+```
+
+Node.js 20 or newer is required — check with `node --version`. If your distro ships an older Node, install a current one from [nodejs.org](https://nodejs.org/) or via `nvm`.
+
+**2. Get the code and install dependencies:**
+
+```bash
+git clone <your-repo-url> orbit-mail
+cd orbit-mail
+npm install
+```
+
+**3. Register your own OAuth app** (only needed for Gmail / Microsoft accounts). The developer guide walks each click:
+
+- **Gmail** → [Google OAuth setup](DEVELOPERS.md#google-gmail): create a Google Cloud project, enable the Gmail API, set the consent screen to **External** and **Publish** it, create a **Desktop app** credential, and copy the Client ID + Secret.
+- **Microsoft 365 / Outlook** → [Microsoft OAuth setup](DEVELOPERS.md#microsoft-office-365--outlook): register an app in Entra, add the `http://127.0.0.1/callback` redirect, enable public client flows, and copy the Application (client) ID.
+
+**4. Add your credentials:**
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` in a text editor and paste in the values from step 3. Leave blank any provider you don't use.
+
+**5. Run it** — either in dev mode:
+
+```bash
+npm run dev
+```
+
+…or build an installable package and install it:
+
+```bash
+npm run dist
+sudo dpkg -i "release/Orbit Mail-"*.deb
+```
+
+**6. Add your account:** click **Add Account**, choose your provider, and sign in. For Gmail (or any unverified app), you'll hit a **"Google hasn't verified this app"** screen — click **Advanced → Go to Orbit Mail (unsafe)** and continue. That's expected for a self-run copy, and it appears only once per account.
+
+> Rebuild after editing `.env` — OAuth credentials are baked in at build time.
 
 ## Getting started
 
@@ -90,7 +140,7 @@ Credentials are stored encrypted using your OS keychain.
 | `C` | Compose new message |
 | `R` | Reply to selected message |
 | `/` | Focus search |
-| `Delete` | Move selected message to Trash (or delete permanently if already in Trash) |
+| `Delete` / `Backspace` | Move selected message to Trash (or delete permanently if already in Trash) |
 
 ### Toolbar actions
 

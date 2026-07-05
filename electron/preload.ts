@@ -6,7 +6,8 @@ import type {
   ManualAccountInput,
   UiPreferences,
   PersistedAppState,
-  FlagColor
+  FlagColor,
+  SweepScope
 } from '../shared/types'
 
 const api: OrbitMailAPI = {
@@ -102,7 +103,13 @@ const api: OrbitMailAPI = {
   ai: {
     analyze: (messageId: string, force?: boolean) =>
       ipcRenderer.invoke('ai:analyze', messageId, force),
-    sweep: (folderId: string) => ipcRenderer.invoke('ai:sweep', folderId),
+    sweep: (folderId: string, scope: SweepScope) =>
+      ipcRenderer.invoke('ai:sweep', folderId, scope),
+    getTasks: (folderId: string) => ipcRenderer.invoke('ai:getTasks', folderId),
+    completeTask: (folderId: string, taskId: string) =>
+      ipcRenderer.invoke('ai:completeTask', folderId, taskId),
+    reopenTask: (folderId: string, taskId: string) =>
+      ipcRenderer.invoke('ai:reopenTask', folderId, taskId),
     getStatus: () => ipcRenderer.invoke('ai:getStatus'),
     setApiKey: (key: string) => ipcRenderer.invoke('ai:setApiKey', key),
     clearApiKey: () => ipcRenderer.invoke('ai:clearApiKey')

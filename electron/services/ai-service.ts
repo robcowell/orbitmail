@@ -1,14 +1,24 @@
 import { safeStorage } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
-import type { AiAnalysis, SweepResult } from '../../shared/types'
+import type { AiAnalysis, AiPriority, SweepResult, SweepScope, SweepTask } from '../../shared/types'
 import { getRawSqlite } from '../db'
 import {
   getMessage,
   listAccounts,
   getMessageAiAnalysis,
   setMessageAiAnalysis,
-  listUnreadForSweep
+  setMessageSweepCache,
+  listMessagesForSweep,
+  listOpenSweepTasks,
+  listCompletedSweepTasks,
+  replaceOpenSweepTasks,
+  completeSweepTask,
+  reopenSweepTask,
+  pruneCompletedSweepTasks,
+  getSweepMeta,
+  setSweepMeta,
+  type SweepMessage
 } from './db-service'
 
 const AI_KEY_PREF = 'ai_api_key'
@@ -16,6 +26,10 @@ const MODEL = 'claude-opus-4-8'
 const MAX_BODY_CHARS = 8000
 const SWEEP_MAX_MESSAGES = 40
 const SWEEP_BODY_CHARS = 1500
+// Completed tasks older than this are pruned and no longer fed back to the model.
+const COMPLETED_TASK_TTL_MS = 30 * 24 * 60 * 60 * 1000
+// How many recent completed tasks to show the model as "already done".
+const COMPLETED_CONTEXT_LIMIT = 25
 
 // ---------------------------------------------------------------------------
 // API key storage (encrypted at rest via Electron safeStorage, mirrors the
@@ -268,82 +282,209 @@ const SWEEP_SCHEMA = {
   additionalProperties: false
 } as const
 
-const SWEEP_SYSTEM_PROMPT = `You review a batch of the user's unread emails and produce a single prioritized list of the outstanding tasks the USER needs to act on.
+const SWEEP_SYSTEM_PROMPT = `You review a batch of the user's emails and produce a single prioritized list of the outstanding tasks the USER needs to act on.
 
 Rules:
 - Only include tasks the USER must do. If an email is FROM the user, it is the user's own request — not a task for them.
 - One email may yield zero, one, or several tasks. Skip emails that need no action (newsletters, receipts, FYIs).
 - Set priority by real urgency: "urgent" for explicit deadlines/time-sensitive asks, down to "low" for optional follow-ups.
 - Copy each task's sourceMessageId verbatim from the [id: ...] tag of the email it came from.
+- If an "Already completed" list is provided, the user has already handled those items — do NOT list them again, even if the email still looks unaddressed.
 - Be specific and concise. Return an empty tasks list if nothing needs action.`
 
-export async function sweepTasks(folderId: string | 'unified'): Promise<SweepResult | { error: string }> {
+// A single message's cached sweep extraction.
+interface CachedTask {
+  task: string
+  priority: AiPriority
+}
+
+const VALID_PRIORITIES: ReadonlySet<string> = new Set(['urgent', 'high', 'medium', 'low'])
+
+function parseSweepCache(json: string | null): CachedTask[] {
+  if (!json) return []
+  try {
+    const arr = JSON.parse(json)
+    if (!Array.isArray(arr)) return []
+    return arr.filter(
+      (t): t is CachedTask =>
+        t && typeof t.task === 'string' && VALID_PRIORITIES.has(t.priority)
+    )
+  } catch {
+    return []
+  }
+}
+
+// Render one message as a prompt block tagged with its id so the model can cite
+// the source it came from.
+function messageBlock(m: SweepMessage, isFromUser: boolean): string {
+  let body = m.bodyText ?? (m.bodyHtml ? stripHtml(m.bodyHtml) : '')
+  if (body.length > SWEEP_BODY_CHARS) body = body.slice(0, SWEEP_BODY_CHARS) + '… [truncated]'
+  return `[id: ${m.id}] ${isFromUser ? 'FROM YOU' : 'TO YOU'}
+From: ${m.from}
+Subject: ${m.subject}
+Date: ${new Date(m.date).toISOString()}
+${body || '(no body content)'}`
+}
+
+// Stable dedupe key for a task: its source message plus a normalized form of the
+// task text. Lets us recognize the "same" task across sweeps so completed work
+// does not resurface.
+function taskDedupeKey(sourceMessageId: string, task: string): string {
+  const normalized = task
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .slice(0, 120)
+  return `${sourceMessageId}::${normalized}`
+}
+
+export async function sweepTasks(
+  folderId: string | 'unified',
+  scope: SweepScope = 'unread'
+): Promise<SweepResult | { error: string }> {
   const apiKey = getApiKey()
   if (!apiKey) {
     return { error: 'No Anthropic API key configured. Open AI settings to add one.' }
   }
 
-  const msgs = listUnreadForSweep(folderId, SWEEP_MAX_MESSAGES)
+  // Age out stale history before we read it back for context.
+  pruneCompletedSweepTasks(Date.now() - COMPLETED_TASK_TTL_MS)
+  const completed = listCompletedSweepTasks(folderId)
+  const completedKeys = new Set(completed.map((t) => t.id))
+
+  const msgs = listMessagesForSweep(folderId, scope, SWEEP_MAX_MESSAGES)
   if (msgs.length === 0) {
-    return { tasks: [], analyzedCount: 0 }
+    const sweptAt = Date.now()
+    replaceOpenSweepTasks(folderId, [], sweptAt)
+    setSweepMeta(folderId, { analyzedCount: 0, sweptAt, scope })
+    return { tasks: [], completed, analyzedCount: 0, freshCount: 0, scope, sweptAt }
   }
 
   const userEmails = listAccounts().map((a) => a.email.toLowerCase())
-  const meta = new Map(msgs.map((m) => [m.id, { subject: m.subject, from: m.from }]))
+  const isFromUser = (from: string): boolean => {
+    const fromLower = from.toLowerCase()
+    return userEmails.some((email) => email.length > 0 && fromLower.includes(email))
+  }
 
-  const blocks = msgs.map((m) => {
-    const fromLower = m.from.toLowerCase()
-    const isFromUser = userEmails.some((email) => email.length > 0 && fromLower.includes(email))
-    let body = m.bodyText ?? (m.bodyHtml ? stripHtml(m.bodyHtml) : '')
-    if (body.length > SWEEP_BODY_CHARS) body = body.slice(0, SWEEP_BODY_CHARS) + '… [truncated]'
-    return `[id: ${m.id}] ${isFromUser ? 'FROM YOU' : 'TO YOU'}
-From: ${m.from}
-Subject: ${m.subject}
-Date: ${new Date(m.date).toISOString()}
-${body || '(no body content)'}`
-  })
+  // Incremental sweep: only messages we've never analyzed need an API call.
+  // Everything else reuses its cached per-message extraction, so a re-sweep of
+  // an unchanged inbox spends zero tokens.
+  const uncached = msgs.filter((m) => m.sweepCache === null)
+  const extracted = new Map<string, CachedTask[]>()
 
-  const userPrompt = `Review these ${msgs.length} unread emails and extract the outstanding tasks I need to act on.\n\n${blocks.join('\n\n---\n\n')}`
+  if (uncached.length > 0) {
+    const blocks = uncached.map((m) => messageBlock(m, isFromUser(m.from)))
+    const scopeLabel = scope === 'all' ? 'emails' : 'unread emails'
+    let userPrompt = `Review these ${uncached.length} ${scopeLabel} and extract the outstanding tasks I need to act on.\n\n${blocks.join('\n\n---\n\n')}`
 
-  const client = new Anthropic({ apiKey })
-
-  try {
-    const response = await client.messages.parse({
-      model: MODEL,
-      max_tokens: 4096,
-      output_config: {
-        effort: 'low',
-        format: jsonSchemaOutputFormat(SWEEP_SCHEMA)
-      },
-      system: SWEEP_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }]
-    })
-
-    if (response.stop_reason === 'refusal') {
-      return { error: 'The model declined to analyze these messages.' }
+    // Give the model the tasks the user has already ticked off so it won't
+    // resurface them. Capped to the most recent handful to keep the prompt lean.
+    if (completed.length > 0) {
+      const done = completed
+        .slice(0, COMPLETED_CONTEXT_LIMIT)
+        .map((t) => `- ${t.task} (re: ${t.sourceSubject})`)
+        .join('\n')
+      userPrompt += `\n\n---\n\nAlready completed — do NOT list these again:\n${done}`
     }
 
-    const parsed = response.parsed_output
-    if (!parsed) {
-      return { error: 'The model returned no usable tasks. Try again.' }
-    }
+    const client = new Anthropic({ apiKey })
+    const allowedIds = new Set(uncached.map((m) => m.id))
 
-    // Enrich with the real subject/sender, dropping any hallucinated source id.
-    const tasks = parsed.tasks
-      .filter((t) => meta.has(t.sourceMessageId))
-      .map((t) => {
-        const source = meta.get(t.sourceMessageId)!
-        return {
-          task: t.task,
-          priority: t.priority,
-          sourceMessageId: t.sourceMessageId,
-          sourceSubject: source.subject,
-          sourceFrom: source.from
-        }
+    try {
+      const response = await client.messages.parse({
+        model: MODEL,
+        max_tokens: 4096,
+        output_config: {
+          effort: 'low',
+          format: jsonSchemaOutputFormat(SWEEP_SCHEMA)
+        },
+        system: SWEEP_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }]
       })
 
-    return { tasks, analyzedCount: msgs.length }
-  } catch (err) {
-    return { error: friendlyError(err) }
+      if (response.stop_reason === 'refusal') {
+        return { error: 'The model declined to analyze these messages.' }
+      }
+
+      const parsed = response.parsed_output
+      if (!parsed) {
+        return { error: 'The model returned no usable tasks. Try again.' }
+      }
+
+      // Seed every analyzed message with an empty list so "no tasks" is cached
+      // too — otherwise it would be re-sent on every future sweep.
+      for (const m of uncached) extracted.set(m.id, [])
+      for (const t of parsed.tasks) {
+        const list = extracted.get(t.sourceMessageId)
+        if (!list) continue // hallucinated id or a message not in this batch
+        list.push({ task: t.task, priority: t.priority })
+      }
+
+      const at = Date.now()
+      for (const m of uncached) {
+        if (!allowedIds.has(m.id)) continue
+        setMessageSweepCache(m.id, JSON.stringify(extracted.get(m.id) ?? []), at)
+      }
+    } catch (err) {
+      return { error: friendlyError(err) }
+    }
   }
+
+  // Merge freshly-extracted and cached tasks into the final list. Enrich with the
+  // real subject/sender, assign a stable dedupe id, drop anything already
+  // completed, and de-dupe.
+  const seen = new Set<string>()
+  const tasks: SweepTask[] = []
+  for (const m of msgs) {
+    const list = extracted.get(m.id) ?? parseSweepCache(m.sweepCache)
+    for (const t of list) {
+      const id = taskDedupeKey(m.id, t.task)
+      if (completedKeys.has(id) || seen.has(id)) continue
+      seen.add(id)
+      tasks.push({
+        id,
+        task: t.task,
+        priority: t.priority,
+        sourceMessageId: m.id,
+        sourceSubject: m.subject,
+        sourceFrom: m.from
+      })
+    }
+  }
+
+  const sweptAt = Date.now()
+  replaceOpenSweepTasks(folderId, tasks, sweptAt)
+  setSweepMeta(folderId, { analyzedCount: msgs.length, sweptAt, scope })
+
+  return {
+    tasks,
+    completed,
+    analyzedCount: msgs.length,
+    freshCount: uncached.length,
+    scope,
+    sweptAt
+  }
+}
+
+// Persisted view — the last sweep's open tasks plus completed history, with no
+// API call. Used when the Tasks dialog opens so we don't re-spend tokens.
+export function getPersistedTasks(folderId: string | 'unified'): SweepResult {
+  pruneCompletedSweepTasks(Date.now() - COMPLETED_TASK_TTL_MS)
+  const meta = getSweepMeta(folderId)
+  return {
+    tasks: listOpenSweepTasks(folderId),
+    completed: listCompletedSweepTasks(folderId),
+    analyzedCount: meta?.analyzedCount ?? 0,
+    freshCount: 0,
+    scope: meta?.scope ?? 'unread',
+    sweptAt: meta?.sweptAt ?? null
+  }
+}
+
+export function completeTask(folderId: string | 'unified', taskId: string): void {
+  completeSweepTask(folderId, taskId, Date.now())
+}
+
+export function reopenTask(folderId: string | 'unified', taskId: string): void {
+  reopenSweepTask(folderId, taskId)
 }

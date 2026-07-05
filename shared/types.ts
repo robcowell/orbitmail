@@ -155,7 +155,13 @@ export interface AiStatus {
 
 export type AiPriority = 'urgent' | 'high' | 'medium' | 'low'
 
+// Which messages a sweep should consider. Defaults to unread everywhere.
+export type SweepScope = 'unread' | 'all'
+
 export interface SweepTask {
+  // Stable dedupe key (source message + normalized task text). Used to mark a
+  // task done and to keep completed tasks from resurfacing on later sweeps.
+  id: string
   task: string
   priority: AiPriority
   sourceMessageId: string
@@ -163,9 +169,19 @@ export interface SweepTask {
   sourceFrom: string
 }
 
+export interface CompletedTask extends SweepTask {
+  completedAt: number
+}
+
 export interface SweepResult {
   tasks: SweepTask[]
+  completed: CompletedTask[]
   analyzedCount: number
+  // How many messages were freshly sent to the model this sweep (the rest were
+  // served from the per-message cache). 0 means the sweep spent no API tokens.
+  freshCount: number
+  scope: SweepScope
+  sweptAt: number | null
 }
 
 export type AiAnalysisResult = AiAnalysis | { error: string }
@@ -238,7 +254,10 @@ export interface OrbitMailAPI {
   }
   ai: {
     analyze: (messageId: string, force?: boolean) => Promise<AiAnalysisResult>
-    sweep: (folderId: string | 'unified') => Promise<AiSweepResult>
+    sweep: (folderId: string | 'unified', scope: SweepScope) => Promise<AiSweepResult>
+    getTasks: (folderId: string | 'unified') => Promise<SweepResult>
+    completeTask: (folderId: string | 'unified', taskId: string) => Promise<void>
+    reopenTask: (folderId: string | 'unified', taskId: string) => Promise<void>
     getStatus: () => Promise<AiStatus>
     setApiKey: (key: string) => Promise<void>
     clearApiKey: () => Promise<void>

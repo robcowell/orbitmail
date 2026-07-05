@@ -1,7 +1,13 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join } from 'path'
-import type { ComposePayload, SyncStatus, ManualAccountInput, FlagColor } from '../shared/types'
+import type {
+  ComposePayload,
+  SyncStatus,
+  ManualAccountInput,
+  FlagColor,
+  SweepScope
+} from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
 import { updateAppBadge } from './app-badge'
 import {
@@ -70,6 +76,9 @@ import {
 import {
   analyzeMessage,
   sweepTasks,
+  getPersistedTasks,
+  completeTask as completeAiTask,
+  reopenTask as reopenAiTask,
   isConfigured,
   setApiKey as setAiApiKey,
   clearApiKey as clearAiApiKey
@@ -611,7 +620,19 @@ function registerIpc(): void {
     analyzeMessage(messageId, { force })
   )
 
-  ipcMain.handle('ai:sweep', (_, folderId: string) => sweepTasks(folderId))
+  ipcMain.handle('ai:sweep', (_, folderId: string, scope: SweepScope) =>
+    sweepTasks(folderId, scope)
+  )
+
+  ipcMain.handle('ai:getTasks', (_, folderId: string) => getPersistedTasks(folderId))
+
+  ipcMain.handle('ai:completeTask', (_, folderId: string, taskId: string) => {
+    completeAiTask(folderId, taskId)
+  })
+
+  ipcMain.handle('ai:reopenTask', (_, folderId: string, taskId: string) => {
+    reopenAiTask(folderId, taskId)
+  })
 
   ipcMain.handle('ai:getStatus', () => ({ configured: isConfigured() }))
 

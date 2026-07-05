@@ -74,7 +74,9 @@ function initTables(db: Database.Database): void {
       body_html TEXT,
       body_text TEXT,
       ai_analysis TEXT,
-      ai_analysis_at INTEGER
+      ai_analysis_at INTEGER,
+      sweep_cache TEXT,
+      sweep_cache_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS messages_folder_date_idx ON messages(folder_id, date);
@@ -93,6 +95,22 @@ function initTables(db: Database.Database): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS sweep_tasks (
+      folder_id TEXT NOT NULL,
+      id TEXT NOT NULL,
+      task TEXT NOT NULL,
+      priority TEXT NOT NULL,
+      source_message_id TEXT NOT NULL,
+      source_subject TEXT NOT NULL,
+      source_from TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      PRIMARY KEY (folder_id, id)
+    );
+
+    CREATE INDEX IF NOT EXISTS sweep_tasks_folder_idx ON sweep_tasks(folder_id);
   `)
 
   migrateSchema(db)
@@ -158,6 +176,12 @@ function migrateSchema(db: Database.Database): void {
   }
   if (!messageNames.has('ai_analysis_at')) {
     db.exec('ALTER TABLE messages ADD COLUMN ai_analysis_at INTEGER')
+  }
+  if (!messageNames.has('sweep_cache')) {
+    db.exec('ALTER TABLE messages ADD COLUMN sweep_cache TEXT')
+  }
+  if (!messageNames.has('sweep_cache_at')) {
+    db.exec('ALTER TABLE messages ADD COLUMN sweep_cache_at INTEGER')
   }
 
   const accountCols = db.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>

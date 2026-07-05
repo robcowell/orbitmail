@@ -43,7 +43,10 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 Bring your own [Anthropic API key](https://console.anthropic.com/) to unlock optional AI features — **off by default**; nothing is sent anywhere until you add a key via the ✦ button in the toolbar (**AI settings**).
 
 - **Analyze** — the **Analyze** button in the message header turns the open email into action items, open questions, and key context, with sender awareness (what *you* need to do vs. what you asked of others). Results are cached per message.
-- **Tasks sweep** — the checklist button sweeps the current folder's unread mail into one prioritised, source-linked task list, so you can triage a whole inbox at once.
+- **Tasks sweep** — the checklist button opens a task list built from the current folder, so you can triage a whole inbox at once. Each task is prioritised and links back to its source email.
+  - **Unread (default) or All messages** — choose which mail a sweep scans from the toggle in the dialog.
+  - **Tick tasks done** — completed tasks are kept in a persistent history, and the model is told not to raise them again on later sweeps.
+  - **Persisted & incremental** — sweep results are saved per folder, so reopening the dialog costs nothing. A sweep only sends messages it hasn't analysed before, so re-sweeping an unchanged inbox spends no tokens; only newly arrived mail is billed.
 
 Your API key is stored encrypted on your device — see [Data & privacy](#data--privacy).
 
@@ -161,7 +164,7 @@ Credentials are stored encrypted using your OS keychain.
 - **Star** — toggle flagged state on the server
 - **Mark unread** — mark the selected message as unread
 - **Refresh** — trigger a manual sync
-- **Tasks** — sweep the current folder's unread mail for outstanding tasks (requires an Anthropic API key)
+- **Tasks** — open the task list for the current folder and sweep its unread or all mail for outstanding tasks (requires an Anthropic API key)
 - **AI settings** (✦) — add or remove your Anthropic API key
 
 ### Sidebar and folders
@@ -183,12 +186,12 @@ All local data is stored under the Electron user data directory:
 
 | Path | Contents |
 |------|----------|
-| `~/.config/orbit-mail/data/orbit-mail.db` | SQLite database (accounts, folders, messages, preferences) |
+| `~/.config/orbit-mail/data/orbit-mail.db` | SQLite database (accounts, folders, messages, preferences, saved AI tasks) |
 | `~/.config/orbit-mail/data/attachments/` | Downloaded attachment files |
 
 - Mail is synced over IMAP/POP3 and cached locally for performance and search
 - OAuth tokens and passwords are stored in an encrypted blob per account
-- **AI is opt-in.** Nothing is sent to any AI provider unless you add an Anthropic API key. When you run **Analyze** or **Tasks**, the relevant message text is sent to Anthropic's API to produce the result. Your API key is stored encrypted (Electron `safeStorage`) in the local database and never leaves your device except to authenticate with Anthropic.
+- **AI is opt-in.** Nothing is sent to any AI provider unless you add an Anthropic API key. When you run **Analyze** or **Tasks**, the relevant message text is sent to Anthropic's API to produce the result. Analyze results and per-message task extractions are cached locally so the same message is not re-sent on a later run. Your API key is stored encrypted (Electron `safeStorage`) in the local database and never leaves your device except to authenticate with Anthropic.
 - No telemetry or third-party analytics are included
 
 Removing an account from the sidebar deletes its local cached mail for that account.

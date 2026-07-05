@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { existsSync, statSync, unlinkSync } from 'fs'
 import { eq, desc, and, inArray, max, count, lt } from 'drizzle-orm'
 import { getDb, getRawSqlite, upsertFts, deleteFts } from '../db'
-import { accounts, folders, messages, attachments } from '../db/schema'
+import { accounts, folders, messages, attachments, sweepTasks } from '../db/schema'
 import type {
   Account,
   Folder,
@@ -10,7 +10,10 @@ import type {
   MessageDetail,
   FolderType,
   Provider,
-  FlagColor
+  FlagColor,
+  SweepScope,
+  SweepTask,
+  CompletedTask
 } from '../../shared/types'
 import {
   encryptCredentials,
@@ -428,10 +431,17 @@ export interface SweepMessage {
   date: number
   bodyText: string | null
   bodyHtml: string | null
+  sweepCache: string | null
 }
 
-// Unread messages in a folder (or the unified inbox), most recent first, capped.
-export function listUnreadForSweep(folderId: string | 'unified', limit = 40): SweepMessage[] {
+// Messages in a folder (or the unified inbox) for an AI sweep, most recent
+// first, capped. `scope` decides whether only unread mail is considered ('unread',
+// the default) or every synced message in the folder ('all').
+export function listMessagesForSweep(
+  folderId: string | 'unified',
+  scope: SweepScope,
+  limit = 40
+): SweepMessage[] {
   const db = getDb()
   const cols = {
     id: messages.id,
@@ -439,28 +449,179 @@ export function listUnreadForSweep(folderId: string | 'unified', limit = 40): Sw
     subject: messages.subject,
     date: messages.date,
     bodyText: messages.bodyText,
-    bodyHtml: messages.bodyHtml
+    bodyHtml: messages.bodyHtml,
+    sweepCache: messages.sweepCache
   }
+  const unreadOnly = scope === 'unread'
 
   if (folderId === 'unified') {
     const inboxIds = getInboxFolderIds()
     if (inboxIds.length === 0) return []
+    const scoped = inArray(messages.folderId, inboxIds)
     return db
       .select(cols)
       .from(messages)
-      .where(and(inArray(messages.folderId, inboxIds), eq(messages.isRead, false)))
+      .where(unreadOnly ? and(scoped, eq(messages.isRead, false)) : scoped)
       .orderBy(desc(messages.date))
       .limit(limit)
       .all()
   }
 
+  const scoped = eq(messages.folderId, folderId)
   return db
     .select(cols)
     .from(messages)
-    .where(and(eq(messages.folderId, folderId), eq(messages.isRead, false)))
+    .where(unreadOnly ? and(scoped, eq(messages.isRead, false)) : scoped)
     .orderBy(desc(messages.date))
     .limit(limit)
     .all()
+}
+
+// ---------------------------------------------------------------------------
+// Persisted sweep tasks. `open` rows are the outstanding tasks from the most
+// recent sweep of a folder; `completed` rows are a durable history the user has
+// ticked off. Both are keyed by (folderId, id) where id is a stable dedupe key.
+// ---------------------------------------------------------------------------
+
+interface SweepTaskRow {
+  id: string
+  task: string
+  priority: SweepTask['priority']
+  source_message_id: string
+  source_subject: string
+  source_from: string
+  completed_at: number | null
+}
+
+function rowToSweepTask(r: SweepTaskRow): SweepTask {
+  return {
+    id: r.id,
+    task: r.task,
+    priority: r.priority,
+    sourceMessageId: r.source_message_id,
+    sourceSubject: r.source_subject,
+    sourceFrom: r.source_from
+  }
+}
+
+export function listOpenSweepTasks(folderId: string | 'unified'): SweepTask[] {
+  const rows = getRawSqlite()
+    .prepare(
+      `SELECT id, task, priority, source_message_id, source_subject, source_from, completed_at
+       FROM sweep_tasks WHERE folder_id = ? AND status = 'open'
+       ORDER BY created_at DESC`
+    )
+    .all(folderId) as SweepTaskRow[]
+  return rows.map(rowToSweepTask)
+}
+
+export function listCompletedSweepTasks(folderId: string | 'unified'): CompletedTask[] {
+  const rows = getRawSqlite()
+    .prepare(
+      `SELECT id, task, priority, source_message_id, source_subject, source_from, completed_at
+       FROM sweep_tasks WHERE folder_id = ? AND status = 'completed'
+       ORDER BY completed_at DESC`
+    )
+    .all(folderId) as SweepTaskRow[]
+  return rows.map((r) => ({ ...rowToSweepTask(r), completedAt: r.completed_at ?? 0 }))
+}
+
+// Replace the open tasks for a folder with a fresh set, leaving completed rows
+// untouched. Any incoming task whose id already exists as completed is skipped.
+export function replaceOpenSweepTasks(
+  folderId: string | 'unified',
+  tasks: SweepTask[],
+  at: number
+): void {
+  const db = getRawSqlite()
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM sweep_tasks WHERE folder_id = ? AND status = 'open'`).run(folderId)
+    const insert = db.prepare(
+      `INSERT INTO sweep_tasks
+         (folder_id, id, task, priority, source_message_id, source_subject, source_from, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+       ON CONFLICT(folder_id, id) DO NOTHING`
+    )
+    for (const t of tasks) {
+      insert.run(
+        folderId,
+        t.id,
+        t.task,
+        t.priority,
+        t.sourceMessageId,
+        t.sourceSubject,
+        t.sourceFrom,
+        at
+      )
+    }
+  })
+  tx()
+}
+
+export function completeSweepTask(
+  folderId: string | 'unified',
+  taskId: string,
+  at: number
+): void {
+  getRawSqlite()
+    .prepare(
+      `UPDATE sweep_tasks SET status = 'completed', completed_at = ?
+       WHERE folder_id = ? AND id = ?`
+    )
+    .run(at, folderId, taskId)
+}
+
+export function reopenSweepTask(folderId: string | 'unified', taskId: string): void {
+  getRawSqlite()
+    .prepare(
+      `UPDATE sweep_tasks SET status = 'open', completed_at = NULL
+       WHERE folder_id = ? AND id = ?`
+    )
+    .run(folderId, taskId)
+}
+
+// Drop completed tasks older than the cutoff so history stays bounded.
+export function pruneCompletedSweepTasks(before: number): void {
+  getRawSqlite()
+    .prepare(`DELETE FROM sweep_tasks WHERE status = 'completed' AND completed_at < ?`)
+    .run(before)
+}
+
+// Lightweight per-folder sweep metadata (last run time, message count analyzed,
+// and the scope used) stored as a single JSON blob in app_preferences.
+export interface SweepMeta {
+  analyzedCount: number
+  sweptAt: number
+  scope: SweepScope
+}
+
+const SWEEP_META_KEY = 'ai_sweep_meta'
+
+function readSweepMetaMap(): Record<string, SweepMeta> {
+  const row = getRawSqlite()
+    .prepare('SELECT value FROM app_preferences WHERE key = ?')
+    .get(SWEEP_META_KEY) as { value: string } | undefined
+  if (!row) return {}
+  try {
+    return JSON.parse(row.value) as Record<string, SweepMeta>
+  } catch {
+    return {}
+  }
+}
+
+export function getSweepMeta(folderId: string | 'unified'): SweepMeta | null {
+  return readSweepMetaMap()[folderId] ?? null
+}
+
+export function setSweepMeta(folderId: string | 'unified', meta: SweepMeta): void {
+  const map = readSweepMetaMap()
+  map[folderId] = meta
+  getRawSqlite()
+    .prepare(
+      `INSERT INTO app_preferences (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    .run(SWEEP_META_KEY, JSON.stringify(map))
 }
 
 export function getMessage(messageId: string): MessageDetail | null {
@@ -501,6 +662,17 @@ export function setMessageAiAnalysis(messageId: string, json: string, at: number
   const db = getDb()
   db.update(messages)
     .set({ aiAnalysis: json, aiAnalysisAt: at })
+    .where(eq(messages.id, messageId))
+    .run()
+}
+
+// Cache the tasks the model extracted for a single message so later sweeps can
+// skip re-analyzing it. `json` is a JSON array of { task, priority } (possibly
+// empty, which records "analyzed, produced no tasks").
+export function setMessageSweepCache(messageId: string, json: string, at: number): void {
+  const db = getDb()
+  db.update(messages)
+    .set({ sweepCache: json, sweepCacheAt: at })
     .where(eq(messages.id, messageId))
     .run()
 }

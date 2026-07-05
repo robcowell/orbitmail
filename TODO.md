@@ -6,7 +6,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 
 - **Delete to Trash** via `Delete` / `Backspace`, with provider-correct trash resolution (SPECIAL-USE `\Trash`), optimistic list removal, and a destination-named toast.
 - **Unread-count badge** on the taskbar / launcher and in the window title.
-- **Optional AI** (bring-your-own Anthropic key): per-message **Analyze** (summary, action items, questions, key context) and an unread-inbox **Tasks** sweep.
+- **Optional AI** (bring-your-own Anthropic key): per-message **Analyze** (summary, action items, questions, key context) and an inbox **Tasks** sweep (choice of **Unread** (default) or **All messages**). Sweep results and ticked-off tasks are persisted per folder; completed tasks are fed back to the model so they don't resurface.
 - **Bring-your-own-credentials** setup documented (README → "Run your own copy"; DEVELOPERS.md → OAuth setup + verification/CASA notes).
 
 ## Critical
@@ -18,10 +18,11 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 
 ## AI follow-ups
 
-- Thread / conversation-level analysis (currently single-message and unread-folder sweep only).
+- Thread / conversation-level analysis (currently single-message and folder-level sweep only).
 - Reply-draft suggestions from a message.
 - Model / effort / provider selection in AI settings (currently hardcoded to Claude Opus 4.8, Anthropic-only).
-- Message-count / cost preview before an inbox sweep; sweeps are not cached, so each run spends tokens.
+- Message-count / cost preview before an inbox sweep. (Sweeps are now **incremental**: each message's extracted tasks are cached on its row, so a Sweep only sends messages it has never analyzed — a re-sweep of an unchanged inbox spends zero tokens. Reopening the Tasks dialog reads persisted results with no call. A one-time full pass over new mail is still billed.)
+- Optional **force re-analysis** for the sweep — the per-message cache assumes a message's tasks never change (true for immutable IMAP bodies), so there is currently no way to re-run the model on already-analysed mail (e.g. after tuning the prompt). `sweepTasks` is one boolean away from supporting it.
 
 ## Post-MVP (logged for later)
 

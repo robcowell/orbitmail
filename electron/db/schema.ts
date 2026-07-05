@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, index, primaryKey } from 'drizzle-orm/sqlite-core'
 
 export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
@@ -61,7 +61,12 @@ export const messages = sqliteTable(
     bodyHtml: text('body_html'),
     bodyText: text('body_text'),
     aiAnalysis: text('ai_analysis'),
-    aiAnalysisAt: integer('ai_analysis_at')
+    aiAnalysisAt: integer('ai_analysis_at'),
+    // Cached per-message sweep extraction: JSON array of { task, priority }.
+    // Lets a re-sweep skip messages already analyzed (incremental sweep). Null
+    // means "never analyzed"; an empty array means "analyzed, no tasks".
+    sweepCache: text('sweep_cache'),
+    sweepCacheAt: integer('sweep_cache_at')
   },
   (t) => [
     index('messages_folder_date_idx').on(t.folderId, t.date),
@@ -84,3 +89,30 @@ export const appPreferences = sqliteTable('app_preferences', {
   key: text('key').primaryKey(),
   value: text('value').notNull()
 })
+
+// Persisted AI inbox-sweep tasks. Rows are scoped to the folder the sweep ran
+// on ('unified' for the combined inbox). `open` rows are replaced on each sweep;
+// `completed` rows persist so the user keeps a history and the model can be told
+// not to resurface work already done. `id` is a stable dedupe key derived from
+// the source message + normalized task text.
+export const sweepTasks = sqliteTable(
+  'sweep_tasks',
+  {
+    folderId: text('folder_id').notNull(),
+    id: text('id').notNull(),
+    task: text('task').notNull(),
+    priority: text('priority', { enum: ['urgent', 'high', 'medium', 'low'] }).notNull(),
+    sourceMessageId: text('source_message_id').notNull(),
+    sourceSubject: text('source_subject').notNull(),
+    sourceFrom: text('source_from').notNull(),
+    status: text('status', { enum: ['open', 'completed'] })
+      .notNull()
+      .default('open'),
+    createdAt: integer('created_at').notNull(),
+    completedAt: integer('completed_at')
+  },
+  (t) => [
+    primaryKey({ columns: [t.folderId, t.id] }),
+    index('sweep_tasks_folder_idx').on(t.folderId)
+  ]
+)

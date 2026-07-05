@@ -7,7 +7,7 @@ import {
   toggleMessageStar,
   runSearch,
   clearSearch,
-  runSweep
+  openTasksDialog
 } from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
@@ -251,8 +251,8 @@ export function Toolbar() {
 
       <button
         className="toolbar-btn"
-        title="Sweep unread for tasks"
-        onClick={() => void runSweep()}
+        title="Tasks from your mail"
+        onClick={() => void openTasksDialog()}
       >
         <ListChecks {...iconProps} />
       </button>

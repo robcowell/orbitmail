@@ -8,7 +8,9 @@ import type {
   ManualAccountInput,
   FlagColor,
   AiAnalysis,
-  SweepTask
+  SweepTask,
+  CompletedTask,
+  SweepScope
 } from '../../shared/types'
 import {
   loadPersistedPreferences,
@@ -45,7 +47,10 @@ interface MailState {
   showTasks: boolean
   sweeping: boolean
   sweepTasks: SweepTask[]
+  sweepCompleted: CompletedTask[]
   sweepAnalyzedCount: number
+  sweepScope: SweepScope
+  sweepSweptAt: number | null
 
   setAccounts: (accounts: Account[]) => void
   setFolders: (folders: Folder[]) => void
@@ -73,7 +78,13 @@ interface MailState {
   setShowAiSettings: (show: boolean) => void
   setShowTasks: (show: boolean) => void
   setSweeping: (sweeping: boolean) => void
-  setSweepResult: (tasks: SweepTask[], analyzedCount: number) => void
+  setSweepResult: (
+    tasks: SweepTask[],
+    completed: CompletedTask[],
+    analyzedCount: number,
+    sweptAt: number | null
+  ) => void
+  setSweepScope: (scope: SweepScope) => void
 }
 
 export const useMailStore = create<MailState>((set) => ({
@@ -102,7 +113,10 @@ export const useMailStore = create<MailState>((set) => ({
   showTasks: false,
   sweeping: false,
   sweepTasks: [],
+  sweepCompleted: [],
   sweepAnalyzedCount: 0,
+  sweepScope: 'unread',
+  sweepSweptAt: null,
 
   setAccounts: (accounts) => set({ accounts }),
   setFolders: (folders) => set({ folders }),
@@ -129,8 +143,14 @@ export const useMailStore = create<MailState>((set) => ({
   setShowAiSettings: (show) => set({ showAiSettings: show }),
   setShowTasks: (show) => set({ showTasks: show }),
   setSweeping: (sweeping) => set({ sweeping }),
-  setSweepResult: (tasks, analyzedCount) =>
-    set({ sweepTasks: tasks, sweepAnalyzedCount: analyzedCount }),
+  setSweepResult: (tasks, completed, analyzedCount, sweptAt) =>
+    set({
+      sweepTasks: tasks,
+      sweepCompleted: completed,
+      sweepAnalyzedCount: analyzedCount,
+      sweepSweptAt: sweptAt
+    }),
+  setSweepScope: (scope) => set({ sweepScope: scope }),
   toggleAccountCollapsed: (accountId) =>
     set((state) => {
       const collapsedAccountIds = {
@@ -874,28 +894,87 @@ export async function analyzeMessage(messageId: string, force = false): Promise<
   }
 }
 
-// Sweep the current folder's unread mail for outstanding tasks and open the
-// Tasks digest. Errors surface via toast (and open AI settings if no key).
-export async function runSweep(): Promise<void> {
+// Open the Tasks digest and hydrate it from the last persisted sweep for the
+// current folder — no API call, no tokens spent. The user chooses scope and
+// runs a fresh sweep from inside the dialog.
+export async function openTasksDialog(): Promise<void> {
+  const store = useMailStore.getState()
+  store.setShowTasks(true)
+  try {
+    const result = await window.orbitMail.ai.getTasks(store.selectedFolderId)
+    store.setSweepResult(result.tasks, result.completed, result.analyzedCount, result.sweptAt)
+    store.setSweepScope(result.scope)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not load tasks')
+  }
+}
+
+// Run a fresh sweep of the current folder for outstanding tasks using the
+// selected scope. Errors surface via toast (and open AI settings if no key).
+export async function runSweep(scope?: SweepScope): Promise<void> {
   const store = useMailStore.getState()
   if (store.sweeping) return
+  const useScope = scope ?? store.sweepScope
+  if (scope) store.setSweepScope(scope)
   store.setShowTasks(true)
   store.setSweeping(true)
-  store.setSweepResult([], 0)
   try {
-    const result = await window.orbitMail.ai.sweep(store.selectedFolderId)
+    const result = await window.orbitMail.ai.sweep(store.selectedFolderId, useScope)
     if ('error' in result) {
       store.setToast(result.error)
-      store.setShowTasks(false)
       const status = await window.orbitMail.ai.getStatus()
       if (!status.configured) store.setShowAiSettings(true)
       return
     }
-    store.setSweepResult(result.tasks, result.analyzedCount)
+    store.setSweepResult(result.tasks, result.completed, result.analyzedCount, result.sweptAt)
+    if (result.analyzedCount > 0) {
+      store.setToast(
+        result.freshCount === 0
+          ? 'No new mail to analyze — reused cached results (no tokens spent).'
+          : `Analyzed ${result.freshCount} new message${result.freshCount === 1 ? '' : 's'}.`
+      )
+    }
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Sweep failed')
-    store.setShowTasks(false)
   } finally {
     store.setSweeping(false)
+  }
+}
+
+// Mark a task done (persisted) and move it into the completed list optimistically.
+export async function completeTask(taskId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const task = store.sweepTasks.find((t) => t.id === taskId)
+  if (!task) return
+  const completed: CompletedTask = { ...task, completedAt: Date.now() }
+  store.setSweepResult(
+    store.sweepTasks.filter((t) => t.id !== taskId),
+    [completed, ...store.sweepCompleted],
+    store.sweepAnalyzedCount,
+    store.sweepSweptAt
+  )
+  try {
+    await window.orbitMail.ai.completeTask(store.selectedFolderId, taskId)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not update task')
+  }
+}
+
+// Undo a completion: move the task back to the open list (persisted).
+export async function reopenTask(taskId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const done = store.sweepCompleted.find((t) => t.id === taskId)
+  if (!done) return
+  const { completedAt: _completedAt, ...task } = done
+  store.setSweepResult(
+    [task, ...store.sweepTasks],
+    store.sweepCompleted.filter((t) => t.id !== taskId),
+    store.sweepAnalyzedCount,
+    store.sweepSweptAt
+  )
+  try {
+    await window.orbitMail.ai.reopenTask(store.selectedFolderId, taskId)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not update task')
   }
 }

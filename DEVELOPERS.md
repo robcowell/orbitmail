@@ -117,9 +117,16 @@ MICROSOFT_TENANT_ID=common
 
 ## AI (optional)
 
-The AI features — per-message **Analyze** and the unread-folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
+The AI features — per-message **Analyze** and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
 
-`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with model `claude-opus-4-8` and structured output. Per-message analysis is cached on the `messages` row (`ai_analysis` / `ai_analysis_at`); the inbox sweep is a single batched call and is not cached. Message content is sent to Anthropic only when the user triggers a feature.
+`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with model `claude-opus-4-8` and structured output. Message content is sent to Anthropic only when the user triggers a feature.
+
+**Caching.** Per-message analysis is cached on the `messages` row (`ai_analysis` / `ai_analysis_at`). The Tasks sweep is also incremental:
+
+- The sweep scans **unread** mail by default or **all** messages in the folder (`SweepScope`, chosen in the dialog).
+- Each message's extracted tasks are cached on its own row (`sweep_cache` = JSON `{ task, priority }[]`, `sweep_cache_at`). A NULL cache means "never analysed"; an empty array means "analysed, produced no tasks". A sweep only sends messages whose cache is NULL, so re-sweeping an unchanged folder makes **no** API call — the result reports `freshCount: 0`. The cache is a partial column so ordinary sync/flag updates in `upsertMessage` leave it intact, and it cascade-deletes with the message.
+- Sweep results are persisted per folder in the `sweep_tasks` table (composite PK `(folder_id, id)`, where `id` is a stable dedupe key of source message + normalised task text). `open` rows are the outstanding tasks and are replaced on each sweep; `completed` rows are the user's ticked-off history (pruned after 30 days). Completed tasks are fed back into the prompt ("do NOT list these again") and filtered client-side so they never resurface. Per-folder sweep metadata (last run time, count, scope) lives in `app_preferences` under `ai_sweep_meta`.
+- Opening the Tasks dialog calls `ai:getTasks` (a pure DB read, no tokens); `ai:sweep` runs a fresh incremental sweep; `ai:completeTask` / `ai:reopenTask` toggle a task's status.
 
 ## Architecture
 
@@ -183,7 +190,7 @@ orbit-mail/
 | `electron/services/imap-sync.ts` | IMAP sync, UID tracking, background poll |
 | `electron/services/imap-idle.ts` | IMAP IDLE connections per account |
 | `electron/services/db-service.ts` | SQLite CRUD, unread recalculation |
-| `electron/services/ai-service.ts` | Optional AI: message analysis, inbox task sweep, encrypted Anthropic key storage |
+| `electron/services/ai-service.ts` | Optional AI: message analysis, incremental inbox task sweep (unread/all scope, persisted + cached tasks), encrypted Anthropic key storage |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
 | `shared/types.ts` | Shared types and `OrbitMailAPI` contract |
 | `src/stores/mailStore.ts` | Renderer state, message list refresh |

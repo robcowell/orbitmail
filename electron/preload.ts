@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
   OrbitMailAPI,
   ComposePayload,
@@ -70,6 +70,8 @@ const api: OrbitMailAPI = {
     open: (payload) => ipcRenderer.invoke('compose:open', payload),
     send: (payload) => ipcRenderer.invoke('compose:send', payload),
     pickAttachments: () => ipcRenderer.invoke('compose:pickAttachments'),
+    statAttachments: (paths: string[]) => ipcRenderer.invoke('compose:statAttachments', paths),
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
     close: () => ipcRenderer.invoke('compose:close'),
     onOpen: (callback) => {
       const handler = (_: unknown, payload: Partial<ComposePayload>) => callback(payload)

@@ -1,12 +1,14 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
-import { join } from 'path'
+import { join, basename } from 'path'
+import { statSync } from 'fs'
 import type {
   ComposePayload,
   SyncStatus,
   ManualAccountInput,
   FlagColor,
-  SweepScope
+  SweepScope,
+  AttachmentDraft
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
 import { updateAppBadge } from './app-badge'
@@ -127,6 +129,14 @@ function parseMailtoUrl(url: string): Partial<ComposePayload> {
     }
   } catch {
     return {}
+  }
+}
+
+function pathToAttachmentDraft(path: string): AttachmentDraft | null {
+  try {
+    return { path, name: basename(path), size: statSync(path).size }
+  } catch {
+    return null
   }
 }
 
@@ -576,8 +586,12 @@ function registerIpc(): void {
       properties: ['openFile', 'multiSelections']
     })
     if (result.canceled) return []
-    return result.filePaths
+    return result.filePaths.map(pathToAttachmentDraft).filter(Boolean) as AttachmentDraft[]
   })
+
+  ipcMain.handle('compose:statAttachments', (_, paths: string[]) =>
+    paths.map(pathToAttachmentDraft).filter(Boolean) as AttachmentDraft[]
+  )
 
   ipcMain.handle('compose:close', () => {
     composeWindow?.close()

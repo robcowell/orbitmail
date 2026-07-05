@@ -1,8 +1,22 @@
-import { useState, useEffect } from 'react'
-import type { ComposePayload } from '../../../shared/types'
+import { useState, useEffect, useRef } from 'react'
+import DOMPurify from 'dompurify'
+import {
+  Paperclip,
+  X,
+  CaretRight,
+  FileText,
+  FileImage,
+  FilePdf,
+  FileZip,
+  FileDoc,
+  FileXls,
+  File as FileIcon
+} from '@phosphor-icons/react'
+import type { AttachmentDraft, ComposePayload } from '../../../shared/types'
 import { useMailStore } from '../../stores/mailStore'
 import { loadInitialData } from '../../stores/mailStore'
-import { Paperclip, X } from '../icons'
+import { RichTextEditor } from './RichTextEditor'
+import { formatBytes } from '../../utils/format'
 
 const emptyPayload = (accountId: string): ComposePayload => ({
   accountId,
@@ -14,6 +28,17 @@ const emptyPayload = (accountId: string): ComposePayload => ({
   bodyText: ''
 })
 
+function attachmentIcon(name: string) {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic'].includes(ext)) return FileImage
+  if (ext === 'pdf') return FilePdf
+  if (['zip', 'gz', 'tar', 'rar', '7z'].includes(ext)) return FileZip
+  if (['doc', 'docx', 'odt', 'rtf'].includes(ext)) return FileDoc
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext)) return FileXls
+  if (['txt', 'md', 'log'].includes(ext)) return FileText
+  return FileIcon
+}
+
 export function ComposeWindow() {
   const accounts = useMailStore((s) => s.accounts)
   const setToast = useMailStore((s) => s.setToast)
@@ -21,7 +46,16 @@ export function ComposeWindow() {
   const [sending, setSending] = useState(false)
   const [showCc, setShowCc] = useState(false)
   const [showBcc, setShowBcc] = useState(false)
-  const [attachmentPaths, setAttachmentPaths] = useState<string[]>([])
+  const [attachments, setAttachments] = useState<AttachmentDraft[]>([])
+  const [quoted, setQuoted] = useState<{ html: string; text: string } | null>(null)
+  const [quotedExpanded, setQuotedExpanded] = useState(false)
+  const [dragging, setDragging] = useState(false)
+  const [editorSeq, setEditorSeq] = useState(0)
+
+  // Editor content lives in the DOM (uncontrolled); mirror it into refs so we can
+  // read the latest value at send time without re-rendering on every keystroke.
+  const bodyHtmlRef = useRef('')
+  const bodyTextRef = useRef('')
 
   useEffect(() => {
     void loadInitialData()
@@ -30,13 +64,24 @@ export function ComposeWindow() {
   useEffect(() => {
     const unsub = window.orbitMail.compose.onOpen((initial) => {
       const accountId = initial.accountId ?? accounts[0]?.id ?? ''
-      setPayload({
-        ...emptyPayload(accountId),
-        ...initial
-      })
-      setAttachmentPaths(initial.attachmentPaths ?? [])
+      setPayload({ ...emptyPayload(accountId), ...initial })
+      bodyHtmlRef.current = initial.bodyHtml ?? ''
+      bodyTextRef.current = initial.bodyText ?? ''
+      setEditorSeq((n) => n + 1)
+      setQuoted(
+        initial.quotedHtml || initial.quotedText
+          ? { html: initial.quotedHtml ?? '', text: initial.quotedText ?? '' }
+          : null
+      )
+      setQuotedExpanded(false)
       if (initial.cc) setShowCc(true)
       if (initial.bcc) setShowBcc(true)
+      const paths = initial.attachmentPaths ?? []
+      if (paths.length) {
+        void window.orbitMail.compose.statAttachments(paths).then(setAttachments)
+      } else {
+        setAttachments([])
+      }
     })
     return unsub
   }, [accounts])
@@ -52,14 +97,31 @@ export function ComposeWindow() {
   const update = (patch: Partial<ComposePayload>) =>
     setPayload((p) => (p ? { ...p, ...patch } : p))
 
+  const addDrafts = (drafts: AttachmentDraft[]) => {
+    if (drafts.length === 0) return
+    setAttachments((current) => {
+      const seen = new Set(current.map((a) => a.path))
+      return [...current, ...drafts.filter((d) => !seen.has(d.path))]
+    })
+  }
+
   const handlePickAttachments = async () => {
-    const paths = await window.orbitMail.compose.pickAttachments()
-    if (paths.length === 0) return
-    setAttachmentPaths((current) => [...current, ...paths])
+    addDrafts(await window.orbitMail.compose.pickAttachments())
   }
 
   const handleRemoveAttachment = (path: string) => {
-    setAttachmentPaths((current) => current.filter((p) => p !== path))
+    setAttachments((current) => current.filter((a) => a.path !== path))
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const drafts: AttachmentDraft[] = []
+    for (const file of Array.from(e.dataTransfer.files)) {
+      const path = window.orbitMail.compose.getPathForFile(file)
+      if (path) drafts.push({ path, name: file.name, size: file.size })
+    }
+    addDrafts(drafts)
   }
 
   const handleSend = async () => {
@@ -67,15 +129,39 @@ export function ComposeWindow() {
       setToast('Please enter a recipient')
       return
     }
+    if (sending) return
+    const bodyHtml = quoted
+      ? `${bodyHtmlRef.current}<br><br>${quoted.html}`
+      : bodyHtmlRef.current
+    const bodyText = quoted
+      ? `${bodyTextRef.current}\n\n${quoted.text}`
+      : bodyTextRef.current
     setSending(true)
     try {
       await window.orbitMail.compose.send({
-        ...payload,
-        attachmentPaths: attachmentPaths.length ? attachmentPaths : undefined
+        accountId: payload.accountId,
+        to: payload.to,
+        cc: showCc ? payload.cc : undefined,
+        bcc: showBcc ? payload.bcc : undefined,
+        subject: payload.subject,
+        bodyHtml,
+        bodyText,
+        inReplyTo: payload.inReplyTo,
+        references: payload.references,
+        mode: payload.mode,
+        originalMessageId: payload.originalMessageId,
+        attachmentPaths: attachments.length ? attachments.map((a) => a.path) : undefined
       })
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Failed to send')
       setSending(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault()
+      void handleSend()
     }
   }
 
@@ -87,7 +173,18 @@ export function ComposeWindow() {
         : []
 
   return (
-    <div className="compose-form">
+    <div
+      className={`compose-form${dragging ? ' is-dragging' : ''}`}
+      onKeyDown={handleKeyDown}
+      onDragOver={(e) => {
+        e.preventDefault()
+        if (!dragging) setDragging(true)
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget === e.target) setDragging(false)
+      }}
+      onDrop={handleDrop}
+    >
       <div className="compose-field">
         <span className="compose-label">From</span>
         <select
@@ -112,15 +209,13 @@ export function ComposeWindow() {
           placeholder="Recipient"
         />
         <button
-          className="toolbar-btn"
-          style={{ width: 'auto', padding: '0 6px', fontSize: 12 }}
+          className="toolbar-btn compose-cc-toggle"
           onClick={() => setShowCc(!showCc)}
         >
           Cc
         </button>
         <button
-          className="toolbar-btn"
-          style={{ width: 'auto', padding: '0 6px', fontSize: 12 }}
+          className="toolbar-btn compose-cc-toggle"
           onClick={() => setShowBcc(!showBcc)}
         >
           Bcc
@@ -158,47 +253,91 @@ export function ComposeWindow() {
         />
       </div>
 
-      <textarea
-        className="compose-body"
-        value={payload.bodyText}
-        onChange={(e) =>
-          update({ bodyText: e.target.value, bodyHtml: `<p>${e.target.value}</p>` })
-        }
-        placeholder="Write your message…"
-      />
+      <div className="compose-editor-area">
+        <RichTextEditor
+          key={editorSeq}
+          initialHtml={payload.bodyHtml}
+          placeholder="Write your message…"
+          onChange={(html, text) => {
+            bodyHtmlRef.current = html
+            bodyTextRef.current = text
+          }}
+        />
 
-      {attachmentPaths.length > 0 && (
-        <div className="compose-attachments">
-          {attachmentPaths.map((path) => (
-            <div key={path} className="compose-attachment-chip">
-              <Paperclip size={14} weight="duotone" />
-              <span>{path.split('/').pop()}</span>
+        {quoted && (
+          <div className="compose-quote">
+            <div className="compose-quote-divider">
               <button
                 type="button"
-                className="compose-attachment-remove"
-                onClick={() => handleRemoveAttachment(path)}
-                aria-label="Remove attachment"
+                className={`compose-quote-toggle${quotedExpanded ? ' is-open' : ''}`}
+                onClick={() => setQuotedExpanded((v) => !v)}
+                title={quotedExpanded ? 'Hide quoted text' : 'Show quoted text'}
               >
-                <X size={12} weight="bold" />
+                <CaretRight size={12} weight="bold" />
+                {quotedExpanded ? 'Hide quoted text' : 'Show quoted text'}
               </button>
+              <span className="compose-quote-line" />
             </div>
-          ))}
+            {quotedExpanded && (
+              <div
+                className="compose-quote-body"
+                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(quoted.html) }}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {attachments.length > 0 && (
+        <div className="compose-attachments">
+          {attachments.map((att) => {
+            const Icon = attachmentIcon(att.name)
+            return (
+              <div key={att.path} className="compose-attachment-item">
+                <Icon size={20} weight="duotone" className="compose-attachment-icon" />
+                <div className="compose-attachment-meta">
+                  <span className="compose-attachment-name" title={att.name}>
+                    {att.name}
+                  </span>
+                  <span className="compose-attachment-size">{formatBytes(att.size)}</span>
+                </div>
+                <button
+                  type="button"
+                  className="compose-attachment-remove"
+                  onClick={() => handleRemoveAttachment(att.path)}
+                  aria-label={`Remove ${att.name}`}
+                >
+                  <X size={13} weight="bold" />
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 
       <div className="compose-actions">
         <button
           type="button"
-          className="btn btn-secondary"
+          className="btn btn-secondary compose-attach-btn"
           onClick={handlePickAttachments}
           disabled={sending}
         >
+          <Paperclip size={15} weight="bold" />
           Attach
         </button>
+        <span className="compose-actions-spacer" />
+        <span className="compose-send-hint">⌘↵ to send</span>
         <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
           {sending ? 'Sending…' : 'Send'}
         </button>
       </div>
+
+      {dragging && (
+        <div className="compose-drop-overlay">
+          <Paperclip size={28} weight="duotone" />
+          <span>Drop files to attach</span>
+        </div>
+      )}
     </div>
   )
 }

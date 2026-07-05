@@ -682,6 +682,8 @@ textarea {
   height: 100%;
   padding: 16px;
   gap: 8px;
+  position: relative;
+  min-height: 0;
 }
 
 .compose-field {
@@ -709,23 +711,268 @@ textarea {
   color: var(--text-primary);
 }
 
-.compose-body {
+.compose-cc-toggle {
+  width: auto;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+/* Rich text editor + toolbar ------------------------------------------------ */
+
+.compose-editor-area {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.rte {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.rte-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 2px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-primary, var(--bg-list, #fff));
+  border-bottom: 1px solid var(--border);
+}
+
+.rte-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border: none;
-  outline: none;
-  resize: none;
-  font-size: 14px;
-  line-height: 1.6;
-  padding: 8px 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary, var(--text-primary));
+  cursor: pointer;
+}
+
+.rte-btn:hover {
+  background: var(--bg-hover);
+}
+
+.rte-btn.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.rte-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.rte-select {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
   background: transparent;
   color: var(--text-primary);
+  font-size: 12px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.rte-color-input {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rte-link-popover {
+  display: flex;
+  gap: 6px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rte-link-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 5px 8px;
+  outline: none;
+}
+
+.rte-link-input:focus {
+  border-color: var(--accent);
+}
+
+.rte-link-apply {
+  padding: 4px 12px;
+}
+
+.rte-editor {
+  flex: 1;
+  min-height: 160px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 10px 2px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.rte-editor[data-empty='true']::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.rte-editor h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 8px 0;
+}
+.rte-editor h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 8px 0;
+}
+.rte-editor h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 6px 0;
+}
+.rte-editor ul,
+.rte-editor ol {
+  margin: 6px 0;
+  padding-left: 24px;
+}
+.rte-editor blockquote {
+  margin: 6px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--border);
+  color: var(--text-muted);
+}
+.rte-editor a {
+  color: var(--accent);
+}
+.rte-editor code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: var(--bg-hover);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* Collapsible quoted content ------------------------------------------------ */
+
+.compose-quote {
+  margin-top: 4px;
+}
+
+.compose-quote-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.compose-quote-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.compose-quote-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.compose-quote-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.compose-quote-toggle.is-open svg {
+  transform: rotate(90deg);
+}
+
+.compose-quote-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.compose-quote-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 4px 2px;
+  overflow-wrap: anywhere;
+}
+
+.compose-quote-body blockquote {
+  margin: 0 0 0 0.8ex;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
 }
 
 .compose-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   padding-top: 8px;
+}
+
+.compose-actions-spacer {
+  flex: 1;
+}
+
+.compose-send-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.compose-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Drag-and-drop overlay ----------------------------------------------------- */
+
+.compose-drop-overlay {
+  position: absolute;
+  inset: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-primary, #fff));
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 500;
+  pointer-events: none;
+  z-index: 5;
 }
 
 .btn {
@@ -1304,29 +1551,64 @@ textarea {
 }
 
 .compose-attachments {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 8px;
-  padding: 0 16px 8px;
+  padding: 8px 0 4px;
+  max-height: 132px;
+  overflow-y: auto;
 }
 
-.compose-attachment-chip {
-  display: inline-flex;
+.compose-attachment-item {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 999px;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   background: var(--bg-hover);
+  min-width: 0;
+}
+
+.compose-attachment-icon {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.compose-attachment-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.compose-attachment-name {
   font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compose-attachment-size {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .compose-attachment-remove {
+  flex-shrink: 0;
   border: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
   display: inline-flex;
-  padding: 0;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.compose-attachment-remove:hover {
+  background: var(--border);
+  color: var(--text-primary);
 }
 
 .sidebar-account-header-row {

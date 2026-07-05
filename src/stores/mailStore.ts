@@ -18,6 +18,7 @@ import {
 } from './persistence'
 import { findAccountFolder, findArchiveFolder } from '../utils/folders'
 import { resolveSearchAccountId } from '../utils/search'
+import { buildTasksMarkdown, defaultTasksFilename } from '../utils/taskExport'
 
 export const MESSAGE_PAGE_SIZE = 200
 
@@ -938,6 +939,29 @@ export async function runSweep(scope?: SweepScope): Promise<void> {
     store.setToast(err instanceof Error ? err.message : 'Sweep failed')
   } finally {
     store.setSweeping(false)
+  }
+}
+
+// Export the current sweep (open + completed tasks) to a Markdown file the user
+// chooses via a save dialog. No-op with a toast if there's nothing to export.
+export async function exportTasks(): Promise<void> {
+  const store = useMailStore.getState()
+  if (store.sweepTasks.length === 0 && store.sweepCompleted.length === 0) {
+    store.setToast('No tasks to export yet — run a sweep first.')
+    return
+  }
+  const markdown = buildTasksMarkdown({
+    tasks: store.sweepTasks,
+    completed: store.sweepCompleted,
+    scope: store.sweepScope,
+    analyzedCount: store.sweepAnalyzedCount,
+    sweptAt: store.sweepSweptAt
+  })
+  try {
+    const savedPath = await window.orbitMail.ai.exportTasks(markdown, defaultTasksFilename())
+    if (savedPath) store.setToast(`Tasks exported to ${savedPath.split('/').pop()}`)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Export failed')
   }
 }
 

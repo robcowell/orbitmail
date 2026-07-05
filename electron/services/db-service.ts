@@ -372,6 +372,36 @@ export function getInboxFolderIds(): string[] {
   return db.select({ id: folders.id }).from(folders).where(eq(folders.type, 'inbox')).all().map((r) => r.id)
 }
 
+export interface LatestInboxMessage {
+  accountLabel: string
+  from: string
+  subject: string
+}
+
+// The most recent inbox message across all accounts — used to describe the
+// just-arrived mail in a desktop notification (account, sender, subject).
+export function getLatestInboxMessage(): LatestInboxMessage | null {
+  const db = getDb()
+  const inboxIds = getInboxFolderIds()
+  if (inboxIds.length === 0) return null
+
+  const row = db
+    .select({ from: messages.from, subject: messages.subject, accountId: messages.accountId })
+    .from(messages)
+    .where(inArray(messages.folderId, inboxIds))
+    .orderBy(desc(messages.date))
+    .limit(1)
+    .get()
+  if (!row) return null
+
+  const account = db.select().from(accounts).where(eq(accounts.id, row.accountId)).get()
+  return {
+    accountLabel: account?.email || account?.displayName || 'Orbit Mail',
+    from: row.from,
+    subject: row.subject
+  }
+}
+
 function rowToSummary(r: typeof messages.$inferSelect): MessageSummary {
   return {
     id: r.id,

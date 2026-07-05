@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join, basename } from 'path'
-import { statSync } from 'fs'
+import { statSync, writeFileSync } from 'fs'
 import type {
   ComposePayload,
   SyncStatus,
@@ -26,7 +26,8 @@ import {
   deleteMessage,
   getFolderById,
   searchMessages,
-  updateAccountDisplayName
+  updateAccountDisplayName,
+  getLatestInboxMessage
 } from './services/db-service'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
@@ -196,16 +197,42 @@ function openComposeFromMailto(url: string): void {
   mainWindow?.focus()
 }
 
+function truncate(value: string, max: number): string {
+  const trimmed = value.trim()
+  return trimmed.length > max ? `${trimmed.slice(0, max - 1).trimEnd()}…` : trimmed
+}
+
+// Pull a display name out of a From header ("Jane Doe" <jane@x> -> Jane Doe),
+// falling back to the bare address.
+function senderName(from: string): string {
+  const match = from.match(/^\s*"?([^"<]*?)"?\s*<[^>]+>\s*$/)
+  const name = match?.[1]?.trim()
+  if (name) return name
+  return from.replace(/[<>]/g, '').trim()
+}
+
 function showNewMailNotification(count: number): void {
   if (!Notification.isSupported()) return
   if (Date.now() - lastNotificationAt < 5000) return
   lastNotificationAt = Date.now()
 
-  const body =
-    count === 1 ? 'You have a new message' : `You have ${count} new messages`
+  const latest = getLatestInboxMessage()
+
+  // Account on the (bold) title line; sender and subject in the body, each
+  // truncated so the notification stays within a sensible width.
+  let title = 'Orbit Mail'
+  let body = count === 1 ? 'You have a new message' : `You have ${count} new messages`
+
+  if (latest) {
+    title = truncate(latest.accountLabel, 64)
+    const sender = truncate(senderName(latest.from) || 'Unknown sender', 40)
+    const subject = truncate(latest.subject || '(no subject)', 80)
+    body = `${sender}\n${subject}`
+    if (count > 1) body += `\n+${count - 1} more message${count - 1 === 1 ? '' : 's'}`
+  }
 
   const notification = new Notification({
-    title: 'Orbit Mail',
+    title,
     body,
     icon: getAppIconPath()
   })
@@ -639,6 +666,16 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('ai:getTasks', (_, folderId: string) => getPersistedTasks(folderId))
+
+  ipcMain.handle('ai:exportTasks', async (_, markdown: string, defaultName: string) => {
+    const result = await dialog.showSaveDialog(composeWindow ?? mainWindow ?? undefined, {
+      defaultPath: defaultName,
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    writeFileSync(result.filePath, markdown, 'utf8')
+    return result.filePath
+  })
 
   ipcMain.handle('ai:completeTask', (_, folderId: string, taskId: string) => {
     completeAiTask(folderId, taskId)

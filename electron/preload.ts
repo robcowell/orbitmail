@@ -108,6 +108,8 @@ const api: OrbitMailAPI = {
     sweep: (folderId: string, scope: SweepScope) =>
       ipcRenderer.invoke('ai:sweep', folderId, scope),
     getTasks: (folderId: string) => ipcRenderer.invoke('ai:getTasks', folderId),
+    exportTasks: (markdown: string, defaultName: string) =>
+      ipcRenderer.invoke('ai:exportTasks', markdown, defaultName),
     completeTask: (folderId: string, taskId: string) =>
       ipcRenderer.invoke('ai:completeTask', folderId, taskId),
     reopenTask: (folderId: string, taskId: string) =>

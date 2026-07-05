@@ -1055,6 +1055,16 @@ textarea {
   flex-direction: column;
 }
 
+.modal-actions-spacer {
+  flex: 1;
+}
+
+/* Tasks modal keeps its action buttons at natural width (Export left, Close
+   right) rather than the default equal-stretch. */
+.tasks-modal .modal-actions .btn {
+  flex: 0 0 auto;
+}
+
 .account-info-list {
   margin: 0 0 20px;
   display: grid;

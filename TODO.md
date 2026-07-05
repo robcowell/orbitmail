@@ -7,6 +7,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Delete to Trash** via `Delete` / `Backspace`, with provider-correct trash resolution (SPECIAL-USE `\Trash`), optimistic list removal, and a destination-named toast.
 - **Unread-count badge** on the taskbar / launcher and in the window title.
 - **Optional AI** (bring-your-own Anthropic key): per-message **Analyze** (summary, action items, questions, key context) and an inbox **Tasks** sweep (choice of **Unread** (default) or **All messages**). Sweep results and ticked-off tasks are persisted per folder; completed tasks are fed back to the model so they don't resurface.
+- **Rich compose editor** — extended formatting toolbar (headings, bold/italic/underline/strikethrough, alignment, colour, lists, links, quote, inline code, clear), HTML send, collapsible quoted text on replies/forwards with an attribution line and separator, and a drag-and-drop attachment UI showing type icons and sizes.
 - **Bring-your-own-credentials** setup documented (README → "Run your own copy"; DEVELOPERS.md → OAuth setup + verification/CASA notes).
 
 ## Critical
@@ -28,7 +29,8 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 
 - Local draft autosave + IMAP draft upload
 - Conversation/thread view
-- Rich HTML compose editor and signatures
+- Compose signatures and inline/pasted images (rich HTML editor now shipped)
+- Editable / trimmable quoted text (currently the collapsed quote is read-only and always included on send)
 - Reply-all
 - Attachment save-as (download path picker)
 - Search operators (`from:`, `subject:`) and result highlighting

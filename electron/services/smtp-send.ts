@@ -157,10 +157,46 @@ function buildReplyAllCc(from: string, to: string, cc: string, accountId: string
   return [...new Set(ccList)].join(', ')
 }
 
-function quotedBody(msg: NonNullable<ReturnType<typeof getMessage>>) {
+function htmlEscape(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function originalAsHtml(msg: NonNullable<ReturnType<typeof getMessage>>): string {
+  if (msg.bodyHtml) return msg.bodyHtml
+  if (msg.bodyText) return `<p>${htmlEscape(msg.bodyText).replace(/\n/g, '<br>')}</p>`
+  return ''
+}
+
+// A reply quote: an attribution line above the sender's original message,
+// returned as separate quoted content so the composer can collapse it.
+function replyQuote(msg: NonNullable<ReturnType<typeof getMessage>>) {
+  const when = new Date(msg.date).toLocaleString()
+  const attribution = `On ${when}, ${msg.from} wrote:`
+  const quotedText = (msg.bodyText ?? '')
+    .split('\n')
+    .map((line) => `> ${line}`)
+    .join('\n')
   return {
-    bodyHtml: `<br><br><blockquote>${msg.bodyHtml ?? msg.bodyText ?? ''}</blockquote>`,
-    bodyText: `\n\n${msg.bodyText ?? ''}`
+    quotedHtml: `<div class="gmail_attr">${htmlEscape(attribution)}</div><blockquote class="gmail_quote" style="margin:0 0 0 0.8ex;border-left:1px solid #ccc;padding-left:1ex;color:#555;">${originalAsHtml(msg)}</blockquote>`,
+    quotedText: `${attribution}\n${quotedText}`
+  }
+}
+
+// A forwarded message: a header block followed by the original content.
+function forwardQuote(msg: NonNullable<ReturnType<typeof getMessage>>) {
+  const header = [
+    '---------- Forwarded message ----------',
+    `From: ${msg.from}`,
+    `Date: ${new Date(msg.date).toLocaleString()}`,
+    `Subject: ${msg.subject}`,
+    `To: ${msg.to}`
+  ]
+  return {
+    quotedHtml: `<div class="gmail_attr">${header.map(htmlEscape).join('<br>')}</div><br>${originalAsHtml(msg)}`,
+    quotedText: `${header.join('\n')}\n\n${msg.bodyText ?? ''}`
   }
 }
 
@@ -174,7 +210,7 @@ export function buildReplyPayload(
 
   const reSubject = msg.subject.startsWith('Re:') ? msg.subject : `Re: ${msg.subject}`
   const fwdSubject = msg.subject.startsWith('Fwd:') ? msg.subject : `Fwd: ${msg.subject}`
-  const quote = quotedBody(msg)
+  const emptyBody = { bodyHtml: '', bodyText: '' }
   const threading = {
     inReplyTo: msg.messageId ?? msg.id,
     references: msg.messageId ?? msg.id,
@@ -187,7 +223,8 @@ export function buildReplyPayload(
         accountId,
         to: msg.from,
         subject: reSubject,
-        ...quote,
+        ...emptyBody,
+        ...replyQuote(msg),
         ...threading,
         mode: 'reply'
       }
@@ -198,7 +235,8 @@ export function buildReplyPayload(
         to: msg.from,
         cc: buildReplyAllCc(msg.from, msg.to, msg.cc, accountId) || undefined,
         subject: reSubject,
-        ...quote,
+        ...emptyBody,
+        ...replyQuote(msg),
         ...threading,
         mode: 'reply-all'
       }
@@ -219,8 +257,8 @@ export function buildReplyPayload(
       return {
         accountId,
         subject: fwdSubject,
-        bodyHtml: `<br><br>---------- Forwarded message ----------<br>${msg.bodyHtml ?? msg.bodyText ?? ''}`,
-        bodyText: `\n\n---------- Forwarded message ----------\n${msg.bodyText ?? ''}`,
+        ...emptyBody,
+        ...forwardQuote(msg),
         mode: 'forward',
         originalMessageId
       }

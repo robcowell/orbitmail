@@ -176,8 +176,10 @@ Credentials are stored encrypted using your OS keychain.
 ### Compose window
 
 - Separate window with To, Cc, Bcc, subject, and body fields
-- **Attach** — pick one or more files to send
-- Window closes automatically after a successful send
+- **Rich text editor** — a formatting toolbar with headings, bold/italic/underline/strikethrough, text alignment, text colour, bulleted and numbered lists, links, block quotes, inline code, and clear-formatting. Messages are sent as HTML (with a plain-text alternative).
+- **Quoted replies** — on a reply or forward, the earlier message appears as a collapsible **quoted text** block (collapsed by default) below a separator, with an attribution line, so your new text stays front and centre.
+- **Attach** — click **Attach** or **drag files onto the window**; each attachment shows a type icon and its size, and can be removed individually
+- **⌘↵ / Ctrl+↵** sends the message; the window closes automatically after a successful send
 - Supports `mailto:` links (e.g. from a browser or another app)
 
 ## Data & privacy
@@ -203,7 +205,7 @@ See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 - **Gmail / Microsoft sign-in on self-built copies** — you must configure OAuth credentials when building from source; see [DEVELOPERS.md](DEVELOPERS.md)
 - **POP3** — inbox sync only; move/archive are not supported on the server
 - **Initial sync depth** — first sync fetches up to 200 messages per folder; use **Load more** for older mail
-- **Compose** — plain-text body editor (HTML is generated as simple paragraphs)
+- **Compose** — rich text (HTML) editor; no signatures or inline images yet
 - **No local draft autosave** — Drafts folder syncs from the server only
 - **Linux only** — no Windows or macOS builds yet
 - **AI features are optional and BYO-key** — require your own Anthropic API key; when used, message text is sent to Anthropic (see [Data & privacy](#data--privacy))

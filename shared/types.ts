@@ -103,11 +103,23 @@ export interface ComposePayload {
   subject: string
   bodyHtml: string
   bodyText: string
+  // Prior conversation content shown as a collapsible "quoted text" block in the
+  // composer, kept separate from the new-message body while editing. On send the
+  // composer combines the new body with this quote.
+  quotedHtml?: string
+  quotedText?: string
   inReplyTo?: string
   references?: string
   attachmentPaths?: string[]
   mode?: 'new' | 'reply' | 'reply-all' | 'forward' | 'forward-attachment' | 'redirect' | 'send-again'
   originalMessageId?: string
+}
+
+// A pending attachment in the composer: absolute path plus display metadata.
+export interface AttachmentDraft {
+  path: string
+  name: string
+  size: number
 }
 
 export interface SyncStatus {
@@ -230,7 +242,9 @@ export interface OrbitMailAPI {
   compose: {
     open: (payload?: Partial<ComposePayload>) => Promise<void>
     send: (payload: ComposePayload) => Promise<void>
-    pickAttachments: () => Promise<string[]>
+    pickAttachments: () => Promise<AttachmentDraft[]>
+    statAttachments: (paths: string[]) => Promise<AttachmentDraft[]>
+    getPathForFile: (file: File) => string
     close: () => Promise<void>
     onOpen: (callback: (payload: Partial<ComposePayload>) => void) => () => void
   }

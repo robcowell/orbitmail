@@ -47,6 +47,7 @@ Bring your own [Anthropic API key](https://console.anthropic.com/) to unlock opt
   - **Unread (default) or All messages** — choose which mail a sweep scans from the toggle in the dialog.
   - **Tick tasks done** — completed tasks are kept in a persistent history, and the model is told not to raise them again on later sweeps.
   - **Persisted & incremental** — sweep results are saved per folder, so reopening the dialog costs nothing. A sweep only sends messages it hasn't analysed before, so re-sweeping an unchanged inbox spends no tokens; only newly arrived mail is billed.
+  - **Export to Markdown** — save the current task list (grouped by priority, with the completed history) to a `.md` file on demand.
 
 Your API key is stored encrypted on your device — see [Data & privacy](#data--privacy).
 

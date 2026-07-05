@@ -270,6 +270,7 @@ export interface OrbitMailAPI {
     analyze: (messageId: string, force?: boolean) => Promise<AiAnalysisResult>
     sweep: (folderId: string | 'unified', scope: SweepScope) => Promise<AiSweepResult>
     getTasks: (folderId: string | 'unified') => Promise<SweepResult>
+    exportTasks: (markdown: string, defaultName: string) => Promise<string | null>
     completeTask: (folderId: string | 'unified', taskId: string) => Promise<void>
     reopenTask: (folderId: string | 'unified', taskId: string) => Promise<void>
     getStatus: () => Promise<AiStatus>

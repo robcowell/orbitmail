@@ -4,7 +4,8 @@ import {
   selectMessage,
   runSweep,
   completeTask,
-  reopenTask
+  reopenTask,
+  exportTasks
 } from '../../stores/mailStore'
 
 interface TasksDialogProps {
@@ -175,6 +176,18 @@ export function TasksDialog({ onClose }: TasksDialogProps) {
         )}
 
         <div className="modal-actions">
+          {(tasks.length > 0 || completed.length > 0) && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={sweeping}
+              onClick={() => void exportTasks()}
+              title="Export tasks to a Markdown file"
+            >
+              Export Markdown
+            </button>
+          )}
+          <span className="modal-actions-spacer" />
           <button type="button" className="btn btn-secondary" onClick={onClose}>
             Close
           </button>

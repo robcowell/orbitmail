@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join, basename } from 'path'
-import { statSync } from 'fs'
+import { statSync, writeFileSync } from 'fs'
 import type {
   ComposePayload,
   SyncStatus,
@@ -639,6 +639,16 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('ai:getTasks', (_, folderId: string) => getPersistedTasks(folderId))
+
+  ipcMain.handle('ai:exportTasks', async (_, markdown: string, defaultName: string) => {
+    const result = await dialog.showSaveDialog(composeWindow ?? mainWindow ?? undefined, {
+      defaultPath: defaultName,
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    writeFileSync(result.filePath, markdown, 'utf8')
+    return result.filePath
+  })
 
   ipcMain.handle('ai:completeTask', (_, folderId: string, taskId: string) => {
     completeAiTask(folderId, taskId)

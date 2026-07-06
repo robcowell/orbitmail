@@ -1,20 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  TextB,
-  TextItalic,
-  TextUnderline,
-  TextStrikethrough,
-  ListBullets,
-  ListNumbers,
-  LinkSimple,
-  Quotes,
-  Code,
-  TextAlignLeft,
-  TextAlignCenter,
-  TextAlignRight,
-  Palette,
-  Eraser
-} from '@phosphor-icons/react'
+import { TextB } from '@phosphor-icons/react/dist/ssr/TextB'
+import { TextItalic } from '@phosphor-icons/react/dist/ssr/TextItalic'
+import { TextUnderline } from '@phosphor-icons/react/dist/ssr/TextUnderline'
+import { TextStrikethrough } from '@phosphor-icons/react/dist/ssr/TextStrikethrough'
+import { ListBullets } from '@phosphor-icons/react/dist/ssr/ListBullets'
+import { ListNumbers } from '@phosphor-icons/react/dist/ssr/ListNumbers'
+import { LinkSimple } from '@phosphor-icons/react/dist/ssr/LinkSimple'
+import { Quotes } from '@phosphor-icons/react/dist/ssr/Quotes'
+import { Code } from '@phosphor-icons/react/dist/ssr/Code'
+import { TextAlignLeft } from '@phosphor-icons/react/dist/ssr/TextAlignLeft'
+import { TextAlignCenter } from '@phosphor-icons/react/dist/ssr/TextAlignCenter'
+import { TextAlignRight } from '@phosphor-icons/react/dist/ssr/TextAlignRight'
+import { Palette } from '@phosphor-icons/react/dist/ssr/Palette'
+import { Eraser } from '@phosphor-icons/react/dist/ssr/Eraser'
 
 interface RichTextEditorProps {
   /** Initial HTML, applied once on mount (the editor is otherwise uncontrolled). */

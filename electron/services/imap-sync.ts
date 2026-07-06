@@ -40,7 +40,11 @@ import {
 } from './pop3-sync'
 import { withImapClient } from './imap-pool'
 
+// POP3 accounts have no IDLE, so they poll frequently. IMAP/Gmail/O365 inboxes
+// are push-synced by IMAP IDLE, so those accounts poll on a slower cadence as a
+// safety net (IDLE drops, non-inbox folder changes) rather than every 20s.
 const POLL_INTERVAL_MS = 20_000
+const IDLE_ACCOUNT_POLL_INTERVAL_MS = 90_000
 
 const PROVIDER_CONFIG: Record<
   'gmail' | 'o365',
@@ -96,6 +100,7 @@ export function initSyncFromPersistence(): void {
 
 let statusListeners: ((s: SyncStatusState) => void)[] = []
 let pollInterval: ReturnType<typeof setInterval> | null = null
+let idlePollInterval: ReturnType<typeof setInterval> | null = null
 
 // Per-account Sent-folder path, so appendToSentFolder doesn't LIST on every send.
 const sentPathCache = new Map<string, string>()
@@ -756,12 +761,12 @@ export async function refreshAllAccounts(): Promise<void> {
 }
 
 export async function pollForNewMessages(
-  options: { announce?: boolean } = {}
+  options: { announce?: boolean; filter?: (account: { provider: Provider }) => boolean } = {}
 ): Promise<void> {
   const announce = options.announce ?? true
   if (syncStatus.syncing) return
 
-  const accounts = listAccounts()
+  const accounts = options.filter ? listAccounts().filter(options.filter) : listAccounts()
   if (accounts.length === 0) return
 
   const estimates = await Promise.all(
@@ -821,15 +826,24 @@ export async function pollForNewMessages(
 
 export function startBackgroundSync(intervalMs = POLL_INTERVAL_MS): void {
   if (pollInterval) return
+  // Fast cadence for POP3 (no IDLE).
   pollInterval = setInterval(() => {
-    pollForNewMessages().catch(() => {})
+    pollForNewMessages({ filter: (a) => a.provider === 'pop3' }).catch(() => {})
   }, intervalMs)
+  // Slower safety-net cadence for IDLE-capable accounts.
+  idlePollInterval = setInterval(() => {
+    pollForNewMessages({ filter: (a) => a.provider !== 'pop3' }).catch(() => {})
+  }, IDLE_ACCOUNT_POLL_INTERVAL_MS)
 }
 
 export function stopBackgroundSync(): void {
   if (pollInterval) {
     clearInterval(pollInterval)
     pollInterval = null
+  }
+  if (idlePollInterval) {
+    clearInterval(idlePollInterval)
+    idlePollInterval = null
   }
 }
 

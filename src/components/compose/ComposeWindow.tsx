@@ -1,17 +1,15 @@
 import { useState, useEffect, useRef } from 'react'
 import DOMPurify from 'dompurify'
-import {
-  Paperclip,
-  X,
-  CaretRight,
-  FileText,
-  FileImage,
-  FilePdf,
-  FileZip,
-  FileDoc,
-  FileXls,
-  File as FileIcon
-} from '@phosphor-icons/react'
+import { Paperclip } from '@phosphor-icons/react/dist/ssr/Paperclip'
+import { X } from '@phosphor-icons/react/dist/ssr/X'
+import { CaretRight } from '@phosphor-icons/react/dist/ssr/CaretRight'
+import { FileText } from '@phosphor-icons/react/dist/ssr/FileText'
+import { FileImage } from '@phosphor-icons/react/dist/ssr/FileImage'
+import { FilePdf } from '@phosphor-icons/react/dist/ssr/FilePdf'
+import { FileZip } from '@phosphor-icons/react/dist/ssr/FileZip'
+import { FileDoc } from '@phosphor-icons/react/dist/ssr/FileDoc'
+import { FileXls } from '@phosphor-icons/react/dist/ssr/FileXls'
+import { File as FileIcon } from '@phosphor-icons/react/dist/ssr/File'
 import type { AttachmentDraft, ComposePayload } from '../../../shared/types'
 import { useMailStore } from '../../stores/mailStore'
 import { loadInitialData } from '../../stores/mailStore'

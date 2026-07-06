@@ -783,15 +783,10 @@ if (!gotSingleInstanceLock) {
       app.setName('Orbit Mail')
     }
 
-    configureMailtoProtocolClient(getAppState().handleMailtoLinks === true)
-
+    // Register IPC handlers and wire the sync callbacks first, so the renderer's
+    // initial data requests are served the moment the window loads and any
+    // sync-triggered event has a handler.
     registerIpc()
-    initSyncFromPersistence()
-    createMainWindow()
-    updateAppBadge(mainWindow)
-    startBackgroundSync()
-
-    handleMailtoArgv(process.argv)
 
     setOnFolderSynced(() => {
       notifyMessagesUpdated()
@@ -806,7 +801,6 @@ if (!gotSingleInstanceLock) {
       notifyMessagesUpdated()
       showNewMailNotification(1)
     })
-    startIdleMonitoring()
 
     onSyncStatusChange((status: SyncStatus) => {
       if (mainWindow) {
@@ -816,6 +810,33 @@ if (!gotSingleInstanceLock) {
         updateAppBadge(mainWindow)
       }
     })
+
+    // Show the window as early as possible; the renderer then loads the user's
+    // cached mail from the local DB. Local-only setup (mailto handler, badge)
+    // stays here since it's cheap.
+    initSyncFromPersistence()
+    createMainWindow()
+    updateAppBadge(mainWindow)
+    configureMailtoProtocolClient(getAppState().handleMailtoLinks === true)
+    handleMailtoArgv(process.argv)
+
+    // Defer background network — IMAP IDLE connections and the polling loop —
+    // until after the first render and the renderer's initial (local) data load,
+    // so opening several IMAP sockets doesn't compete with startup paint.
+    const startBackgroundWork = () => {
+      // One immediate catch-up sync so the list refreshes shortly after launch,
+      // then settle into the differentiated poll cadence (fast POP3, slow IDLE).
+      pollForNewMessages().catch(() => {})
+      startBackgroundSync()
+      startIdleMonitoring()
+    }
+    if (mainWindow) {
+      mainWindow.webContents.once('did-finish-load', () => {
+        setTimeout(startBackgroundWork, 500)
+      })
+    } else {
+      startBackgroundWork()
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

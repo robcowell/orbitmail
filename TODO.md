@@ -26,13 +26,18 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - Message-count / cost preview before an inbox sweep. (Sweeps are now **incremental**: each message's extracted tasks are cached on its row, so a Sweep only sends messages it has never analyzed — a re-sweep of an unchanged inbox spends zero tokens. Reopening the Tasks dialog reads persisted results with no call. A one-time full pass over new mail is still billed.)
 - Optional **force re-analysis** for the sweep — the per-message cache assumes a message's tasks never change (true for immutable IMAP bodies), so there is currently no way to re-run the model on already-analysed mail (e.g. after tuning the prompt). `sweepTasks` is one boolean away from supporting it.
 
-## Performance backlog (phase 4 — deferred)
+## Performance backlog (phase 4)
 
+**Shipped (quick wins):**
+- Startup reorder — register IPC + show the window first, then defer background IMAP network (IDLE + polling) until after first paint, with an immediate catch-up sync on launch.
+- Bundle slimming — deep per-icon Phosphor imports (ssr variants) and a vendor/react-vendor `manualChunks` split so app-code updates don't invalidate vendor chunks.
+- IDLE-aware poll — POP3 polls every 20s; IDLE-capable IMAP accounts poll every 90s (IDLE push-syncs their inboxes).
+- Hoisted the hot FTS index statements (run per message during sync) to module scope.
+
+**Still deferred:**
 - Move sync + `better-sqlite3` + `simpleParser` off the main process (utility process / worker thread) — the largest jank/memory win, and the riskiest change.
-- Startup reorder: create and show the window before schema migration + mailto config.
-- Bundle slimming: Phosphor deep per-icon imports, `manualChunks`, V8 code cache.
-- Lighten the 20s poll for IDLE-capable accounts (STATUS-only / reduced cadence) since IDLE already push-syncs their inboxes.
-- Hoist repeated raw prepared statements to module scope in `db-service.ts`.
+- V8 code cache for the renderer bundle (fragile to wire in Electron; the vendor split already helps cache reuse).
+- Window bounds still live in the DB, so window creation opens the DB (migration is cheap post-first-run, so not decoupled).
 
 ## Post-MVP (logged for later)
 

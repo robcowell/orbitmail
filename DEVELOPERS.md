@@ -163,9 +163,26 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 
 - **Initial sync** — up to 200 messages per folder (UID-sorted batch)
 - **Incremental sync** — UID-based delta fetch; only new UIDs since `highestSyncedUid`
-- **Background poll** — every 20 seconds when IDLE is unavailable
+- **Background poll** — every 20 seconds; accounts sync in parallel
 - **IMAP IDLE** — inbox folders on supported accounts for near-realtime delivery
+- **Connection pool** — one reused IMAP client per account (`imap-pool.ts`) with a
+  per-account operation mutex and 30s idle-close, so a batch of server ops shares a
+  single connection instead of reconnecting each time. Kept separate from the IDLE
+  monitor's persistent client.
+- **Batched writes** — each folder's fetched messages upsert in one transaction
 - **Unread counts** — recalculated from local message read state after fetch (kept in sync with the message list)
+
+### Performance notes
+
+- **Optimistic UI** — read/star/flag/move/delete update the list (and open reader)
+  immediately and roll back on IPC failure; the reader header paints from the list
+  summary while the body loads. See `patchMessageInList` in `mailStore.ts`.
+- **Virtualized list** — the message list renders through `virtua`'s `VList` with a
+  memoized row, so DOM node count stays roughly constant regardless of folder size.
+- **Reference-preserving refresh** — `mergeMessageList` reuses unchanged row objects
+  on background refresh, so memoized rows skip re-render and the list doesn't flicker.
+- **DB** — WAL + tuned pragmas; `COUNT(*)` for counts; list queries project just the
+  summary columns (no body blobs); partial index on unread rows.
 
 ### Project layout
 
@@ -187,7 +204,8 @@ orbit-mail/
 
 | Path | Role |
 |------|------|
-| `electron/services/imap-sync.ts` | IMAP sync, UID tracking, background poll |
+| `electron/services/imap-sync.ts` | IMAP sync, UID tracking, background poll (accounts in parallel) |
+| `electron/services/imap-pool.ts` | Pooled per-account IMAP client + per-account op mutex |
 | `electron/services/imap-idle.ts` | IMAP IDLE connections per account |
 | `electron/services/db-service.ts` | SQLite CRUD, unread recalculation |
 | `electron/services/ai-service.ts` | Optional AI: message analysis, incremental inbox task sweep (unread/all scope, persisted + cached tasks), encrypted Anthropic key storage |

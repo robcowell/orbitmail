@@ -313,7 +313,11 @@ textarea {
   width: var(--list-width);
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  overflow-y: auto;
+  /* The message list virtualizes and scrolls internally; the pane itself must
+     not scroll or it would defeat the virtualized viewport height. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-main);
 }
 
@@ -488,8 +492,71 @@ textarea {
   justify-content: center;
 }
 
+.message-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
 .message-list:focus {
   outline: none;
+}
+
+/* The virtualized scroller fills the remaining height below the search banner. */
+.message-list-scroller {
+  flex: 1;
+  min-height: 0;
+}
+
+.message-skeleton-list {
+  overflow: hidden;
+}
+
+.message-skeleton-row {
+  cursor: default;
+}
+
+.skeleton-dot,
+.skeleton-line {
+  background: var(--bg-list-hover);
+  border-radius: 4px;
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.skeleton-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.skeleton-line {
+  height: 10px;
+  margin: 4px 0;
+}
+
+.skeleton-line-sender {
+  width: 40%;
+}
+
+.skeleton-line-subject {
+  width: 75%;
+}
+
+.skeleton-line-snippet {
+  width: 90%;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
 }
 
 .message-row {
@@ -648,6 +715,19 @@ textarea {
   padding: 20px 24px;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.reader-body-loading {
+  color: var(--text-muted);
+  font-size: 13px;
+  opacity: 0;
+  animation: reader-body-loading-fade 0.4s ease-in 0.15s forwards;
+}
+
+@keyframes reader-body-loading-fade {
+  to {
+    opacity: 1;
+  }
 }
 
 .reader-attachments {

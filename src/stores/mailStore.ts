@@ -17,7 +17,6 @@ import {
   scheduleSaveUiPreferences
 } from './persistence'
 import { findAccountFolder, findArchiveFolder } from '../utils/folders'
-import { resolveSearchAccountId } from '../utils/search'
 import { buildTasksMarkdown, defaultTasksFilename } from '../utils/taskExport'
 
 export const MESSAGE_PAGE_SIZE = 200
@@ -30,6 +29,7 @@ interface MailState {
   messageTotal: number
   selectedMessageId: string | null
   selectedMessage: MessageDetail | null
+  readerLoading: boolean
   selectedMessageIds: string[]
   selectionAnchorId: string | null
   selectedFolderId: string | 'unified'
@@ -39,6 +39,7 @@ interface MailState {
   showAddAccount: boolean
   toast: string | null
   loading: boolean
+  listLoading: boolean
   isOnline: boolean
   collapsedAccountIds: Record<string, boolean>
   favoriteFolderIds: string[]
@@ -61,6 +62,7 @@ interface MailState {
   setMessageTotal: (total: number) => void
   setSelectedMessageId: (id: string | null) => void
   setSelectedMessage: (msg: MessageDetail | null) => void
+  setReaderLoading: (loading: boolean) => void
   setSelectedMessageIds: (ids: string[]) => void
   setSelectionAnchorId: (id: string | null) => void
   setSelectedFolderId: (id: string | 'unified') => void
@@ -70,6 +72,7 @@ interface MailState {
   setShowAddAccount: (show: boolean) => void
   setToast: (msg: string | null) => void
   setLoading: (loading: boolean) => void
+  setListLoading: (loading: boolean) => void
   setIsOnline: (online: boolean) => void
   toggleAccountCollapsed: (accountId: string) => void
   expandAccount: (accountId: string) => void
@@ -96,6 +99,7 @@ export const useMailStore = create<MailState>((set) => ({
   messageTotal: 0,
   selectedMessageId: null,
   selectedMessage: null,
+  readerLoading: false,
   selectedMessageIds: [],
   selectionAnchorId: null,
   selectedFolderId: 'unified',
@@ -105,6 +109,7 @@ export const useMailStore = create<MailState>((set) => ({
   showAddAccount: false,
   toast: null,
   loading: false,
+  listLoading: false,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   collapsedAccountIds: {},
   favoriteFolderIds: [],
@@ -128,6 +133,7 @@ export const useMailStore = create<MailState>((set) => ({
   setMessageTotal: (total) => set({ messageTotal: total }),
   setSelectedMessageId: (id) => set({ selectedMessageId: id }),
   setSelectedMessage: (msg) => set({ selectedMessage: msg }),
+  setReaderLoading: (loading) => set({ readerLoading: loading }),
   setSelectedMessageIds: (ids) => set({ selectedMessageIds: ids }),
   setSelectionAnchorId: (id) => set({ selectionAnchorId: id }),
   setSelectedFolderId: (id) => set({ selectedFolderId: id }),
@@ -137,6 +143,7 @@ export const useMailStore = create<MailState>((set) => ({
   setShowAddAccount: (show) => set({ showAddAccount: show }),
   setToast: (msg) => set({ toast: msg }),
   setLoading: (loading) => set({ loading }),
+  setListLoading: (loading) => set({ listLoading: loading }),
   setIsOnline: (online) => set({ isOnline: online }),
   setAiAnalysis: (messageId, analysis) =>
     set((state) => ({ aiAnalysisById: { ...state.aiAnalysisById, [messageId]: analysis } })),
@@ -181,13 +188,39 @@ export const useMailStore = create<MailState>((set) => ({
     })
 }))
 
-function messageListSignature(messages: MessageSummary[]): string {
-  return messages
-    .map(
-      (m) =>
-        `${m.id}:${m.isRead ? 1 : 0}:${m.isStarred ? 1 : 0}:${m.flagColor ?? ''}:${m.date}`
-    )
-    .join('|')
+// Whether two summaries are identical in every field the list renders. Used to
+// decide if a refreshed row can keep its existing object reference.
+function summaryUnchanged(a: MessageSummary, b: MessageSummary): boolean {
+  return (
+    a.id === b.id &&
+    a.isRead === b.isRead &&
+    a.isStarred === b.isStarred &&
+    a.flagColor === b.flagColor &&
+    a.date === b.date &&
+    a.subject === b.subject &&
+    a.snippet === b.snippet &&
+    a.from === b.from &&
+    a.hasAttachments === b.hasAttachments
+  )
+}
+
+// Merge a freshly-fetched page into the current list, reusing the existing row
+// object for any message that hasn't changed. This preserves React identity so
+// memoized rows skip re-render, and returns the *same* array reference when
+// nothing changed at all (so the store update is a no-op / no flicker).
+function mergeMessageList(
+  current: MessageSummary[],
+  next: MessageSummary[]
+): MessageSummary[] {
+  const currentById = new Map(current.map((m) => [m.id, m]))
+  let changed = current.length !== next.length
+  const merged = next.map((n) => {
+    const existing = currentById.get(n.id)
+    if (existing && summaryUnchanged(existing, n)) return existing
+    changed = true
+    return n
+  })
+  return changed ? merged : current
 }
 
 // Optimistically drop messages from the visible list (and search results) so the
@@ -203,12 +236,50 @@ function removeMessagesFromList(ids: string[]): void {
   if (removed > 0) store.setMessageTotal(Math.max(0, store.messageTotal - removed))
 }
 
-function shouldReplaceMessageList(
-  current: MessageSummary[],
-  next: MessageSummary[]
-): boolean {
-  if (next.length > 0 && current.length === 0) return true
-  return messageListSignature(current) !== messageListSignature(next)
+// Optimistically patch a single row in the visible list (and search results, and
+// the open reader if it matches) so a flag/read/star change shows instantly
+// without re-fetching the page. Returns the prior values of the changed fields
+// for the matched row so callers can roll back on IPC failure.
+function patchMessageInList(
+  id: string,
+  partial: Partial<MessageSummary>
+): Partial<MessageSummary> | null {
+  const store = useMailStore.getState()
+  const prev = store.messages.find((m) => m.id === id)
+  const prevSearch = store.searchResults.find((m) => m.id === id)
+  const source = prev ?? prevSearch
+  if (!source) {
+    // Row isn't in either list, but the reader may still be showing it.
+    if (store.selectedMessage?.id === id) {
+      store.setSelectedMessage({ ...store.selectedMessage, ...partial })
+    }
+    return null
+  }
+
+  const before: Partial<MessageSummary> = {}
+  for (const key of Object.keys(partial) as (keyof MessageSummary)[]) {
+    ;(before as Record<string, unknown>)[key] = source[key]
+  }
+
+  if (prev) {
+    store.setMessages(store.messages.map((m) => (m.id === id ? { ...m, ...partial } : m)))
+  }
+  if (prevSearch) {
+    store.setSearchResults(
+      store.searchResults.map((m) => (m.id === id ? { ...m, ...partial } : m))
+    )
+  }
+  if (store.selectedMessage?.id === id) {
+    store.setSelectedMessage({ ...store.selectedMessage, ...partial })
+  }
+  return before
+}
+
+// Recompute a folder's unread badge locally from the current list so the sidebar
+// count tracks an optimistic read/unread flip without a folders re-fetch.
+async function refreshFoldersUnread(): Promise<void> {
+  const folders = await window.orbitMail.folders.list()
+  useMailStore.getState().setFolders(folders)
 }
 
 function applyMessagePage(
@@ -219,9 +290,10 @@ function applyMessagePage(
   const store = useMailStore.getState()
 
   if (offset === 0) {
-    if (shouldReplaceMessageList(store.messages, messages)) {
-      store.setMessages(messages)
-    }
+    const merged = mergeMessageList(store.messages, messages)
+    // mergeMessageList returns the same reference when nothing changed, so this
+    // is a genuine no-op in the steady state (no re-render, no flicker).
+    if (merged !== store.messages) store.setMessages(merged)
   } else {
     store.appendMessages(messages)
   }
@@ -284,9 +356,11 @@ export async function loadInitialData(): Promise<void> {
     await loadPersistedPreferences()
     const persisted = useMailStore.getState()
 
-    const accounts = await window.orbitMail.accounts.list()
-    const folders = await window.orbitMail.folders.list()
-    const syncStatus = await window.orbitMail.sync.getStatus()
+    const [accounts, folders, syncStatus] = await Promise.all([
+      window.orbitMail.accounts.list(),
+      window.orbitMail.folders.list(),
+      window.orbitMail.sync.getStatus()
+    ])
 
     store.setAccounts(accounts)
     store.setFolders(folders)
@@ -490,24 +564,55 @@ function rangeIds(list: MessageSummary[], fromId: string, toId: string): string[
 
 // Make `messageId` the single, active selection: load it into the reader and
 // mark it read. This is the plain click / plain arrow behaviour.
+//
+// The reader header paints immediately from the MessageSummary already in the
+// list; only the body waits on messages.get. The unread dot flips optimistically
+// and the read is confirmed to the server in the background (rolled back on
+// failure) rather than blocking on a full list refresh.
 export async function selectMessage(messageId: string): Promise<void> {
   const store = useMailStore.getState()
   store.setSelectedMessageId(messageId)
   store.setSelectedMessageIds([messageId])
   store.setSelectionAnchorId(messageId)
   scheduleSaveUiPreferences({ selectedMessageId: messageId })
+
+  const summary =
+    store.messages.find((m) => m.id === messageId) ??
+    store.searchResults.find((m) => m.id === messageId)
+  const wasUnread = summary ? !summary.isRead : false
+
+  if (summary) {
+    // Lightweight placeholder so the header renders synchronously; the body
+    // arrives from messages.get a moment later.
+    store.setSelectedMessage({
+      ...summary,
+      isRead: true,
+      cc: '',
+      bodyHtml: null,
+      bodyText: null,
+      attachments: []
+    })
+    store.setReaderLoading(true)
+  } else {
+    store.setSelectedMessage(null)
+  }
+
+  if (wasUnread) patchMessageInList(messageId, { isRead: true })
+
   const msg = await window.orbitMail.messages.get(messageId)
-  store.setSelectedMessage(msg)
-  if (msg && !msg.isRead) {
-    await window.orbitMail.messages.markRead(messageId, true)
-    const current = useMailStore.getState()
-    if (current.searchQuery.trim()) {
-      const accountId = resolveSearchAccountId(current.selectedFolderId, current.folders)
-      if (accountId) {
-        await runSearch(current.searchQuery, accountId)
-      }
-    } else {
-      await refreshMessages()
+  const afterGet = useMailStore.getState()
+  // Only apply the body if this is still the active selection.
+  if (afterGet.selectedMessageId === messageId) {
+    afterGet.setSelectedMessage(msg ? { ...msg, isRead: msg.isRead || wasUnread } : null)
+    afterGet.setReaderLoading(false)
+  }
+
+  if (msg && wasUnread) {
+    try {
+      await window.orbitMail.messages.markRead(messageId, true)
+      await refreshFoldersUnread()
+    } catch {
+      patchMessageInList(messageId, { isRead: false })
     }
   }
 }
@@ -634,7 +739,16 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
     selectedFolderId: folderId,
     selectedMessageId: null
   })
-  await loadFolderMessages(folderId, 0)
+  // Clear the previous folder's rows and show skeletons while the (fast, local)
+  // query runs, so the switch doesn't flash the old folder's messages.
+  store.setMessages([])
+  store.setMessageTotal(0)
+  store.setListLoading(true)
+  try {
+    await loadFolderMessages(folderId, 0)
+  } finally {
+    store.setListLoading(false)
+  }
 }
 
 export async function moveMessageToTrash(messageId: string): Promise<void> {
@@ -674,7 +788,7 @@ export async function moveMessageToTrash(messageId: string): Promise<void> {
     await refreshMessages()
     return
   }
-  await refreshMessages()
+  await refreshFoldersUnread()
 }
 
 // Move every selected message to Trash (or delete when already in Trash).
@@ -695,6 +809,27 @@ export async function deleteSelectedMessages(): Promise<void> {
     ? store.folders
     : await window.orbitMail.folders.list()
 
+  // Resolve each message's destination (trash folder, or permanent delete when
+  // already in trash) from the summaries we already have — no per-id server get.
+  const summaries = new Map(
+    [...store.messages, ...store.searchResults].map((m) => [m.id, m])
+  )
+  const items: { id: string; targetFolderId: string | null }[] = []
+  const destinations: string[] = []
+  for (const id of ids) {
+    const msg = summaries.get(id)
+    if (!msg) {
+      items.push({ id, targetFolderId: null })
+      continue
+    }
+    const currentFolder = folders.find((f) => f.id === msg.folderId)
+    const trash =
+      currentFolder?.type === 'trash' ? null : findAccountFolder(folders, msg.accountId, 'trash')
+    const dest = trash ? trash.name : 'Trash'
+    if (!destinations.includes(dest)) destinations.push(dest)
+    items.push({ id, targetFolderId: trash?.id ?? null })
+  }
+
   // Optimistically clear the list + selection before the server round-trips.
   removeMessagesFromList(ids)
   store.setSelectedMessage(null)
@@ -703,35 +838,20 @@ export async function deleteSelectedMessages(): Promise<void> {
   store.setSelectionAnchorId(null)
   scheduleSaveUiPreferences({ selectedMessageId: null })
 
-  let deleted = 0
-  let failed = 0
-  const destinations: string[] = []
-  for (const id of ids) {
-    try {
-      const msg = await window.orbitMail.messages.get(id)
-      if (!msg) continue
-      const currentFolder = folders.find((f) => f.id === msg.folderId)
-      const trash = currentFolder?.type === 'trash' ? null : findAccountFolder(folders, msg.accountId, 'trash')
-      const dest = trash ? trash.name : 'Trash'
-      if (trash) {
-        await window.orbitMail.messages.move(id, trash.id)
-      } else {
-        await window.orbitMail.messages.delete(id)
-      }
-      if (!destinations.includes(dest)) destinations.push(dest)
-      deleted += 1
-    } catch {
-      failed += 1
-    }
-  }
-
   const label = destinations.length === 1 ? destinations[0] : 'Trash'
-  store.setToast(
-    failed > 0
-      ? `${deleted} moved to ${label}, ${failed} failed`
-      : `${deleted} moved to ${label}`
-  )
-  await refreshMessages()
+  try {
+    const { deleted, failed } = await window.orbitMail.messages.deleteMany(items)
+    store.setToast(
+      failed > 0
+        ? `${deleted} moved to ${label}, ${failed} failed`
+        : `${deleted} moved to ${label}`
+    )
+    if (failed > 0) await refreshMessages()
+    else await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Delete failed')
+    await refreshMessages()
+  }
 }
 
 export async function archiveMessage(messageId: string): Promise<void> {
@@ -749,29 +869,48 @@ export async function archiveMessage(messageId: string): Promise<void> {
     return
   }
 
-  await window.orbitMail.messages.move(messageId, archive.id)
-  store.setSelectedMessage(null)
-  store.setSelectedMessageId(null)
-  scheduleSaveUiPreferences({ selectedMessageId: null })
+  // Optimistically remove from the list + clear the reader, then move on the
+  // server. The row is already gone locally; roll back on failure.
+  removeMessagesFromList([messageId])
+  if (store.selectedMessageId === messageId) {
+    store.setSelectedMessage(null)
+    store.setSelectedMessageId(null)
+    store.setSelectedMessageIds([])
+    scheduleSaveUiPreferences({ selectedMessageId: null })
+  }
   store.setToast('Message archived')
-  await refreshMessages()
+
+  try {
+    await window.orbitMail.messages.move(messageId, archive.id)
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Archive failed')
+    await refreshMessages()
+  }
 }
 
 export async function markMessageUnread(messageId: string): Promise<void> {
-  await window.orbitMail.messages.markRead(messageId, false)
-  const msg = await window.orbitMail.messages.get(messageId)
-  useMailStore.getState().setSelectedMessage(msg)
-  await refreshMessages()
+  const store = useMailStore.getState()
+  const before = patchMessageInList(messageId, { isRead: false })
+  try {
+    await window.orbitMail.messages.markRead(messageId, false)
+    await refreshFoldersUnread()
+  } catch (err) {
+    if (before) patchMessageInList(messageId, before)
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
+  }
 }
 
 export async function markMessageRead(messageId: string): Promise<void> {
-  await window.orbitMail.messages.markRead(messageId, true)
-  const msg = await window.orbitMail.messages.get(messageId)
   const store = useMailStore.getState()
-  if (store.selectedMessageId === messageId) {
-    store.setSelectedMessage(msg)
+  const before = patchMessageInList(messageId, { isRead: true })
+  try {
+    await window.orbitMail.messages.markRead(messageId, true)
+    await refreshFoldersUnread()
+  } catch (err) {
+    if (before) patchMessageInList(messageId, before)
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
   }
-  await refreshMessages()
 }
 
 export async function moveMessageToJunk(messageId: string): Promise<void> {
@@ -789,16 +928,22 @@ export async function moveMessageToJunk(messageId: string): Promise<void> {
     return
   }
 
-  await window.orbitMail.messages.move(messageId, junk.id)
-
+  removeMessagesFromList([messageId])
   if (store.selectedMessageId === messageId) {
     store.setSelectedMessage(null)
     store.setSelectedMessageId(null)
+    store.setSelectedMessageIds([])
     scheduleSaveUiPreferences({ selectedMessageId: null })
   }
-
   store.setToast('Message moved to Junk')
-  await refreshMessages()
+
+  try {
+    await window.orbitMail.messages.move(messageId, junk.id)
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Move failed')
+    await refreshMessages()
+  }
 }
 
 export async function moveMessageToFolder(
@@ -809,16 +954,22 @@ export async function moveMessageToFolder(
   const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
   const target = folders.find((folder) => folder.id === targetFolderId)
 
-  await window.orbitMail.messages.move(messageId, targetFolderId)
-
+  removeMessagesFromList([messageId])
   if (store.selectedMessageId === messageId) {
     store.setSelectedMessage(null)
     store.setSelectedMessageId(null)
+    store.setSelectedMessageIds([])
     scheduleSaveUiPreferences({ selectedMessageId: null })
   }
-
   store.setToast(`Message moved to ${target?.name ?? 'folder'}`)
-  await refreshMessages()
+
+  try {
+    await window.orbitMail.messages.move(messageId, targetFolderId)
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Move failed')
+    await refreshMessages()
+  }
 }
 
 export async function copyMessageToFolder(
@@ -838,20 +989,30 @@ export async function setMessageFlagColor(
   messageId: string,
   flagColor: FlagColor | null
 ): Promise<void> {
-  await window.orbitMail.messages.setFlag(messageId, flagColor)
-  const msg = await window.orbitMail.messages.get(messageId)
   const store = useMailStore.getState()
-  if (store.selectedMessageId === messageId && msg) {
-    store.setSelectedMessage(msg)
+  // Mirror the DB rule: any flag colour implies starred; clearing it unstars.
+  const before = patchMessageInList(messageId, { flagColor, isStarred: flagColor !== null })
+  try {
+    await window.orbitMail.messages.setFlag(messageId, flagColor)
+  } catch (err) {
+    if (before) patchMessageInList(messageId, before)
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
   }
-  await refreshMessages()
 }
 
 export async function toggleMessageStar(messageId: string, isStarred: boolean): Promise<void> {
-  await window.orbitMail.messages.toggleStar(messageId, isStarred)
-  const msg = await window.orbitMail.messages.get(messageId)
-  useMailStore.getState().setSelectedMessage(msg)
-  await refreshMessages()
+  const store = useMailStore.getState()
+  // Unstarring also clears any flag colour (mirrors setMessageStarred in the DB).
+  const before = patchMessageInList(
+    messageId,
+    isStarred ? { isStarred: true } : { isStarred: false, flagColor: null }
+  )
+  try {
+    await window.orbitMail.messages.toggleStar(messageId, isStarred)
+  } catch (err) {
+    if (before) patchMessageInList(messageId, before)
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
+  }
 }
 
 export { saveUiPreferencesNow } from './persistence'

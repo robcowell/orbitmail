@@ -30,6 +30,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 ### UX
 
 - Light and dark mode
+- Snappy UI — optimistic read/star/flag/move actions, an instantly-painting reader, and a virtualized message list that stays smooth on large folders
 - Desktop notifications for new mail — showing the receiving account, sender name, and subject (truncated to fit)
 - Unread count badge on the taskbar / launcher and in the window title
 - `mailto:` link handler — opens compose when enabled in preferences (not registered as the system default automatically)

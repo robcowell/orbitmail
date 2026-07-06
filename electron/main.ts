@@ -47,7 +47,8 @@ import {
   setOnFolderSynced,
   setOnNewMailArrived,
   initSyncFromPersistence,
-  exportMessageRawToTemp
+  exportMessageRawToTemp,
+  syncSentFolder
 } from './services/imap-sync'
 import {
   startIdleMonitoring,
@@ -55,6 +56,7 @@ import {
   restartIdleMonitoring,
   setIdleNewMailHandler
 } from './services/imap-idle'
+import { closeAccountPool, closeAllPools } from './services/imap-pool'
 import { sendMail, buildReplyPayload } from './services/smtp-send'
 import { autodetectMailSettings } from './services/mail-autoconfig'
 import { addManualAccount } from './services/manual-account'
@@ -397,6 +399,7 @@ function registerIpc(): void {
 
   ipcMain.handle('accounts:remove', async (_, accountId: string) => {
     removeAccount(accountId)
+    await closeAccountPool(accountId)
     restartIdleMonitoring()
   })
 
@@ -535,6 +538,63 @@ function registerIpc(): void {
     notifyMessagesUpdated()
   })
 
+  // Batch delete/move: resolve each item's server op, run them, then do a single
+  // reconciliation poll + notify instead of one full poll per message.
+  ipcMain.handle(
+    'messages:deleteMany',
+    async (_, items: { id: string; targetFolderId: string | null }[]) => {
+      const accounts = listAccounts()
+      let deleted = 0
+      let failed = 0
+
+      for (const item of items) {
+        try {
+          const msg = getMessage(item.id)
+          if (!msg) {
+            failed++
+            continue
+          }
+          const account = accounts.find((a) => a.id === msg.accountId)
+          const sourceFolder = getFolderById(msg.folderId)
+          if (!account || !sourceFolder) {
+            failed++
+            continue
+          }
+
+          if (item.targetFolderId) {
+            const targetFolder = getFolderById(item.targetFolderId)
+            if (!targetFolder) {
+              failed++
+              continue
+            }
+            await moveMessageOnServer(
+              account.id,
+              account.provider,
+              sourceFolder.imapPath,
+              targetFolder.imapPath,
+              msg.uid
+            )
+          } else {
+            await deleteMessageOnServer(
+              account.id,
+              account.provider,
+              sourceFolder.imapPath,
+              msg.uid
+            )
+          }
+          deleteMessage(item.id)
+          deleted++
+        } catch {
+          failed++
+        }
+      }
+
+      await pollForNewMessages({ announce: false })
+      notifyMessagesUpdated()
+      return { deleted, failed }
+    }
+  )
+
   ipcMain.handle('messages:move', async (_, messageId: string, targetFolderId: string) => {
     const msg = getMessage(messageId)
     if (!msg) return
@@ -604,7 +664,14 @@ function registerIpc(): void {
     const account = accounts.find((a) => a.id === payload.accountId)
     if (!account) throw new Error('Account not found')
     await sendMail(payload, account.provider)
-    await pollForNewMessages()
+    // Only sync the Sent folder for this account so the message shows up, rather
+    // than firing a full multi-account resync for every send.
+    try {
+      await syncSentFolder(account.id, account.provider)
+      notifyMessagesUpdated()
+    } catch {
+      // Sending succeeded; a Sent-folder sync hiccup shouldn't fail the send.
+    }
     composeWindow?.close()
   })
 
@@ -775,5 +842,6 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   stopBackgroundSync()
   stopIdleMonitoring()
+  void closeAllPools()
   if (process.platform !== 'darwin') app.quit()
 })

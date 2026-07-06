@@ -15,6 +15,7 @@ import {
 import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
+import { ThreadContextMenu } from '../messages/ThreadContextMenu'
 import { flagColorHex } from '../../constants/flags'
 import { Tray, Flag, Paperclip, MagnifyingGlass } from '../icons'
 
@@ -123,6 +124,7 @@ interface ThreadRowProps {
   formattedDate: string
   isSelected: boolean
   onSelect: (accountId: string, threadId: string) => void
+  onContextMenu: (event: React.MouseEvent, thread: ThreadSummary) => void
 }
 
 const ThreadRow = memo(function ThreadRow({
@@ -130,7 +132,8 @@ const ThreadRow = memo(function ThreadRow({
   participantsLabel,
   formattedDate,
   isSelected,
-  onSelect
+  onSelect,
+  onContextMenu
 }: ThreadRowProps) {
   const className = [
     'message-row',
@@ -141,7 +144,11 @@ const ThreadRow = memo(function ThreadRow({
     .join(' ')
 
   return (
-    <div className={className} onClick={() => onSelect(thread.accountId, thread.threadId)}>
+    <div
+      className={className}
+      onClick={() => onSelect(thread.accountId, thread.threadId)}
+      onContextMenu={(event) => onContextMenu(event, thread)}
+    >
       <div className={`unread-dot${thread.hasUnread ? '' : ' read'}`} />
       <div className="message-content">
         <div className="message-top">
@@ -198,6 +205,11 @@ export function MessageList() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     message: MessageSummary
+    x: number
+    y: number
+  } | null>(null)
+  const [threadMenu, setThreadMenu] = useState<{
+    thread: ThreadSummary
     x: number
     y: number
   } | null>(null)
@@ -282,6 +294,11 @@ export function MessageList() {
   const handleContextMenu = useCallback((event: React.MouseEvent, message: MessageSummary) => {
     event.preventDefault()
     setContextMenu({ message, x: event.clientX, y: event.clientY })
+  }, [])
+
+  const handleThreadContextMenu = useCallback((event: React.MouseEvent, thread: ThreadSummary) => {
+    event.preventDefault()
+    setThreadMenu({ thread, x: event.clientX, y: event.clientY })
   }, [])
 
   const handleLoadMore = async () => {
@@ -378,6 +395,7 @@ export function MessageList() {
                 formattedDate={row.formattedDate}
                 isSelected={selectedThreadId === row.thread.threadId}
                 onSelect={handleThreadClick}
+                onContextMenu={handleThreadContextMenu}
               />
             ))}
 
@@ -400,6 +418,15 @@ export function MessageList() {
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {threadMenu && (
+        <ThreadContextMenu
+          thread={threadMenu.thread}
+          x={threadMenu.x}
+          y={threadMenu.y}
+          onClose={() => setThreadMenu(null)}
         />
       )}
     </div>

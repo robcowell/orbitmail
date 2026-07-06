@@ -44,6 +44,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 Bring your own [Anthropic API key](https://console.anthropic.com/) to unlock optional AI features — **off by default**; nothing is sent anywhere until you add a key via the ✦ button in the toolbar (**AI settings**).
 
 - **Analyze** — the **Analyze** button in the message header turns the open email into action items, open questions, and key context, with sender awareness (what *you* need to do vs. what you asked of others). Results are cached per message.
+- **Draft reply** — the **Draft reply** button generates an editable reply grounded in the whole conversation, in your choice of tone (**Brief / Neutral / Detailed**), and opens it in the composer with the quoted original kept collapsible.
 - **Tasks sweep** — the checklist button opens a task list built from the current folder, so you can triage a whole inbox at once. Each task is prioritised and links back to its source email.
   - **Unread (default) or All messages** — choose which mail a sweep scans from the toggle in the dialog.
   - **Tick tasks done** — completed tasks are kept in a persistent history, and the model is told not to raise them again on later sweeps.

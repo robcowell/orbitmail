@@ -21,7 +21,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 ## AI follow-ups
 
 - Thread / conversation-level analysis (currently single-message and folder-level sweep only).
-- Reply-draft suggestions from a message.
+- ~~Reply-draft suggestions from a message.~~ **Shipped** — tone-steered (Brief/Neutral/Detailed) AI reply drafts grounded in the conversation, opened in the composer.
 - Model / effort / provider selection in AI settings (currently hardcoded to Claude Opus 4.8, Anthropic-only).
 - Message-count / cost preview before an inbox sweep. (Sweeps are now **incremental**: each message's extracted tasks are cached on its row, so a Sweep only sends messages it has never analyzed — a re-sweep of an unchanged inbox spends zero tokens. Reopening the Tasks dialog reads persisted results with no call. A one-time full pass over new mail is still billed.)
 - Optional **force re-analysis** for the sweep — the per-message cache assumes a message's tasks never change (true for immutable IMAP bodies), so there is currently no way to re-run the model on already-analysed mail (e.g. after tuning the prompt). `sweepTasks` is one boolean away from supporting it.

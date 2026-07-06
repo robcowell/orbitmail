@@ -10,7 +10,8 @@ import type {
   AiAnalysis,
   SweepTask,
   CompletedTask,
-  SweepScope
+  SweepScope,
+  DraftTone
 } from '../../shared/types'
 import {
   loadPersistedPreferences,
@@ -18,6 +19,7 @@ import {
 } from './persistence'
 import { findAccountFolder, findArchiveFolder } from '../utils/folders'
 import { buildTasksMarkdown, defaultTasksFilename } from '../utils/taskExport'
+import { draftToHtml } from '../utils/replyDraft'
 
 export const MESSAGE_PAGE_SIZE = 200
 
@@ -45,6 +47,7 @@ interface MailState {
   favoriteFolderIds: string[]
   aiAnalysisById: Record<string, AiAnalysis>
   aiAnalyzingId: string | null
+  draftingReplyId: string | null
   showAiSettings: boolean
   showTasks: boolean
   sweeping: boolean
@@ -79,6 +82,7 @@ interface MailState {
   toggleFavoriteFolder: (folderId: string) => void
   setAiAnalysis: (messageId: string, analysis: AiAnalysis) => void
   setAiAnalyzingId: (id: string | null) => void
+  setDraftingReplyId: (id: string | null) => void
   setShowAiSettings: (show: boolean) => void
   setShowTasks: (show: boolean) => void
   setSweeping: (sweeping: boolean) => void
@@ -115,6 +119,7 @@ export const useMailStore = create<MailState>((set) => ({
   favoriteFolderIds: [],
   aiAnalysisById: {},
   aiAnalyzingId: null,
+  draftingReplyId: null,
   showAiSettings: false,
   showTasks: false,
   sweeping: false,
@@ -148,6 +153,7 @@ export const useMailStore = create<MailState>((set) => ({
   setAiAnalysis: (messageId, analysis) =>
     set((state) => ({ aiAnalysisById: { ...state.aiAnalysisById, [messageId]: analysis } })),
   setAiAnalyzingId: (id) => set({ aiAnalyzingId: id }),
+  setDraftingReplyId: (id) => set({ draftingReplyId: id }),
   setShowAiSettings: (show) => set({ showAiSettings: show }),
   setShowTasks: (show) => set({ showTasks: show }),
   setSweeping: (sweeping) => set({ sweeping }),
@@ -1054,6 +1060,43 @@ export async function analyzeMessage(messageId: string, force = false): Promise<
     store.setToast(err instanceof Error ? err.message : 'Analysis failed')
   } finally {
     store.setAiAnalyzingId(null)
+  }
+}
+
+// Generate an AI reply draft in the chosen tone and open it in the composer.
+// The draft becomes the new-message body; enrichComposePayload/buildReplyPayload
+// fill To/Subject/quoted-thread/threading, and the quote stays collapsible.
+export async function draftReply(
+  messageId: string,
+  tone: DraftTone,
+  mode: 'reply' | 'reply-all' = 'reply'
+): Promise<void> {
+  const store = useMailStore.getState()
+  if (store.draftingReplyId) return
+  const accountId =
+    store.selectedMessage?.id === messageId
+      ? store.selectedMessage.accountId
+      : store.messages.find((m) => m.id === messageId)?.accountId
+  store.setDraftingReplyId(messageId)
+  try {
+    const result = await window.orbitMail.ai.draftReply(messageId, tone, mode)
+    if ('error' in result) {
+      store.setToast(result.error)
+      const status = await window.orbitMail.ai.getStatus()
+      if (!status.configured) store.setShowAiSettings(true)
+      return
+    }
+    await window.orbitMail.compose.open({
+      accountId,
+      mode,
+      originalMessageId: messageId,
+      bodyHtml: draftToHtml(result.bodyText),
+      bodyText: result.bodyText
+    })
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not draft a reply')
+  } finally {
+    store.setDraftingReplyId(null)
   }
 }
 

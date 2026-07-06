@@ -1,10 +1,75 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
-import { useMailStore, toggleMessageStar, analyzeMessage } from '../../stores/mailStore'
+import type { DraftTone } from '../../../shared/types'
+import { useMailStore, toggleMessageStar, analyzeMessage, draftReply } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
-import { Paperclip, EnvelopeSimpleOpen, Flag, Sparkle } from '../icons'
+import { Paperclip, EnvelopeSimpleOpen, Flag, Sparkle, CaretRight } from '../icons'
 import { flagColorHex } from '../../constants/flags'
+
+const DRAFT_TONES: { value: DraftTone; label: string; hint: string }[] = [
+  { value: 'brief', label: 'Brief', hint: '2–4 sentences' },
+  { value: 'neutral', label: 'Neutral', hint: 'Standard length' },
+  { value: 'detailed', label: 'Detailed', hint: 'Thorough' }
+]
+
+// "Draft reply ▾" split-button: pick a tone, generate a draft, open the composer.
+function DraftReplyButton({ messageId }: { messageId: string }) {
+  const draftingReplyId = useMailStore((s) => s.draftingReplyId)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const isDrafting = draftingReplyId === messageId
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const pick = (tone: DraftTone) => {
+    setOpen(false)
+    void draftReply(messageId, tone)
+  }
+
+  return (
+    <div className="draft-reply" ref={ref}>
+      <button
+        type="button"
+        className="reader-ai-btn"
+        disabled={isDrafting}
+        title="Draft an AI reply"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Sparkle size={16} weight="duotone" />
+        {isDrafting ? 'Drafting…' : 'Draft reply'}
+        <CaretRight
+          size={12}
+          weight="bold"
+          style={{ transform: 'rotate(90deg)', opacity: 0.7 }}
+        />
+      </button>
+      {open && !isDrafting && (
+        <div className="draft-reply-menu" role="menu">
+          {DRAFT_TONES.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              className="draft-reply-option"
+              role="menuitem"
+              onClick={() => pick(t.value)}
+            >
+              <span className="draft-reply-option-label">{t.label}</span>
+              <span className="draft-reply-option-hint">{t.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
@@ -93,6 +158,7 @@ export function MessageView() {
         <div className="reader-header-top">
           <div className="reader-subject">{selectedMessage.subject}</div>
           <div className="reader-header-actions">
+            <DraftReplyButton messageId={selectedMessage.id} />
             <button
               type="button"
               className="reader-ai-btn"

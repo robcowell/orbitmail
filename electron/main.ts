@@ -8,6 +8,7 @@ import type {
   ManualAccountInput,
   FlagColor,
   SweepScope,
+  DraftTone,
   AttachmentDraft
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
@@ -80,6 +81,7 @@ import {
 } from './services/preferences-service'
 import {
   analyzeMessage,
+  draftReply,
   sweepTasks,
   getPersistedTasks,
   completeTask as completeAiTask,
@@ -726,6 +728,12 @@ function registerIpc(): void {
 
   ipcMain.handle('ai:analyze', (_, messageId: string, force?: boolean) =>
     analyzeMessage(messageId, { force })
+  )
+
+  ipcMain.handle(
+    'ai:draftReply',
+    (_, messageId: string, tone: DraftTone, mode?: 'reply' | 'reply-all') =>
+      draftReply(messageId, { tone, mode })
   )
 
   ipcMain.handle('ai:sweep', (_, folderId: string, scope: SweepScope) =>

@@ -39,6 +39,7 @@ interface MailState {
   showAddAccount: boolean
   toast: string | null
   loading: boolean
+  listLoading: boolean
   isOnline: boolean
   collapsedAccountIds: Record<string, boolean>
   favoriteFolderIds: string[]
@@ -71,6 +72,7 @@ interface MailState {
   setShowAddAccount: (show: boolean) => void
   setToast: (msg: string | null) => void
   setLoading: (loading: boolean) => void
+  setListLoading: (loading: boolean) => void
   setIsOnline: (online: boolean) => void
   toggleAccountCollapsed: (accountId: string) => void
   expandAccount: (accountId: string) => void
@@ -107,6 +109,7 @@ export const useMailStore = create<MailState>((set) => ({
   showAddAccount: false,
   toast: null,
   loading: false,
+  listLoading: false,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   collapsedAccountIds: {},
   favoriteFolderIds: [],
@@ -140,6 +143,7 @@ export const useMailStore = create<MailState>((set) => ({
   setShowAddAccount: (show) => set({ showAddAccount: show }),
   setToast: (msg) => set({ toast: msg }),
   setLoading: (loading) => set({ loading }),
+  setListLoading: (loading) => set({ listLoading: loading }),
   setIsOnline: (online) => set({ isOnline: online }),
   setAiAnalysis: (messageId, analysis) =>
     set((state) => ({ aiAnalysisById: { ...state.aiAnalysisById, [messageId]: analysis } })),
@@ -184,13 +188,39 @@ export const useMailStore = create<MailState>((set) => ({
     })
 }))
 
-function messageListSignature(messages: MessageSummary[]): string {
-  return messages
-    .map(
-      (m) =>
-        `${m.id}:${m.isRead ? 1 : 0}:${m.isStarred ? 1 : 0}:${m.flagColor ?? ''}:${m.date}`
-    )
-    .join('|')
+// Whether two summaries are identical in every field the list renders. Used to
+// decide if a refreshed row can keep its existing object reference.
+function summaryUnchanged(a: MessageSummary, b: MessageSummary): boolean {
+  return (
+    a.id === b.id &&
+    a.isRead === b.isRead &&
+    a.isStarred === b.isStarred &&
+    a.flagColor === b.flagColor &&
+    a.date === b.date &&
+    a.subject === b.subject &&
+    a.snippet === b.snippet &&
+    a.from === b.from &&
+    a.hasAttachments === b.hasAttachments
+  )
+}
+
+// Merge a freshly-fetched page into the current list, reusing the existing row
+// object for any message that hasn't changed. This preserves React identity so
+// memoized rows skip re-render, and returns the *same* array reference when
+// nothing changed at all (so the store update is a no-op / no flicker).
+function mergeMessageList(
+  current: MessageSummary[],
+  next: MessageSummary[]
+): MessageSummary[] {
+  const currentById = new Map(current.map((m) => [m.id, m]))
+  let changed = current.length !== next.length
+  const merged = next.map((n) => {
+    const existing = currentById.get(n.id)
+    if (existing && summaryUnchanged(existing, n)) return existing
+    changed = true
+    return n
+  })
+  return changed ? merged : current
 }
 
 // Optimistically drop messages from the visible list (and search results) so the
@@ -252,14 +282,6 @@ async function refreshFoldersUnread(): Promise<void> {
   useMailStore.getState().setFolders(folders)
 }
 
-function shouldReplaceMessageList(
-  current: MessageSummary[],
-  next: MessageSummary[]
-): boolean {
-  if (next.length > 0 && current.length === 0) return true
-  return messageListSignature(current) !== messageListSignature(next)
-}
-
 function applyMessagePage(
   messages: MessageSummary[],
   total: number,
@@ -268,9 +290,10 @@ function applyMessagePage(
   const store = useMailStore.getState()
 
   if (offset === 0) {
-    if (shouldReplaceMessageList(store.messages, messages)) {
-      store.setMessages(messages)
-    }
+    const merged = mergeMessageList(store.messages, messages)
+    // mergeMessageList returns the same reference when nothing changed, so this
+    // is a genuine no-op in the steady state (no re-render, no flicker).
+    if (merged !== store.messages) store.setMessages(merged)
   } else {
     store.appendMessages(messages)
   }
@@ -716,7 +739,16 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
     selectedFolderId: folderId,
     selectedMessageId: null
   })
-  await loadFolderMessages(folderId, 0)
+  // Clear the previous folder's rows and show skeletons while the (fast, local)
+  // query runs, so the switch doesn't flash the old folder's messages.
+  store.setMessages([])
+  store.setMessageTotal(0)
+  store.setListLoading(true)
+  try {
+    await loadFolderMessages(folderId, 0)
+  } finally {
+    store.setListLoading(false)
+  }
 }
 
 export async function moveMessageToTrash(messageId: string): Promise<void> {

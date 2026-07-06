@@ -24,8 +24,13 @@ import {
   type UpsertMessageData,
   getAccountSyncDays,
   pruneMessagesOutsideSyncWindow,
+  listFolders,
+  getFolderHighestModseq,
+  setFolderHighestModseq,
+  applyFlagUpdates,
   type TokenData
 } from './db-service'
+import type { Folder } from '../../shared/types'
 import { getLastSyncAt, setLastSyncAt } from './preferences-service'
 import { recordAttachmentsMetadata } from './attachment-fetch'
 import { isWithinSyncWindow, syncSinceDate } from './sync-policy'
@@ -46,6 +51,8 @@ import { computeThreadId, normalizeReferences } from './thread-util'
 // safety net (IDLE drops, non-inbox folder changes) rather than every 20s.
 const POLL_INTERVAL_MS = 20_000
 const IDLE_ACCOUNT_POLL_INTERVAL_MS = 90_000
+// Flag reconciliation is background and non-urgent; run it on a gentle cadence.
+const FLAG_RECONCILE_INTERVAL_MS = 300_000
 
 const PROVIDER_CONFIG: Record<
   'gmail' | 'o365',
@@ -102,6 +109,7 @@ export function initSyncFromPersistence(): void {
 let statusListeners: ((s: SyncStatusState) => void)[] = []
 let pollInterval: ReturnType<typeof setInterval> | null = null
 let idlePollInterval: ReturnType<typeof setInterval> | null = null
+let flagReconcileInterval: ReturnType<typeof setInterval> | null = null
 
 // Per-account Sent-folder path, so appendToSentFolder doesn't LIST on every send.
 const sentPathCache = new Map<string, string>()
@@ -702,6 +710,9 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
     if (fetched > 0) {
       onFolderSynced?.()
     }
+
+    // A manual refresh should also pull server flag changes (read/star).
+    void reconcileAccountFlags(accountId, provider).catch(() => {})
   } catch (err) {
     const message = accountSyncError(
       getAccountTokens(accountId)?.email ?? accountId,
@@ -766,6 +777,9 @@ export async function refreshAllAccounts(): Promise<void> {
   if (fetchedTotal > 0) {
     onFolderSynced?.()
   }
+
+  // Also reconcile server flag changes on a manual refresh-all.
+  void reconcileAllAccountsFlags({ filter: (a) => a.provider !== 'pop3' })
 
   if (errors.length === accounts.length && accounts.length > 0) {
     throw new Error(errors.join('\n\n'))
@@ -836,6 +850,136 @@ export async function pollForNewMessages(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Flag reconciliation. Incremental sync only fetches new UIDs, so \Seen /
+// \Flagged changes made on the server to already-synced messages never reach the
+// local DB. This pass reconciles them: cheaply via CONDSTORE (CHANGEDSINCE) when
+// the folder's MODSEQ advanced, else a flags-only full scan (also the first-run
+// path that corrects existing staleness, and the non-CONDSTORE fallback). It
+// downloads flags only — never message bodies.
+// ---------------------------------------------------------------------------
+
+async function reconcileFolderFlags(
+  client: ImapFlow,
+  folder: Folder,
+  condstore: boolean
+): Promise<number> {
+  const status = await client.status(folder.imapPath, {
+    highestModseq: true,
+    uidValidity: true
+  })
+
+  // If UIDVALIDITY changed, the folder is about to be re-synced from scratch —
+  // let syncFolder own that; don't reconcile against a stale local set.
+  const storedValidity = normalizeImapUint(getFolderUidValidity(folder.id))
+  const serverValidity = normalizeImapUint(status.uidValidity)
+  if (storedValidity != null && serverValidity != null && storedValidity !== serverValidity) {
+    return 0
+  }
+
+  const serverModseq = status.highestModseq ?? null // bigint | null
+  const stored = getFolderHighestModseq(folder.id)
+  const useCondstore = condstore && serverModseq != null
+
+  // CONDSTORE with a baseline and no advance → nothing changed, no lock needed.
+  if (useCondstore && stored != null && serverModseq! <= BigInt(stored)) {
+    return 0
+  }
+
+  const localUids = getFolderUidSet(folder.id)
+  if (localUids.size === 0) {
+    // Nothing synced locally to reconcile; just capture the MODSEQ baseline.
+    if (serverModseq != null) setFolderHighestModseq(folder.id, String(serverModseq))
+    return 0
+  }
+
+  const lock = await client.getMailboxLock(folder.imapPath)
+  try {
+    const updates: { uid: number; isRead: boolean; isStarred: boolean }[] = []
+
+    if (useCondstore && stored != null) {
+      // Incremental: server returns only messages whose flags changed.
+      for await (const msg of client.fetch(
+        '1:*',
+        { uid: true, flags: true },
+        { uid: true, changedSince: BigInt(stored) }
+      )) {
+        const uid = normalizeImapUint(msg.uid)
+        if (uid == null || !localUids.has(uid)) continue
+        updates.push({
+          uid,
+          isRead: msg.flags?.has('\\Seen') ?? false,
+          isStarred: msg.flags?.has('\\Flagged') ?? false
+        })
+      }
+    } else {
+      // Full scan (first run, or no CONDSTORE): flags for all synced UIDs.
+      let maxUid = 0
+      for (const uid of localUids) if (uid > maxUid) maxUid = uid
+      for await (const msg of client.fetch(
+        `1:${maxUid}`,
+        { uid: true, flags: true },
+        { uid: true }
+      )) {
+        const uid = normalizeImapUint(msg.uid)
+        if (uid == null || !localUids.has(uid)) continue
+        updates.push({
+          uid,
+          isRead: msg.flags?.has('\\Seen') ?? false,
+          isStarred: msg.flags?.has('\\Flagged') ?? false
+        })
+      }
+    }
+
+    const changed = applyFlagUpdates(folder.id, updates)
+
+    // Persist the MODSEQ baseline for next time (prefer the mailbox's live value).
+    const liveModseq = client.mailbox ? client.mailbox.highestModseq : undefined
+    const newModseq = liveModseq ?? serverModseq ?? undefined
+    if (newModseq != null) setFolderHighestModseq(folder.id, String(newModseq))
+
+    return changed
+  } finally {
+    lock.release()
+  }
+}
+
+async function reconcileAccountFlags(accountId: string, provider: Provider): Promise<void> {
+  if (provider === 'pop3') return // POP3 has no server-side flags / CONDSTORE
+
+  const changed = await withImapClient(accountId, provider, async (client) => {
+    const condstore = client.capabilities.has('CONDSTORE')
+    let total = 0
+    for (const folder of listFolders(accountId)) {
+      try {
+        total += await reconcileFolderFlags(client, folder, condstore)
+      } catch {
+        // One folder failing shouldn't abort the rest.
+      }
+    }
+    return total
+  })
+
+  if (changed > 0) {
+    console.log(`[orbit-mail] flag reconcile: ${changed} message(s) updated for ${accountId}`)
+    onFolderSynced?.()
+  }
+}
+
+// Reconcile server flags for all (optionally filtered) accounts. Silent — does
+// not touch the sync progress status; only updates the DB and notifies the
+// renderer when something actually changed.
+export async function reconcileAllAccountsFlags(
+  options: { filter?: (account: { provider: Provider }) => boolean } = {}
+): Promise<void> {
+  const accounts = options.filter ? listAccounts().filter(options.filter) : listAccounts()
+  await Promise.all(
+    accounts.map((account) =>
+      reconcileAccountFlags(account.id, account.provider).catch(() => {})
+    )
+  )
+}
+
 export function startBackgroundSync(intervalMs = POLL_INTERVAL_MS): void {
   if (pollInterval) return
   // Fast cadence for POP3 (no IDLE).
@@ -846,6 +990,10 @@ export function startBackgroundSync(intervalMs = POLL_INTERVAL_MS): void {
   idlePollInterval = setInterval(() => {
     pollForNewMessages({ filter: (a) => a.provider !== 'pop3' }).catch(() => {})
   }, IDLE_ACCOUNT_POLL_INTERVAL_MS)
+  // Reconcile server flag changes (read/star) for already-synced IMAP mail.
+  flagReconcileInterval = setInterval(() => {
+    reconcileAllAccountsFlags({ filter: (a) => a.provider !== 'pop3' }).catch(() => {})
+  }, FLAG_RECONCILE_INTERVAL_MS)
 }
 
 export function stopBackgroundSync(): void {
@@ -856,6 +1004,10 @@ export function stopBackgroundSync(): void {
   if (idlePollInterval) {
     clearInterval(idlePollInterval)
     idlePollInterval = null
+  }
+  if (flagReconcileInterval) {
+    clearInterval(flagReconcileInterval)
+    flagReconcileInterval = null
   }
 }
 

@@ -1009,6 +1009,69 @@ export function getFolderUidValidity(folderId: string): number | null {
   return folder?.uidValidity ?? null
 }
 
+// CONDSTORE MODSEQ is a 64-bit value kept as a string to avoid precision loss.
+export function getFolderHighestModseq(folderId: string): string | null {
+  const db = getDb()
+  const folder = db
+    .select({ highestModseq: folders.highestModseq })
+    .from(folders)
+    .where(eq(folders.id, folderId))
+    .get()
+  return folder?.highestModseq ?? null
+}
+
+export function setFolderHighestModseq(folderId: string, modseq: string): void {
+  const db = getDb()
+  db.update(folders).set({ highestModseq: modseq }).where(eq(folders.id, folderId)).run()
+}
+
+// Reconcile server flags into local rows: for the given folder, set is_read /
+// is_starred for the listed UIDs, but only where they actually changed (so we
+// don't churn writes or clobber the app-local flag_color). Clearing a star also
+// clears flag_color, mirroring setMessageStarred. Returns the number changed.
+export function applyFlagUpdates(
+  folderId: string,
+  updates: { uid: number; isRead: boolean; isStarred: boolean }[]
+): number {
+  if (updates.length === 0) return 0
+  const db = getDb()
+
+  // Current flag state for the whole folder, keyed by uid (one query — avoids
+  // inArray variable limits on large folders).
+  const current = db
+    .select({
+      uid: messages.uid,
+      isRead: messages.isRead,
+      isStarred: messages.isStarred
+    })
+    .from(messages)
+    .where(eq(messages.folderId, folderId))
+    .all()
+  const byUid = new Map(current.map((c) => [c.uid, c]))
+
+  let changed = 0
+  db.transaction(() => {
+    for (const u of updates) {
+      const cur = byUid.get(u.uid)
+      if (!cur) continue // UID not synced locally
+      if (cur.isRead === u.isRead && cur.isStarred === u.isStarred) continue
+      const patch: Partial<typeof messages.$inferInsert> = {
+        isRead: u.isRead,
+        isStarred: u.isStarred
+      }
+      if (!u.isStarred && cur.isStarred) patch.flagColor = null
+      db.update(messages)
+        .set(patch)
+        .where(and(eq(messages.folderId, folderId), eq(messages.uid, u.uid)))
+        .run()
+      changed++
+    }
+  })
+
+  if (changed > 0) recalculateFolderUnread(folderId)
+  return changed
+}
+
 export function updateFolderSyncState(
   folderId: string,
   patch: {

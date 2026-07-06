@@ -136,6 +136,9 @@ function migrateSchema(db: Database.Database): void {
   if (!folderNames.has('initial_sync_complete')) {
     db.exec('ALTER TABLE folders ADD COLUMN initial_sync_complete INTEGER NOT NULL DEFAULT 0')
   }
+  if (!folderNames.has('highest_modseq')) {
+    db.exec('ALTER TABLE folders ADD COLUMN highest_modseq TEXT')
+  }
   if (!folderNames.has('is_virtual_view')) {
     db.exec('ALTER TABLE folders ADD COLUMN is_virtual_view INTEGER NOT NULL DEFAULT 0')
     db.exec(`

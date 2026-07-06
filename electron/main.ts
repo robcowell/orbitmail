@@ -48,6 +48,7 @@ import {
   copyMessageOnServer,
   refreshAccount,
   pollForNewMessages,
+  reconcileAllAccountsFlags,
   setOnFolderSynced,
   setOnNewMailArrived,
   initSyncFromPersistence,
@@ -852,6 +853,9 @@ if (!gotSingleInstanceLock) {
       // One immediate catch-up sync so the list refreshes shortly after launch,
       // then settle into the differentiated poll cadence (fast POP3, slow IDLE).
       pollForNewMessages().catch(() => {})
+      // Reconcile server flag changes (read/star) once on launch so state that
+      // drifted while the app was closed is corrected promptly.
+      reconcileAllAccountsFlags({ filter: (a) => a.provider !== 'pop3' }).catch(() => {})
       startBackgroundSync()
       startIdleMonitoring()
     }

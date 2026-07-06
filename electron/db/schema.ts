@@ -29,7 +29,10 @@ export const folders = sqliteTable(
     lastSyncAt: integer('last_sync_at'),
     initialSyncComplete: integer('initial_sync_complete', { mode: 'boolean' })
       .notNull()
-      .default(false)
+      .default(false),
+    // CONDSTORE highest MODSEQ seen for this folder, as a string (64-bit; can
+    // exceed Number.MAX_SAFE_INTEGER). Drives incremental flag reconciliation.
+    highestModseq: text('highest_modseq')
   },
   (t) => [index('folders_account_idx').on(t.accountId)]
 )

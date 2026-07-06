@@ -518,6 +518,7 @@ interface ThreadMsgRow {
   aid: string
   tkey: string
   mkey: string
+  folder_id: string
   from_addr: string
   subject: string
   snippet: string
@@ -538,6 +539,7 @@ export function listThreads(
 ): ThreadSummary[] {
   const scopeIds = threadScopeIds(folderId)
   if (scopeIds.length === 0) return []
+  const scope = new Set(scopeIds)
   const sqlite = getRawSqlite()
   const ph = scopeIds.map(() => '?').join(', ')
 
@@ -568,7 +570,7 @@ export function listThreads(
   const rows = sqlite
     .prepare(
       `SELECT id, account_id AS aid, COALESCE(thread_id, id) AS tkey, COALESCE(message_id, id) AS mkey,
-              from_addr, subject, snippet, date, is_read, is_starred, flag_color, has_attachments
+              folder_id, from_addr, subject, snippet, date, is_read, is_starred, flag_color, has_attachments
        FROM messages
        WHERE (account_id, COALESCE(thread_id, id)) IN (VALUES ${pairs})
        ORDER BY date ASC`
@@ -618,7 +620,10 @@ export function listThreads(
       flagColor: (flagged?.flag_color ?? null) as FlagColor | null,
       hasAttachments: all.some((m) => m.has_attachments !== 0),
       messageCount: unique.length,
-      hasUnread: all.some((m) => m.is_read === 0),
+      // Unread reflects only copies in the folder(s) being viewed — non-Inbox
+      // Gmail label copies can carry stale is_read and shouldn't mark the
+      // conversation unread in the Inbox.
+      hasUnread: all.some((m) => scope.has(m.folder_id) && m.is_read === 0),
       participants: participants.length ? participants : [extractName(latest?.from_addr ?? '')]
     }
   })
@@ -1184,14 +1189,39 @@ export function recalculateFolderUnread(folderId: string): number {
 export function setMessageRead(messageId: string, isRead: boolean): void {
   const db = getDb()
   const existing = db
-    .select({ folderId: messages.folderId })
+    .select({
+      folderId: messages.folderId,
+      accountId: messages.accountId,
+      msgId: messages.messageId
+    })
     .from(messages)
     .where(eq(messages.id, messageId))
     .get()
   if (!existing) return
 
-  db.update(messages).set({ isRead }).where(eq(messages.id, messageId)).run()
-  recalculateFolderUnread(existing.folderId)
+  // Gmail stores one copy per label (folder). Flip read state on every copy of
+  // this email so the Inbox dot clears no matter which copy was opened, and so
+  // folder unread counts stay consistent.
+  if (existing.msgId) {
+    const copies = db
+      .select({ id: messages.id, folderId: messages.folderId })
+      .from(messages)
+      .where(
+        and(eq(messages.accountId, existing.accountId), eq(messages.messageId, existing.msgId))
+      )
+      .all()
+    db.update(messages)
+      .set({ isRead })
+      .where(
+        and(eq(messages.accountId, existing.accountId), eq(messages.messageId, existing.msgId))
+      )
+      .run()
+    const folderIds = Array.from(new Set(copies.map((c) => c.folderId)))
+    for (const folderId of folderIds) recalculateFolderUnread(folderId)
+  } else {
+    db.update(messages).set({ isRead }).where(eq(messages.id, messageId)).run()
+    recalculateFolderUnread(existing.folderId)
+  }
 }
 
 export function setMessageStarred(messageId: string, isStarred: boolean): void {

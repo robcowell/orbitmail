@@ -588,6 +588,7 @@ export async function selectMessage(messageId: string): Promise<void> {
       ...summary,
       isRead: true,
       cc: '',
+      references: null,
       bodyHtml: null,
       bodyText: null,
       attachments: []

@@ -10,7 +10,7 @@ import {
   getManualCredentials,
   updateAccountTokens,
   upsertFolder,
-  upsertMessage,
+  upsertMessagesBatch,
   updateFolderUnread,
   listAccounts,
   getMessage,
@@ -19,8 +19,9 @@ import {
   getFolderUidValidity,
   updateFolderSyncState,
   clearFolderMessages,
-  hasMessageUid,
+  getFolderUidSet,
   recalculateFolderUnread,
+  type UpsertMessageData,
   getAccountSyncDays,
   pruneMessagesOutsideSyncWindow,
   type TokenData
@@ -407,7 +408,8 @@ async function resolveUidsToFetch(
       .filter((uid): uid is number => uid != null)
   }
 
-  return candidates.filter((uid) => !hasMessageUid(folderId, uid))
+  const existing = getFolderUidSet(folderId)
+  return candidates.filter((uid) => !existing.has(uid))
 }
 
 export function findInboxMailbox<
@@ -460,8 +462,12 @@ async function fetchMessagesByUid(
   if (uids.length === 0) return { newCount: 0, maxUid: null }
 
   const syncDays = getAccountSyncDays(accountId)
-  let newCount = 0
   let maxUid: number | null = null
+
+  // Parse (async, per-message) into a buffer first, then commit the whole batch
+  // in one transaction so a folder's fetch is a single WAL commit rather than one
+  // per message.
+  const pending: { data: UpsertMessageData; attachments: Attachment[] }[] = []
 
   for await (const msg of client.fetch(
     uids.join(','),
@@ -495,33 +501,38 @@ async function fetchMessagesByUid(
     const isStarred = msg.flags?.has('\\Flagged') ?? false
     const hasAttachments = (parsed.attachments?.length ?? 0) > 0
 
-    const { id, isNew } = upsertMessage({
-      folderId,
-      accountId,
-      uid,
-      messageId: parsed.messageId,
-      from,
-      to,
-      cc,
-      subject,
-      snippet,
-      date,
-      isRead,
-      isStarred,
-      hasAttachments,
-      bodyHtml,
-      bodyText
+    pending.push({
+      data: {
+        folderId,
+        accountId,
+        uid,
+        messageId: parsed.messageId,
+        from,
+        to,
+        cc,
+        subject,
+        snippet,
+        date,
+        isRead,
+        isStarred,
+        hasAttachments,
+        bodyHtml,
+        bodyText
+      },
+      attachments: parsed.attachments ?? []
     })
+  }
 
-    if (!isNew) continue
+  const results = upsertMessagesBatch(pending.map((p) => p.data))
 
-    if (parsed.attachments?.length) {
-      recordAttachmentsMetadata(id, parsed.attachments)
-    }
-
+  let newCount = 0
+  results.forEach((res, i) => {
+    if (!res.isNew) return
+    const atts = pending[i].attachments
+    if (atts.length) recordAttachmentsMetadata(res.id, atts)
     newCount++
     onProgress?.()
-  }
+  })
 
   return { newCount, maxUid }
 }

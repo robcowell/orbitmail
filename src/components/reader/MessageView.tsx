@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { useMailStore, toggleMessageStar, analyzeMessage } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
@@ -10,6 +10,7 @@ export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
   const selectionCount = useMailStore((s) => s.selectedMessageIds.length)
+  const readerLoading = useMailStore((s) => s.readerLoading)
   const setToast = useMailStore((s) => s.setToast)
   const aiAnalysis = useMailStore((s) =>
     selectedMessageId ? s.aiAnalysisById[selectedMessageId] : undefined
@@ -17,6 +18,16 @@ export function MessageView() {
   const aiAnalyzingId = useMailStore((s) => s.aiAnalyzingId)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [fetchingAttachmentId, setFetchingAttachmentId] = useState<string | null>(null)
+
+  // Sanitizing a large email is expensive; only redo it when the message body
+  // actually changes, not on every unrelated store update (star, AI, selection).
+  const sanitizedHtml = useMemo(() => {
+    if (!selectedMessage?.bodyHtml) return null
+    return DOMPurify.sanitize(selectedMessage.bodyHtml, {
+      ADD_ATTR: ['target', 'href'],
+      FORBID_TAGS: ['script', 'style']
+    })
+  }, [selectedMessage?.id, selectedMessage?.bodyHtml])
 
   if (selectionCount > 1) {
     return (
@@ -39,13 +50,6 @@ export function MessageView() {
   }
 
   const isAnalyzing = aiAnalyzingId === selectedMessageId
-
-  const sanitizedHtml = selectedMessage.bodyHtml
-    ? DOMPurify.sanitize(selectedMessage.bodyHtml, {
-        ADD_ATTR: ['target', 'href'],
-        FORBID_TAGS: ['script', 'style']
-      })
-    : null
 
   const handleBodyClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement
@@ -182,6 +186,8 @@ export function MessageView() {
       <div className="reader-body" onClick={handleBodyClick}>
         {sanitizedHtml ? (
           <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+        ) : readerLoading && !selectedMessage.bodyText ? (
+          <div className="reader-body-loading">Loading message…</div>
         ) : (
           <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>
             {selectedMessage.bodyText ?? 'No content'}

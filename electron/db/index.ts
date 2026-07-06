@@ -151,6 +151,12 @@ function migrateSchema(db: Database.Database): void {
     'CREATE UNIQUE INDEX IF NOT EXISTS messages_folder_uid_idx ON messages(folder_id, uid)'
   )
 
+  // Partial index over just the unread rows — speeds the unread recount that runs
+  // after every read/delete and the mark-all-read scan.
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS messages_folder_unread_idx ON messages(folder_id) WHERE is_read = 0'
+  )
+
   db.exec(`
     UPDATE folders
     SET highest_synced_uid = (
@@ -197,6 +203,15 @@ export function getDb() {
     sqliteInstance = new Database(dbPath)
     sqliteInstance.pragma('journal_mode = WAL')
     sqliteInstance.pragma('foreign_keys = ON')
+    // Performance pragmas. Safe under WAL: NORMAL synchronous keeps durability
+    // for committed transactions while skipping fsync on every write; the cache,
+    // memory-mapped I/O, and in-memory temp store cut read latency; the busy
+    // timeout avoids spurious SQLITE_BUSY under the IDLE/poll/UI write mix.
+    sqliteInstance.pragma('synchronous = NORMAL')
+    sqliteInstance.pragma('cache_size = -16000') // ~16 MB page cache
+    sqliteInstance.pragma('temp_store = MEMORY')
+    sqliteInstance.pragma('mmap_size = 268435456') // 256 MB
+    sqliteInstance.pragma('busy_timeout = 5000')
     initTables(sqliteInstance)
     initFts(sqliteInstance)
     migrateFtsIndex(sqliteInstance)

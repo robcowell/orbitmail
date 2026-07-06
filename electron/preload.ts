@@ -44,6 +44,7 @@ const api: OrbitMailAPI = {
     setFlag: (messageId, flagColor) =>
       ipcRenderer.invoke('messages:setFlag', messageId, flagColor),
     delete: (messageId) => ipcRenderer.invoke('messages:delete', messageId),
+    deleteMany: (items) => ipcRenderer.invoke('messages:deleteMany', items),
     move: (messageId, targetFolderId) =>
       ipcRenderer.invoke('messages:move', messageId, targetFolderId),
     copy: (messageId, targetFolderId) =>

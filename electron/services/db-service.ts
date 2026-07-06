@@ -402,7 +402,43 @@ export function getLatestInboxMessage(): LatestInboxMessage | null {
   }
 }
 
-function rowToSummary(r: typeof messages.$inferSelect): MessageSummary {
+// Just the columns a MessageSummary needs — avoids reading the (potentially
+// large) body_html/body_text blobs when only rendering the list.
+const SUMMARY_COLS = {
+  id: messages.id,
+  folderId: messages.folderId,
+  accountId: messages.accountId,
+  uid: messages.uid,
+  messageId: messages.messageId,
+  from: messages.from,
+  to: messages.to,
+  subject: messages.subject,
+  snippet: messages.snippet,
+  date: messages.date,
+  isRead: messages.isRead,
+  isStarred: messages.isStarred,
+  flagColor: messages.flagColor,
+  hasAttachments: messages.hasAttachments
+} as const
+
+type SummaryRow = {
+  id: string
+  folderId: string
+  accountId: string
+  uid: number
+  messageId: string | null
+  from: string
+  to: string
+  subject: string
+  snippet: string
+  date: number
+  isRead: boolean
+  isStarred: boolean
+  flagColor: string | null
+  hasAttachments: boolean
+}
+
+function rowToSummary(r: SummaryRow): MessageSummary {
   return {
     id: r.id,
     folderId: r.folderId,
@@ -427,13 +463,13 @@ export function listMessages(
   offset = 0
 ): MessageSummary[] {
   const db = getDb()
-  let rows: (typeof messages.$inferSelect)[]
+  let rows: SummaryRow[]
 
   if (folderId === 'unified') {
     const inboxIds = getInboxFolderIds()
     if (inboxIds.length === 0) return []
     rows = db
-      .select()
+      .select(SUMMARY_COLS)
       .from(messages)
       .where(inArray(messages.folderId, inboxIds))
       .orderBy(desc(messages.date))
@@ -442,7 +478,7 @@ export function listMessages(
       .all()
   } else {
     rows = db
-      .select()
+      .select(SUMMARY_COLS)
       .from(messages)
       .where(eq(messages.folderId, folderId))
       .orderBy(desc(messages.date))
@@ -795,7 +831,7 @@ export function getFolderUidSet(folderId: string): Set<number> {
   return new Set(rows.map((r) => r.uid))
 }
 
-export function upsertMessage(data: {
+export interface UpsertMessageData {
   folderId: string
   accountId: string
   uid: number
@@ -811,7 +847,9 @@ export function upsertMessage(data: {
   hasAttachments: boolean
   bodyHtml?: string | null
   bodyText?: string | null
-}): { id: string; isNew: boolean } {
+}
+
+export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boolean } {
   const db = getDb()
   const existing = db
     .select()
@@ -864,6 +902,17 @@ export function upsertMessage(data: {
 
   upsertFts(id, data.subject, data.snippet, data.bodyText, data.bodyHtml)
   return { id, isNew }
+}
+
+// Upsert a batch of messages in a single transaction. Each message otherwise
+// commits ~4 statements (select + insert/update + FTS delete/insert) on its own
+// WAL commit; batching a folder's fetch collapses that to one commit.
+export function upsertMessagesBatch(
+  rows: UpsertMessageData[]
+): { id: string; isNew: boolean }[] {
+  if (rows.length === 0) return []
+  const db = getDb()
+  return db.transaction(() => rows.map((row) => upsertMessage(row)))
 }
 
 export function updateFolderUnread(folderId: string, count: number): void {
@@ -925,18 +974,20 @@ export function countMessages(folderId: string | 'unified'): number {
   if (folderId === 'unified') {
     const inboxIds = getInboxFolderIds()
     if (inboxIds.length === 0) return 0
-    return db
-      .select()
+    const row = db
+      .select({ value: count() })
       .from(messages)
       .where(inArray(messages.folderId, inboxIds))
-      .all().length
+      .get()
+    return row?.value ?? 0
   }
 
-  return db
-    .select()
+  const row = db
+    .select({ value: count() })
     .from(messages)
     .where(eq(messages.folderId, folderId))
-    .all().length
+    .get()
+  return row?.value ?? 0
 }
 
 export function deleteMessage(messageId: string): void {

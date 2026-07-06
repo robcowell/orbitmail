@@ -227,6 +227,9 @@ export interface OrbitMailAPI {
     toggleStar: (messageId: string, isStarred: boolean) => Promise<void>
     setFlag: (messageId: string, flagColor: FlagColor | null) => Promise<void>
     delete: (messageId: string) => Promise<void>
+    deleteMany: (
+      items: { id: string; targetFolderId: string | null }[]
+    ) => Promise<{ deleted: number; failed: number }>
     move: (messageId: string, targetFolderId: string) => Promise<void>
     copy: (messageId: string, targetFolderId: string) => Promise<void>
   }

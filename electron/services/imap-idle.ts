@@ -6,10 +6,13 @@ import {
   createImapClient,
   detectFolderType,
   findInboxMailbox,
-  syncFolder
+  syncFolder,
+  reconcileAccountFlags
 } from './imap-sync'
 
 const IDLE_RECONNECT_MS = 5000
+// Coalesce bursts of flag/expunge events before reconciling.
+const IDLE_RECONCILE_DEBOUNCE_MS = 2000
 
 interface IdleRuntime {
   client: ImapFlow | null
@@ -18,8 +21,32 @@ interface IdleRuntime {
 }
 
 const idleRuntimes = new Map<string, IdleRuntime>()
+// Per-account debounce timers for flag/expunge-triggered reconciles.
+const reconcileTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 let onNewMail: (() => void) | null = null
+
+// A flag/expunge event arrived on the inbox IDLE connection; reconcile the
+// account's flags + expunges (via the pooled client) shortly, coalescing bursts.
+function scheduleIdleReconcile(accountId: string, provider: Provider): void {
+  const existing = reconcileTimers.get(accountId)
+  if (existing) clearTimeout(existing)
+  reconcileTimers.set(
+    accountId,
+    setTimeout(() => {
+      reconcileTimers.delete(accountId)
+      void reconcileAccountFlags(accountId, provider).catch(() => {})
+    }, IDLE_RECONCILE_DEBOUNCE_MS)
+  )
+}
+
+function clearIdleReconcileTimer(accountId: string): void {
+  const t = reconcileTimers.get(accountId)
+  if (t) {
+    clearTimeout(t)
+    reconcileTimers.delete(accountId)
+  }
+}
 
 export function setIdleNewMailHandler(handler: (() => void) | null): void {
   onNewMail = handler
@@ -36,6 +63,7 @@ export function stopIdleMonitoring(): void {
   for (const [accountId, runtime] of idleRuntimes) {
     runtime.stopping = true
     if (runtime.reconnectTimer) clearTimeout(runtime.reconnectTimer)
+    clearIdleReconcileTimer(accountId)
     runtime.client?.logout().catch(() => {})
     idleRuntimes.delete(accountId)
   }
@@ -64,6 +92,7 @@ function teardownIdleConnection(
 ): void {
   if (runtime.stopping) return
   runtime.client = null
+  clearIdleReconcileTimer(accountId)
   idleRuntimes.delete(accountId)
   scheduleIdleReconnect(accountId, provider)
 }
@@ -86,6 +115,11 @@ function attachIdleClientHandlers(
       console.warn(`[orbit-mail] IMAP IDLE sync error for ${accountId}:`, err)
     })
   })
+
+  // Server-side flag changes (read/star elsewhere) and expunges (delete/archive)
+  // on the idling inbox — reconcile flags + expunges near-realtime, debounced.
+  client.on('flags', () => scheduleIdleReconcile(accountId, provider))
+  client.on('expunge', () => scheduleIdleReconcile(accountId, provider))
 
   client.on('close', () => {
     runtime.client = null

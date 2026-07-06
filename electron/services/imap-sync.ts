@@ -27,7 +27,10 @@ import {
   listFolders,
   getFolderHighestModseq,
   setFolderHighestModseq,
+  getFolderServerCount,
+  setFolderServerCount,
   applyFlagUpdates,
+  deleteMessagesByUid,
   type TokenData
 } from './db-service'
 import type { Folder } from '../../shared/types'
@@ -866,7 +869,8 @@ async function reconcileFolderFlags(
 ): Promise<number> {
   const status = await client.status(folder.imapPath, {
     highestModseq: true,
-    uidValidity: true
+    uidValidity: true,
+    messages: true
   })
 
   // If UIDVALIDITY changed, the folder is about to be re-synced from scratch —
@@ -880,63 +884,113 @@ async function reconcileFolderFlags(
   const serverModseq = status.highestModseq ?? null // bigint | null
   const stored = getFolderHighestModseq(folder.id)
   const useCondstore = condstore && serverModseq != null
+  const flagsUnchanged = useCondstore && stored != null && serverModseq! <= BigInt(stored)
 
-  // CONDSTORE with a baseline and no advance → nothing changed, no lock needed.
-  if (useCondstore && stored != null && serverModseq! <= BigInt(stored)) {
+  // Expunge is not reliably tied to MODSEQ (RFC 7162), so gate it on the server
+  // message count dropping since we last looked.
+  const serverCount = status.messages ?? null
+  const storedCount = getFolderServerCount(folder.id)
+  const maybeExpunged = storedCount != null && serverCount != null && serverCount < storedCount
+
+  // Nothing to do: flags unchanged AND no drop in the message count. Refresh the
+  // count baseline (it may have grown) and return without taking a lock.
+  if (flagsUnchanged && !maybeExpunged) {
+    if (serverCount != null) setFolderServerCount(folder.id, serverCount)
     return 0
   }
 
   const localUids = getFolderUidSet(folder.id)
   if (localUids.size === 0) {
-    // Nothing synced locally to reconcile; just capture the MODSEQ baseline.
     if (serverModseq != null) setFolderHighestModseq(folder.id, String(serverModseq))
+    if (serverCount != null) setFolderServerCount(folder.id, serverCount)
     return 0
   }
+
+  const fullScan = !useCondstore || stored == null
 
   const lock = await client.getMailboxLock(folder.imapPath)
   try {
     const updates: { uid: number; isRead: boolean; isStarred: boolean }[] = []
+    // Server UIDs still present in our synced range — collected free during a
+    // full scan, else fetched with a bounded search when a drop is suspected.
+    let survivors: Set<number> | null = null
 
-    if (useCondstore && stored != null) {
-      // Incremental: server returns only messages whose flags changed.
-      for await (const msg of client.fetch(
-        '1:*',
-        { uid: true, flags: true },
-        { uid: true, changedSince: BigInt(stored) }
-      )) {
-        const uid = normalizeImapUint(msg.uid)
-        if (uid == null || !localUids.has(uid)) continue
-        updates.push({
-          uid,
-          isRead: msg.flags?.has('\\Seen') ?? false,
-          isStarred: msg.flags?.has('\\Flagged') ?? false
-        })
-      }
-    } else {
-      // Full scan (first run, or no CONDSTORE): flags for all synced UIDs.
-      let maxUid = 0
-      for (const uid of localUids) if (uid > maxUid) maxUid = uid
-      for await (const msg of client.fetch(
-        `1:${maxUid}`,
-        { uid: true, flags: true },
-        { uid: true }
-      )) {
-        const uid = normalizeImapUint(msg.uid)
-        if (uid == null || !localUids.has(uid)) continue
-        updates.push({
-          uid,
-          isRead: msg.flags?.has('\\Seen') ?? false,
-          isStarred: msg.flags?.has('\\Flagged') ?? false
-        })
+    if (!flagsUnchanged) {
+      if (fullScan) {
+        survivors = new Set<number>()
+        let maxUid = 0
+        for (const uid of Array.from(localUids)) if (uid > maxUid) maxUid = uid
+        for await (const msg of client.fetch(
+          `1:${maxUid}`,
+          { uid: true, flags: true },
+          { uid: true }
+        )) {
+          const uid = normalizeImapUint(msg.uid)
+          if (uid == null) continue
+          survivors.add(uid)
+          if (!localUids.has(uid)) continue
+          updates.push({
+            uid,
+            isRead: msg.flags?.has('\\Seen') ?? false,
+            isStarred: msg.flags?.has('\\Flagged') ?? false
+          })
+        }
+      } else {
+        // Incremental: server returns only messages whose flags changed.
+        for await (const msg of client.fetch(
+          '1:*',
+          { uid: true, flags: true },
+          { uid: true, changedSince: BigInt(stored!) }
+        )) {
+          const uid = normalizeImapUint(msg.uid)
+          if (uid == null || !localUids.has(uid)) continue
+          updates.push({
+            uid,
+            isRead: msg.flags?.has('\\Seen') ?? false,
+            isStarred: msg.flags?.has('\\Flagged') ?? false
+          })
+        }
       }
     }
 
-    const changed = applyFlagUpdates(folder.id, updates)
+    let changed = applyFlagUpdates(folder.id, updates)
 
-    // Persist the MODSEQ baseline for next time (prefer the mailbox's live value).
+    // Expunge detection: any local UID no longer on the server was removed there.
+    if (maybeExpunged && survivors == null) {
+      let minUid = Infinity
+      let maxUid = 0
+      for (const uid of Array.from(localUids)) {
+        if (uid < minUid) minUid = uid
+        if (uid > maxUid) maxUid = uid
+      }
+      const found = await client.search({ uid: `${minUid}:${maxUid}` }, { uid: true })
+      if (found !== false) {
+        survivors = new Set(
+          found.map((u) => normalizeImapUint(u)).filter((u): u is number => u != null)
+        )
+      }
+    }
+
+    if (survivors != null) {
+      const expunged = Array.from(localUids).filter((uid) => !survivors!.has(uid))
+      // Guard: only trust a full wipe when the server confirms the folder empty.
+      const wouldWipeAll = expunged.length === localUids.size
+      if (expunged.length > 0 && !(wouldWipeAll && (serverCount ?? 0) > 0)) {
+        const removed = deleteMessagesByUid(folder.id, expunged)
+        if (removed > 0) {
+          console.log(
+            `[orbit-mail] expunge: removed ${removed} message(s) from ${folder.name}`
+          )
+        }
+        changed += removed
+      }
+    }
+
+    // Persist baselines for next time (prefer the mailbox's live MODSEQ).
     const liveModseq = client.mailbox ? client.mailbox.highestModseq : undefined
     const newModseq = liveModseq ?? serverModseq ?? undefined
     if (newModseq != null) setFolderHighestModseq(folder.id, String(newModseq))
+    if (serverCount != null) setFolderServerCount(folder.id, serverCount)
 
     return changed
   } finally {
@@ -944,7 +998,10 @@ async function reconcileFolderFlags(
   }
 }
 
-async function reconcileAccountFlags(accountId: string, provider: Provider): Promise<void> {
+export async function reconcileAccountFlags(
+  accountId: string,
+  provider: Provider
+): Promise<void> {
   if (provider === 'pop3') return // POP3 has no server-side flags / CONDSTORE
 
   const changed = await withImapClient(accountId, provider, async (client) => {

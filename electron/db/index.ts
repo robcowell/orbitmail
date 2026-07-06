@@ -139,6 +139,9 @@ function migrateSchema(db: Database.Database): void {
   if (!folderNames.has('highest_modseq')) {
     db.exec('ALTER TABLE folders ADD COLUMN highest_modseq TEXT')
   }
+  if (!folderNames.has('server_message_count')) {
+    db.exec('ALTER TABLE folders ADD COLUMN server_message_count INTEGER')
+  }
   if (!folderNames.has('is_virtual_view')) {
     db.exec('ALTER TABLE folders ADD COLUMN is_virtual_view INTEGER NOT NULL DEFAULT 0')
     db.exec(`

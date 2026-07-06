@@ -476,6 +476,191 @@ export async function deleteThread(accountId: string, threadId: string): Promise
   }
 }
 
+// Resolve a thread's messages: reuse the open thread when it's the one asked
+// for, otherwise pull it fresh (mirrors deleteThread's resolution).
+async function resolveThreadMessages(
+  accountId: string,
+  threadId: string
+): Promise<MessageDetail[]> {
+  const store = useMailStore.getState()
+  return store.selectedThreadId === threadId && store.selectedThread
+    ? store.selectedThread
+    : await window.orbitMail.messages.getThread(accountId, threadId)
+}
+
+// Patch a single thread row in the list (aggregate read/star/flag).
+function patchThreadRow(
+  accountId: string,
+  threadId: string,
+  partial: Partial<ThreadSummary>
+): void {
+  const store = useMailStore.getState()
+  store.setThreads(
+    store.threads.map((t) =>
+      t.threadId === threadId && t.accountId === accountId ? { ...t, ...partial } : t
+    )
+  )
+}
+
+// Archive every message in a conversation to its account's archive folder.
+// Optimistically drops the thread from the list. Cross-folder, like deleteThread.
+export async function archiveThread(accountId: string, threadId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const messages = await resolveThreadMessages(accountId, threadId)
+  if (messages.length === 0) return
+
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const moves = messages
+    .map((m) => {
+      const archive = findArchiveFolder(folders, m.accountId)
+      if (!archive || m.folderId === archive.id) return null
+      return { id: m.id, targetFolderId: archive.id }
+    })
+    .filter((mv): mv is { id: string; targetFolderId: string } => mv !== null)
+
+  if (moves.length === 0) {
+    store.setToast('No archive folder found for this account')
+    return
+  }
+
+  removeThreadFromList(accountId, threadId)
+  if (store.selectedThreadId === threadId) {
+    store.setSelectedThread(null)
+    store.setSelectedThreadId(null)
+  }
+  store.setToast(moves.length === 1 ? 'Message archived' : `Archived ${moves.length} messages`)
+
+  try {
+    await Promise.all(moves.map((mv) => window.orbitMail.messages.move(mv.id, mv.targetFolderId)))
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Archive failed')
+    await refreshMessages()
+  }
+}
+
+export async function markThreadRead(accountId: string, threadId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const messages = await resolveThreadMessages(accountId, threadId)
+  const targets = messages.filter((m) => !m.isRead)
+
+  markThreadReadInList(accountId, threadId)
+  if (store.selectedThreadId === threadId && store.selectedThread) {
+    store.setSelectedThread(store.selectedThread.map((m) => ({ ...m, isRead: true })))
+  }
+  if (targets.length === 0) return
+
+  try {
+    await Promise.all(targets.map((m) => window.orbitMail.messages.markRead(m.id, true)))
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    await refreshMessages()
+  }
+}
+
+export async function markThreadUnread(accountId: string, threadId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const messages = await resolveThreadMessages(accountId, threadId)
+  const targets = messages.filter((m) => m.isRead)
+
+  patchThreadRow(accountId, threadId, { hasUnread: true })
+  if (store.selectedThreadId === threadId && store.selectedThread) {
+    store.setSelectedThread(store.selectedThread.map((m) => ({ ...m, isRead: false })))
+  }
+  if (targets.length === 0) return
+
+  try {
+    await Promise.all(targets.map((m) => window.orbitMail.messages.markRead(m.id, false)))
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    await refreshMessages()
+  }
+}
+
+export async function setThreadFlagColor(
+  accountId: string,
+  threadId: string,
+  flagColor: FlagColor | null
+): Promise<void> {
+  const store = useMailStore.getState()
+  const messages = await resolveThreadMessages(accountId, threadId)
+  if (messages.length === 0) return
+
+  // Mirror the DB rule: any flag colour implies starred; clearing it unstars.
+  patchThreadRow(accountId, threadId, { flagColor, isStarred: flagColor !== null })
+  if (store.selectedThreadId === threadId && store.selectedThread) {
+    store.setSelectedThread(
+      store.selectedThread.map((m) => ({ ...m, flagColor, isStarred: flagColor !== null }))
+    )
+  }
+
+  try {
+    await Promise.all(messages.map((m) => window.orbitMail.messages.setFlag(m.id, flagColor)))
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    await refreshMessages()
+  }
+}
+
+export async function moveThreadToFolder(
+  accountId: string,
+  threadId: string,
+  targetFolderId: string
+): Promise<void> {
+  const store = useMailStore.getState()
+  const messages = await resolveThreadMessages(accountId, threadId)
+  if (messages.length === 0) return
+
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const target = folders.find((f) => f.id === targetFolderId)
+
+  removeThreadFromList(accountId, threadId)
+  if (store.selectedThreadId === threadId) {
+    store.setSelectedThread(null)
+    store.setSelectedThreadId(null)
+  }
+  store.setToast(
+    messages.length === 1
+      ? `Message moved to ${target?.name ?? 'folder'}`
+      : `${messages.length} messages moved to ${target?.name ?? 'folder'}`
+  )
+
+  try {
+    await Promise.all(messages.map((m) => window.orbitMail.messages.move(m.id, targetFolderId)))
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Move failed')
+    await refreshMessages()
+  }
+}
+
+export async function copyThreadToFolder(
+  accountId: string,
+  threadId: string,
+  targetFolderId: string
+): Promise<void> {
+  const store = useMailStore.getState()
+  const messages = await resolveThreadMessages(accountId, threadId)
+  if (messages.length === 0) return
+
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const target = folders.find((f) => f.id === targetFolderId)
+
+  try {
+    await Promise.all(messages.map((m) => window.orbitMail.messages.copy(m.id, targetFolderId)))
+    store.setToast(
+      messages.length === 1
+        ? `Message copied to ${target?.name ?? 'folder'}`
+        : `${messages.length} messages copied to ${target?.name ?? 'folder'}`
+    )
+    await refreshMessages()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Copy failed')
+  }
+}
+
 export async function toggleThreadMessageStar(
   messageId: string,
   isStarred: boolean

@@ -7,7 +7,8 @@ import type {
   UiPreferences,
   PersistedAppState,
   FlagColor,
-  SweepScope
+  SweepScope,
+  DraftTone
 } from '../shared/types'
 
 const api: OrbitMailAPI = {
@@ -106,6 +107,8 @@ const api: OrbitMailAPI = {
   ai: {
     analyze: (messageId: string, force?: boolean) =>
       ipcRenderer.invoke('ai:analyze', messageId, force),
+    draftReply: (messageId: string, tone: DraftTone, mode?: 'reply' | 'reply-all') =>
+      ipcRenderer.invoke('ai:draftReply', messageId, tone, mode),
     sweep: (folderId: string, scope: SweepScope) =>
       ipcRenderer.invoke('ai:sweep', folderId, scope),
     getTasks: (folderId: string) => ipcRenderer.invoke('ai:getTasks', folderId),

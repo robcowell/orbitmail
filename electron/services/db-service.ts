@@ -715,6 +715,41 @@ export function getMessage(messageId: string): MessageDetail | null {
   }
 }
 
+export interface ThreadContextMessage {
+  id: string
+  from: string
+  to: string
+  subject: string
+  date: number
+  bodyText: string | null
+  bodyHtml: string | null
+}
+
+// All messages in a conversation for an account (across folders), oldest first.
+// Lightweight projection for AI reply-draft grounding.
+export function listThreadMessages(
+  accountId: string,
+  threadId: string,
+  limit = 30
+): ThreadContextMessage[] {
+  const db = getDb()
+  return db
+    .select({
+      id: messages.id,
+      from: messages.from,
+      to: messages.to,
+      subject: messages.subject,
+      date: messages.date,
+      bodyText: messages.bodyText,
+      bodyHtml: messages.bodyHtml
+    })
+    .from(messages)
+    .where(and(eq(messages.accountId, accountId), eq(messages.threadId, threadId)))
+    .orderBy(messages.date)
+    .limit(limit)
+    .all()
+}
+
 export function getMessageAiAnalysis(
   messageId: string
 ): { json: string; at: number } | null {

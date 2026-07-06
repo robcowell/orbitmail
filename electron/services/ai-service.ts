@@ -1,11 +1,20 @@
 import { safeStorage } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
-import type { AiAnalysis, AiPriority, SweepResult, SweepScope, SweepTask } from '../../shared/types'
+import type {
+  AiAnalysis,
+  AiPriority,
+  DraftTone,
+  ReplyDraft,
+  SweepResult,
+  SweepScope,
+  SweepTask
+} from '../../shared/types'
 import { getRawSqlite } from '../db'
 import {
   getMessage,
   listAccounts,
+  listThreadMessages,
   getMessageAiAnalysis,
   setMessageAiAnalysis,
   setMessageSweepCache,
@@ -241,6 +250,121 @@ ${body || '(no body content)'}`
     setMessageAiAnalysis(messageId, JSON.stringify(stored), generatedAt)
 
     return { ...stored, generatedAt, cached: false }
+  } catch (err) {
+    return { error: friendlyError(err) }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reply drafting — generate an editable reply body grounded in the conversation.
+// ---------------------------------------------------------------------------
+
+const DRAFT_SCHEMA = {
+  type: 'object',
+  properties: {
+    reply: {
+      type: 'string',
+      description:
+        'The reply body text, ready to send, written in the first person as the user. Plain text with paragraph breaks; no subject line, no To/From headers, no quoted original.'
+    }
+  },
+  required: ['reply'],
+  additionalProperties: false
+} as const
+
+const TONE_GUIDANCE: Record<DraftTone, string> = {
+  brief: 'Keep it short — 2 to 4 sentences. Direct and to the point; no preamble.',
+  neutral: 'Use a normal, professional length and tone — a few short paragraphs at most.',
+  detailed:
+    'Be thorough: address each question and request in the conversation, point by point, while staying clear and well-organized.'
+}
+
+const MAX_THREAD_MESSAGES = 12
+const DRAFT_BODY_CHARS = 4000
+
+function draftSystemPrompt(userName: string, tone: DraftTone): string {
+  return `You draft an email reply on behalf of ${userName}. Write ONLY the reply body, in the first person as ${userName}, ready to paste into the composer.
+
+Rules:
+- No subject line, no "To:"/"From:" headers, and do NOT quote or restate the original message — the composer keeps the quoted thread separately.
+- Match the conversation's tone and language. Answer any questions asked of the user and acknowledge or address any requests made of them.
+- Do NOT invent facts, commitments, dates, numbers, or names that aren't supported by the thread. If something needs the user's input, leave a natural placeholder in [square brackets].
+- End with a simple, natural sign-off (e.g. the user's first name). Do not add a full signature block.
+- ${TONE_GUIDANCE[tone]}`
+}
+
+function threadBlock(
+  m: { from: string; subject: string; date: number; bodyText: string | null; bodyHtml: string | null },
+  isFromUser: boolean
+): string {
+  let body = m.bodyText ?? (m.bodyHtml ? stripHtml(m.bodyHtml) : '')
+  if (body.length > DRAFT_BODY_CHARS) body = body.slice(0, DRAFT_BODY_CHARS) + '… [truncated]'
+  return `${isFromUser ? 'FROM YOU' : 'FROM ' + m.from} — ${new Date(m.date).toISOString()}
+Subject: ${m.subject}
+${body || '(no body content)'}`
+}
+
+export async function draftReply(
+  messageId: string,
+  options: { tone?: DraftTone; mode?: 'reply' | 'reply-all' } = {}
+): Promise<ReplyDraft | { error: string }> {
+  const apiKey = getApiKey()
+  if (!apiKey) {
+    return { error: 'No Anthropic API key configured. Open AI settings to add one.' }
+  }
+
+  const message = getMessage(messageId)
+  if (!message) {
+    return { error: 'Message not found.' }
+  }
+
+  const tone: DraftTone = options.tone ?? 'neutral'
+  const accounts = listAccounts()
+  const account = accounts.find((a) => a.id === message.accountId)
+  const userName = account?.displayName?.trim() || account?.email || 'the user'
+  const userEmails = accounts.map((a) => a.email.toLowerCase())
+  const isFromUser = (from: string): boolean => {
+    const fromLower = from.toLowerCase()
+    return userEmails.some((email) => email.length > 0 && fromLower.includes(email))
+  }
+
+  // Ground the draft in the whole conversation when we can (Sent replies
+  // included); otherwise just the message being replied to.
+  const thread =
+    message.threadId && message.threadId.length > 0
+      ? listThreadMessages(message.accountId, message.threadId, MAX_THREAD_MESSAGES)
+      : []
+  const context = thread.length > 0 ? thread : [message]
+  const blocks = context.map((m) => threadBlock(m, isFromUser(m.from)))
+
+  const userPrompt = `Draft my reply to the most recent message in this email conversation (oldest to newest below). I am ${userName}. Write the reply I should send.
+
+${blocks.join('\n\n---\n\n')}`
+
+  const client = new Anthropic({ apiKey })
+
+  try {
+    const response = await client.messages.parse({
+      model: MODEL,
+      max_tokens: 2048,
+      output_config: {
+        effort: 'low',
+        format: jsonSchemaOutputFormat(DRAFT_SCHEMA)
+      },
+      system: draftSystemPrompt(userName, tone),
+      messages: [{ role: 'user', content: userPrompt }]
+    })
+
+    if (response.stop_reason === 'refusal') {
+      return { error: 'The model declined to draft a reply for this message.' }
+    }
+
+    const parsed = response.parsed_output
+    if (!parsed || !parsed.reply.trim()) {
+      return { error: 'The model returned an empty draft. Try again.' }
+    }
+
+    return { bodyText: parsed.reply.trim() }
   } catch (err) {
     return { error: friendlyError(err) }
   }

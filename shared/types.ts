@@ -205,6 +205,16 @@ export type AiAnalysisResult = AiAnalysis | { error: string }
 
 export type AiSweepResult = SweepResult | { error: string }
 
+// How verbose an AI-drafted reply should be.
+export type DraftTone = 'brief' | 'neutral' | 'detailed'
+
+// A generated reply draft: plain body text ready to seed the composer.
+export interface ReplyDraft {
+  bodyText: string
+}
+
+export type AiDraftResult = ReplyDraft | { error: string }
+
 export interface OrbitMailAPI {
   folders: {
     list: (accountId?: string) => Promise<Folder[]>
@@ -276,6 +286,11 @@ export interface OrbitMailAPI {
   }
   ai: {
     analyze: (messageId: string, force?: boolean) => Promise<AiAnalysisResult>
+    draftReply: (
+      messageId: string,
+      tone: DraftTone,
+      mode?: 'reply' | 'reply-all'
+    ) => Promise<AiDraftResult>
     sweep: (folderId: string | 'unified', scope: SweepScope) => Promise<AiSweepResult>
     getTasks: (folderId: string | 'unified') => Promise<SweepResult>
     exportTasks: (markdown: string, defaultName: string) => Promise<string | null>

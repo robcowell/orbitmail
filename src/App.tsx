@@ -14,7 +14,8 @@ import {
   cancelScheduledRefreshMessages,
   subscribeSyncCompleteRefresh,
   saveUiPreferencesNow,
-  deleteSelectedMessages
+  deleteSelectedMessages,
+  deleteThread
 } from './stores/mailStore'
 import { exposeFlushHook } from './stores/persistence'
 
@@ -138,23 +139,30 @@ function MainApp() {
         const accountId = store.accounts[0]?.id
         if (accountId) window.orbitMail.compose.open({ accountId })
       }
-      if (e.key === 'r' && !e.metaKey && !e.ctrlKey && store.selectedMessage) {
-        window.orbitMail.compose.open({
-          accountId: store.selectedMessage.accountId,
-          mode: 'reply',
-          originalMessageId: store.selectedMessage.id
-        })
+      if (e.key === 'r' && !e.metaKey && !e.ctrlKey) {
+        // Reply to the latest message of the open thread, or the selected message.
+        const thread = store.selectedThread
+        const replyTo = thread && thread.length > 0 ? thread[thread.length - 1] : store.selectedMessage
+        if (replyTo) {
+          window.orbitMail.compose.open({
+            accountId: replyTo.accountId,
+            mode: 'reply',
+            originalMessageId: replyTo.id
+          })
+        }
       }
       if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         document.querySelector<HTMLInputElement>('.search-input')?.focus()
       }
-      if (
-        (e.key === 'Delete' || e.key === 'Backspace') &&
-        (store.selectedMessageIds.length || store.selectedMessageId)
-      ) {
-        e.preventDefault()
-        deleteSelectedMessages().catch(() => {})
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (store.selectedThreadId && store.selectedThread?.length) {
+          e.preventDefault()
+          deleteThread(store.selectedThread[0].accountId, store.selectedThreadId).catch(() => {})
+        } else if (store.selectedMessageIds.length || store.selectedMessageId) {
+          e.preventDefault()
+          deleteSelectedMessages().catch(() => {})
+        }
       }
     }
 

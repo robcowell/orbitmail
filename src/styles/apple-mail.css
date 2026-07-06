@@ -628,10 +628,31 @@ textarea {
   white-space: nowrap;
 }
 
+/* Conversation size badge on a thread row. */
+.thread-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--text-muted);
+  background: var(--bg-list-hover);
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 .message-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+
+.message-attach {
+  color: var(--text-muted);
 }
 
 .message-subject {
@@ -722,6 +743,103 @@ textarea {
   font-size: 13px;
   opacity: 0;
   animation: reader-body-loading-fade 0.4s ease-in 0.15s forwards;
+}
+
+/* Conversation (thread) reader */
+.reader-thread-count {
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.thread-conversation {
+  display: flex;
+  flex-direction: column;
+}
+
+.thread-msg {
+  border-bottom: 1px solid var(--border);
+}
+
+.thread-msg:not(.is-open) {
+  cursor: pointer;
+}
+
+.thread-msg:not(.is-open):hover {
+  background: var(--bg-list-hover);
+}
+
+.thread-msg-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px;
+}
+
+.thread-msg.is-open .thread-msg-head {
+  cursor: pointer;
+  align-items: flex-start;
+}
+
+.thread-msg-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.thread-msg-from {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-msg:not(.is-open) .thread-msg-from {
+  flex-shrink: 0;
+  max-width: 30%;
+}
+
+.thread-msg-to {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-msg-preview {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thread-msg-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.thread-msg-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.thread-msg-body {
+  padding-top: 4px;
 }
 
 @keyframes reader-body-loading-fade {

@@ -8,6 +8,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Unread-count badge** on the taskbar / launcher and in the window title.
 - **Optional AI** (bring-your-own Anthropic key): per-message **Analyze** (summary, action items, questions, key context) and an inbox **Tasks** sweep (choice of **Unread** (default) or **All messages**). Sweep results and ticked-off tasks are persisted per folder; completed tasks are fed back to the model so they don't resurface. The task list can be exported to a Markdown file on demand.
 - **Rich compose editor** — extended formatting toolbar (headings, bold/italic/underline/strikethrough, alignment, colour, lists, links, quote, inline code, clear), HTML send, collapsible quoted text on replies/forwards with an attribution line and separator, and a drag-and-drop attachment UI showing type icons and sizes.
+- **Conversation threading** — messages group by RFC 5322 headers (`thread_id` derived from `References`/`In-Reply-To`, subject fallback) into one collapsed row per conversation; opening a thread loads the full **account-wide** conversation across folders (Sent replies interleaved) in a stacked, collapsible reader. Includes AI **reply drafts** with tone options (Brief/Neutral/Detailed).
 - **Performance & perceived-speed pass (phases 1–3)** — tuned SQLite pragmas + `COUNT(*)` + summary-column projection + partial unread index + batched sync writes; optimistic read/star/flag/move/delete with rollback and an instant-painting reader; `virtua`-virtualized message list with memoized rows and reference-preserving refresh; folder-switch skeletons; a pooled per-account IMAP client with a per-account op mutex; parallel account sync; cached Sent path; send does a Sent-only sync; attachments fetch just their BODYSTRUCTURE part.
 - **Bring-your-own-credentials** setup documented (README → "Run your own copy"; DEVELOPERS.md → OAuth setup + verification/CASA notes).
 
@@ -42,7 +43,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 ## Post-MVP (logged for later)
 
 - Local draft autosave + IMAP draft upload
-- Conversation/thread view
+- Thread-level context menu (archive/move whole conversation) and multi-thread select — currently threads support open, per-message actions, and whole-thread delete (Delete key)
 - Compose signatures and inline/pasted images (rich HTML editor now shipped)
 - Editable / trimmable quoted text (currently the collapsed quote is read-only and always included on send)
 - Reply-all

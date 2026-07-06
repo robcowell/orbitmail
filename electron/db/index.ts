@@ -161,12 +161,6 @@ function migrateSchema(db: Database.Database): void {
     'CREATE INDEX IF NOT EXISTS messages_folder_unread_idx ON messages(folder_id) WHERE is_read = 0'
   )
 
-  // Threading: group a conversation per account; look up messages by Message-ID.
-  db.exec('CREATE INDEX IF NOT EXISTS messages_thread_idx ON messages(account_id, thread_id)')
-  db.exec('CREATE INDEX IF NOT EXISTS messages_message_id_idx ON messages(message_id)')
-
-  backfillThreadIds(db)
-
   db.exec(`
     UPDATE folders
     SET highest_synced_uid = (
@@ -208,6 +202,12 @@ function migrateSchema(db: Database.Database): void {
   if (!messageNames.has('thread_id')) {
     db.exec('ALTER TABLE messages ADD COLUMN thread_id TEXT')
   }
+
+  // These depend on the thread_id column above existing, so they must run after
+  // the ALTER (on an upgraded DB the column is only just added here).
+  db.exec('CREATE INDEX IF NOT EXISTS messages_thread_idx ON messages(account_id, thread_id)')
+  db.exec('CREATE INDEX IF NOT EXISTS messages_message_id_idx ON messages(message_id)')
+  backfillThreadIds(db)
 
   const accountCols = db.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>
   const accountNames = new Set(accountCols.map((c) => c.name))

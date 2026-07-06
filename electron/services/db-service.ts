@@ -513,21 +513,25 @@ function threadScopeIds(folderId: string | 'unified'): string[] {
   return folderId === 'unified' ? getInboxFolderIds() : [folderId]
 }
 
-interface ThreadHeadRow {
-  latest_id: string
-  account_id: string
+interface ThreadMsgRow {
+  id: string
+  aid: string
   tkey: string
+  mkey: string
+  folder_id: string
   from_addr: string
   subject: string
   snippet: string
   date: number
+  is_read: number
+  is_starred: number
   flag_color: string | null
-  msg_count: number
-  has_unread: number
-  any_starred: number
-  has_attach: number
+  has_attachments: number
 }
 
+// A thread is grouped account-wide across folders and **deduplicated by
+// Message-ID** — Gmail exposes each label as an IMAP folder, so one email is
+// stored once per label and would otherwise be counted/shown multiple times.
 export function listThreads(
   folderId: string | 'unified',
   limit = 200,
@@ -535,72 +539,94 @@ export function listThreads(
 ): ThreadSummary[] {
   const scopeIds = threadScopeIds(folderId)
   if (scopeIds.length === 0) return []
+  const scope = new Set(scopeIds)
   const sqlite = getRawSqlite()
   const ph = scopeIds.map(() => '?').join(', ')
 
-  // One representative (latest) row per (account, thread) with per-thread
-  // aggregates via window functions.
-  const rows = sqlite
+  // Page of thread keys with a message in this folder, ordered by the
+  // conversation's most recent message (account-wide — a Sent reply counts).
+  const heads = sqlite
     .prepare(
-      `SELECT m.id AS latest_id, m.account_id, COALESCE(m.thread_id, m.id) AS tkey,
-              m.from_addr, m.subject, m.snippet, m.date, m.flag_color,
-              r.msg_count, r.has_unread, r.any_starred, r.has_attach
+      `SELECT aid, tkey, MAX(date) AS last_date
        FROM (
-         SELECT id,
-           ROW_NUMBER() OVER (PARTITION BY account_id, COALESCE(thread_id, id) ORDER BY date DESC, uid DESC) AS rn,
-           COUNT(*) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS msg_count,
-           MAX(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS has_unread,
-           MAX(is_starred) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS any_starred,
-           MAX(has_attachments) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS has_attach,
-           MAX(date) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS last_date
-         FROM messages WHERE folder_id IN (${ph})
-       ) r
-       JOIN messages m ON m.id = r.id
-       WHERE r.rn = 1
-       ORDER BY r.last_date DESC, m.id DESC
+         SELECT account_id AS aid, COALESCE(thread_id, id) AS tkey, date
+         FROM messages
+         WHERE (account_id, COALESCE(thread_id, id)) IN (
+           SELECT DISTINCT account_id, COALESCE(thread_id, id)
+           FROM messages WHERE folder_id IN (${ph})
+         )
+       )
+       GROUP BY aid, tkey
+       ORDER BY last_date DESC
        LIMIT ? OFFSET ?`
     )
-    .all(...scopeIds, limit, offset) as ThreadHeadRow[]
+    .all(...scopeIds, limit, offset) as Array<{ aid: string; tkey: string; last_date: number }>
+  if (heads.length === 0) return []
 
-  if (rows.length === 0) return []
-
-  // Distinct senders per thread (oldest first) for the participant labels.
-  const tkeys = rows.map((r) => r.tkey)
-  const tph = tkeys.map(() => '?').join(', ')
-  const partRows = sqlite
+  // Every message in those conversations (across folders), lightweight columns.
+  const pairs = heads.map(() => '(?, ?)').join(', ')
+  const pairArgs: unknown[] = []
+  for (const h of heads) pairArgs.push(h.aid, h.tkey)
+  const rows = sqlite
     .prepare(
-      `SELECT account_id, COALESCE(thread_id, id) AS tkey, from_addr, MIN(date) AS first_date
+      `SELECT id, account_id AS aid, COALESCE(thread_id, id) AS tkey, COALESCE(message_id, id) AS mkey,
+              folder_id, from_addr, subject, snippet, date, is_read, is_starred, flag_color, has_attachments
        FROM messages
-       WHERE folder_id IN (${ph}) AND COALESCE(thread_id, id) IN (${tph})
-       GROUP BY account_id, tkey, from_addr
-       ORDER BY first_date ASC`
+       WHERE (account_id, COALESCE(thread_id, id)) IN (VALUES ${pairs})
+       ORDER BY date ASC`
     )
-    .all(...scopeIds, ...tkeys) as Array<{ account_id: string; tkey: string; from_addr: string }>
+    .all(...pairArgs) as ThreadMsgRow[]
 
-  const participants = new Map<string, string[]>()
-  for (const pr of partRows) {
-    const key = `${pr.account_id} ${pr.tkey}`
-    const name = extractName(pr.from_addr)
-    const list = participants.get(key) ?? []
-    if (!list.includes(name)) list.push(name)
-    participants.set(key, list)
+  interface Group {
+    all: ThreadMsgRow[]
+    unique: ThreadMsgRow[]
+    seen: Set<string>
+  }
+  const groups = new Map<string, Group>()
+  for (const r of rows) {
+    const key = `${r.aid} ${r.tkey}`
+    let g = groups.get(key)
+    if (!g) {
+      g = { all: [], unique: [], seen: new Set() }
+      groups.set(key, g)
+    }
+    g.all.push(r)
+    if (!g.seen.has(r.mkey)) {
+      g.seen.add(r.mkey)
+      g.unique.push(r)
+    }
   }
 
-  return rows.map((r) => ({
-    threadId: r.tkey,
-    accountId: r.account_id,
-    latestMessageId: r.latest_id,
-    from: r.from_addr,
-    subject: r.subject,
-    snippet: r.snippet,
-    date: r.date,
-    isStarred: Boolean(r.any_starred),
-    flagColor: (r.flag_color as FlagColor | null) ?? null,
-    hasAttachments: Boolean(r.has_attach),
-    messageCount: r.msg_count,
-    hasUnread: Boolean(r.has_unread),
-    participants: participants.get(`${r.account_id} ${r.tkey}`) ?? [extractName(r.from_addr)]
-  }))
+  return heads.map((h) => {
+    const g = groups.get(`${h.aid} ${h.tkey}`)
+    const unique = g?.unique ?? []
+    const all = g?.all ?? []
+    const latest = unique[unique.length - 1]
+    const participants: string[] = []
+    for (const m of unique) {
+      const name = extractName(m.from_addr)
+      if (!participants.includes(name)) participants.push(name)
+    }
+    const flagged = unique.find((m) => m.flag_color)
+    return {
+      threadId: h.tkey,
+      accountId: h.aid,
+      latestMessageId: latest?.id ?? '',
+      from: latest?.from_addr ?? '',
+      subject: latest?.subject ?? '',
+      snippet: latest?.snippet ?? '',
+      date: latest?.date ?? h.last_date,
+      isStarred: all.some((m) => m.is_starred !== 0),
+      flagColor: (flagged?.flag_color ?? null) as FlagColor | null,
+      hasAttachments: all.some((m) => m.has_attachments !== 0),
+      messageCount: unique.length,
+      // Unread reflects only copies in the folder(s) being viewed — non-Inbox
+      // Gmail label copies can carry stale is_read and shouldn't mark the
+      // conversation unread in the Inbox.
+      hasUnread: all.some((m) => scope.has(m.folder_id) && m.is_read === 0),
+      participants: participants.length ? participants : [extractName(latest?.from_addr ?? '')]
+    }
+  })
 }
 
 export function countThreads(folderId: string | 'unified'): number {
@@ -620,10 +646,11 @@ export function countThreads(folderId: string | 'unified'): number {
 }
 
 // The full conversation for a thread, across all folders in the account, oldest
-// first (this is where received + Sent interleave).
+// first (received + Sent interleave). Deduplicated by Message-ID so Gmail's
+// per-label copies of the same email appear once.
 export function getThread(accountId: string, threadKey: string, limit = 200): MessageDetail[] {
   const db = getDb()
-  const rows = db
+  const allRows = db
     .select()
     .from(messages)
     .where(
@@ -635,7 +662,16 @@ export function getThread(accountId: string, threadKey: string, limit = 200): Me
     .orderBy(messages.date)
     .limit(limit)
     .all()
-  if (rows.length === 0) return []
+  if (allRows.length === 0) return []
+
+  const seen = new Set<string>()
+  const rows: typeof allRows = []
+  for (const r of allRows) {
+    const key = r.messageId ?? r.id
+    if (seen.has(key)) continue
+    seen.add(key)
+    rows.push(r)
+  }
 
   const ids = rows.map((r) => r.id)
   const atts = db.select().from(attachments).where(inArray(attachments.messageId, ids)).all()
@@ -1153,14 +1189,39 @@ export function recalculateFolderUnread(folderId: string): number {
 export function setMessageRead(messageId: string, isRead: boolean): void {
   const db = getDb()
   const existing = db
-    .select({ folderId: messages.folderId })
+    .select({
+      folderId: messages.folderId,
+      accountId: messages.accountId,
+      msgId: messages.messageId
+    })
     .from(messages)
     .where(eq(messages.id, messageId))
     .get()
   if (!existing) return
 
-  db.update(messages).set({ isRead }).where(eq(messages.id, messageId)).run()
-  recalculateFolderUnread(existing.folderId)
+  // Gmail stores one copy per label (folder). Flip read state on every copy of
+  // this email so the Inbox dot clears no matter which copy was opened, and so
+  // folder unread counts stay consistent.
+  if (existing.msgId) {
+    const copies = db
+      .select({ id: messages.id, folderId: messages.folderId })
+      .from(messages)
+      .where(
+        and(eq(messages.accountId, existing.accountId), eq(messages.messageId, existing.msgId))
+      )
+      .all()
+    db.update(messages)
+      .set({ isRead })
+      .where(
+        and(eq(messages.accountId, existing.accountId), eq(messages.messageId, existing.msgId))
+      )
+      .run()
+    const folderIds = Array.from(new Set(copies.map((c) => c.folderId)))
+    for (const folderId of folderIds) recalculateFolderUnread(folderId)
+  } else {
+    db.update(messages).set({ isRead }).where(eq(messages.id, messageId)).run()
+    recalculateFolderUnread(existing.folderId)
+  }
 }
 
 export function setMessageStarred(messageId: string, isStarred: boolean): void {

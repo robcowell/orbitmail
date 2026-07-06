@@ -47,6 +47,12 @@ type MessageRow = {
   body_html: string | null
 }
 
+// Prepared once and reused for the whole app lifetime — indexMessageInFts runs
+// on every message upserted during a sync, so this is the hottest raw-SQL path.
+// (The DB is a process-lifetime singleton, so binding to the first db is safe.)
+let ftsDeleteStmt: Database.Statement | null = null
+let ftsInsertStmt: Database.Statement | null = null
+
 export function indexMessageInFts(
   db: Database.Database,
   messageId: string,
@@ -55,10 +61,14 @@ export function indexMessageInFts(
   bodyText?: string | null,
   bodyHtml?: string | null
 ): void {
-  db.prepare('DELETE FROM messages_fts WHERE message_id = ?').run(messageId)
-  db.prepare(
-    'INSERT INTO messages_fts (message_id, subject, snippet, body_text) VALUES (?, ?, ?, ?)'
-  ).run(messageId, subject, snippet, messageSearchableBody(bodyText, bodyHtml))
+  if (!ftsDeleteStmt || !ftsInsertStmt) {
+    ftsDeleteStmt = db.prepare('DELETE FROM messages_fts WHERE message_id = ?')
+    ftsInsertStmt = db.prepare(
+      'INSERT INTO messages_fts (message_id, subject, snippet, body_text) VALUES (?, ?, ?, ?)'
+    )
+  }
+  ftsDeleteStmt.run(messageId)
+  ftsInsertStmt.run(messageId, subject, snippet, messageSearchableBody(bodyText, bodyHtml))
 }
 
 export function migrateFtsIndex(db: Database.Database): void {

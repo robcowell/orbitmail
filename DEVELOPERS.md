@@ -163,7 +163,7 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 
 - **Initial sync** — up to 200 messages per folder (UID-sorted batch)
 - **Incremental sync** — UID-based delta fetch; only new UIDs since `highestSyncedUid`
-- **Background poll** — every 20 seconds; accounts sync in parallel
+- **Background poll** — POP3 every 20s; IDLE-capable IMAP accounts every 90s (IDLE already push-syncs their inboxes), plus one immediate catch-up sync shortly after launch. Accounts sync in parallel.
 - **IMAP IDLE** — inbox folders on supported accounts for near-realtime delivery
 - **Connection pool** — one reused IMAP client per account (`imap-pool.ts`) with a
   per-account operation mutex and 30s idle-close, so a batch of server ops shares a

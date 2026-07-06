@@ -172,6 +172,18 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 - **Batched writes** — each folder's fetched messages upsert in one transaction
 - **Unread counts** — recalculated from local message read state after fetch (kept in sync with the message list)
 
+### Threading
+
+- Each message stores `in_reply_to`, `references`, and a derived `thread_id`
+  (`thread-util.ts`: `References[0]` root → `In-Reply-To` → own Message-ID →
+  normalized-subject fallback). Grouping is always scoped by `(account_id,
+  thread_id)`.
+- The list shows one row per thread in the current folder (`listThreads`, window
+  functions); opening a thread pulls the **whole conversation across folders**
+  (`getThread`), so received + Sent messages interleave in the reader.
+- Search results stay flat (single-message reader); a one-message thread renders
+  like an ordinary message.
+
 ### Performance notes
 
 - **Optimistic UI** — read/star/flag/move/delete update the list (and open reader)

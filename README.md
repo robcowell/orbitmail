@@ -11,6 +11,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 ### Mail
 
 - **Multi-account inbox** — unified “All Inboxes” view plus per-account folders
+- **Conversation threading** — messages group into one row per conversation; opening a thread shows the full back-and-forth across folders, with your Sent replies interleaved
 - **Folder navigation** — Inbox, Sent, Drafts, Trash, Junk, and custom IMAP folders
 - **Incremental sync** — only new messages are downloaded after the initial sync
 - **Near-realtime updates** — background sync plus IMAP IDLE on inbox folders

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { existsSync, statSync, unlinkSync } from 'fs'
-import { eq, desc, and, inArray, max, count, lt } from 'drizzle-orm'
+import { eq, desc, and, inArray, max, count, lt, sql } from 'drizzle-orm'
 import { getDb, getRawSqlite, upsertFts, deleteFts } from '../db'
 import { accounts, folders, messages, attachments, sweepTasks } from '../db/schema'
 import type {
@@ -8,6 +8,7 @@ import type {
   Folder,
   MessageSummary,
   MessageDetail,
+  ThreadSummary,
   FolderType,
   Provider,
   FlagColor,
@@ -491,6 +492,175 @@ export function listMessages(
   }
 
   return rows.map(rowToSummary)
+}
+
+// ---------------------------------------------------------------------------
+// Conversation threading. The list groups the current folder's messages into
+// threads (one row per conversation); opening a thread pulls the full
+// conversation across folders (getThread). Grouping key is COALESCE(thread_id,
+// id) scoped per account, so a message without a thread_id is its own thread and
+// subject-fallback keys never merge across accounts.
+// ---------------------------------------------------------------------------
+
+function extractName(from: string): string {
+  const match = from.match(/^(.+?)\s*</)
+  if (match) return match[1].replace(/"/g, '').trim()
+  return from
+}
+
+// Folder ids the current view scopes to (unified = every inbox). Empty = nothing.
+function threadScopeIds(folderId: string | 'unified'): string[] {
+  return folderId === 'unified' ? getInboxFolderIds() : [folderId]
+}
+
+interface ThreadHeadRow {
+  latest_id: string
+  account_id: string
+  tkey: string
+  from_addr: string
+  subject: string
+  snippet: string
+  date: number
+  flag_color: string | null
+  msg_count: number
+  has_unread: number
+  any_starred: number
+  has_attach: number
+}
+
+export function listThreads(
+  folderId: string | 'unified',
+  limit = 200,
+  offset = 0
+): ThreadSummary[] {
+  const scopeIds = threadScopeIds(folderId)
+  if (scopeIds.length === 0) return []
+  const sqlite = getRawSqlite()
+  const ph = scopeIds.map(() => '?').join(', ')
+
+  // One representative (latest) row per (account, thread) with per-thread
+  // aggregates via window functions.
+  const rows = sqlite
+    .prepare(
+      `SELECT m.id AS latest_id, m.account_id, COALESCE(m.thread_id, m.id) AS tkey,
+              m.from_addr, m.subject, m.snippet, m.date, m.flag_color,
+              r.msg_count, r.has_unread, r.any_starred, r.has_attach
+       FROM (
+         SELECT id,
+           ROW_NUMBER() OVER (PARTITION BY account_id, COALESCE(thread_id, id) ORDER BY date DESC, uid DESC) AS rn,
+           COUNT(*) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS msg_count,
+           MAX(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS has_unread,
+           MAX(is_starred) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS any_starred,
+           MAX(has_attachments) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS has_attach,
+           MAX(date) OVER (PARTITION BY account_id, COALESCE(thread_id, id)) AS last_date
+         FROM messages WHERE folder_id IN (${ph})
+       ) r
+       JOIN messages m ON m.id = r.id
+       WHERE r.rn = 1
+       ORDER BY r.last_date DESC, m.id DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(...scopeIds, limit, offset) as ThreadHeadRow[]
+
+  if (rows.length === 0) return []
+
+  // Distinct senders per thread (oldest first) for the participant labels.
+  const tkeys = rows.map((r) => r.tkey)
+  const tph = tkeys.map(() => '?').join(', ')
+  const partRows = sqlite
+    .prepare(
+      `SELECT account_id, COALESCE(thread_id, id) AS tkey, from_addr, MIN(date) AS first_date
+       FROM messages
+       WHERE folder_id IN (${ph}) AND COALESCE(thread_id, id) IN (${tph})
+       GROUP BY account_id, tkey, from_addr
+       ORDER BY first_date ASC`
+    )
+    .all(...scopeIds, ...tkeys) as Array<{ account_id: string; tkey: string; from_addr: string }>
+
+  const participants = new Map<string, string[]>()
+  for (const pr of partRows) {
+    const key = `${pr.account_id} ${pr.tkey}`
+    const name = extractName(pr.from_addr)
+    const list = participants.get(key) ?? []
+    if (!list.includes(name)) list.push(name)
+    participants.set(key, list)
+  }
+
+  return rows.map((r) => ({
+    threadId: r.tkey,
+    accountId: r.account_id,
+    latestMessageId: r.latest_id,
+    from: r.from_addr,
+    subject: r.subject,
+    snippet: r.snippet,
+    date: r.date,
+    isStarred: Boolean(r.any_starred),
+    flagColor: (r.flag_color as FlagColor | null) ?? null,
+    hasAttachments: Boolean(r.has_attach),
+    messageCount: r.msg_count,
+    hasUnread: Boolean(r.has_unread),
+    participants: participants.get(`${r.account_id} ${r.tkey}`) ?? [extractName(r.from_addr)]
+  }))
+}
+
+export function countThreads(folderId: string | 'unified'): number {
+  const scopeIds = threadScopeIds(folderId)
+  if (scopeIds.length === 0) return 0
+  const sqlite = getRawSqlite()
+  const ph = scopeIds.map(() => '?').join(', ')
+  const row = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS n FROM (
+         SELECT 1 FROM messages WHERE folder_id IN (${ph})
+         GROUP BY account_id, COALESCE(thread_id, id)
+       )`
+    )
+    .get(...scopeIds) as { n: number }
+  return row.n
+}
+
+// The full conversation for a thread, across all folders in the account, oldest
+// first (this is where received + Sent interleave).
+export function getThread(accountId: string, threadKey: string, limit = 200): MessageDetail[] {
+  const db = getDb()
+  const rows = db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.accountId, accountId),
+        sql`COALESCE(${messages.threadId}, ${messages.id}) = ${threadKey}`
+      )
+    )
+    .orderBy(messages.date)
+    .limit(limit)
+    .all()
+  if (rows.length === 0) return []
+
+  const ids = rows.map((r) => r.id)
+  const atts = db.select().from(attachments).where(inArray(attachments.messageId, ids)).all()
+  const byMessage = new Map<string, typeof atts>()
+  for (const a of atts) {
+    const list = byMessage.get(a.messageId) ?? []
+    list.push(a)
+    byMessage.set(a.messageId, list)
+  }
+
+  return rows.map((r) => ({
+    ...rowToSummary(r),
+    cc: r.cc ?? '',
+    references: r.references ?? null,
+    bodyHtml: r.bodyHtml,
+    bodyText: r.bodyText,
+    attachments: (byMessage.get(r.id) ?? []).map((a) => ({
+      id: a.id,
+      messageId: a.messageId,
+      filename: a.filename,
+      mimeType: a.mimeType,
+      size: a.size,
+      localPath: a.localPath
+    }))
+  }))
 }
 
 export interface SweepMessage {

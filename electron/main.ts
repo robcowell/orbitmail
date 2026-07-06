@@ -20,6 +20,9 @@ import {
   listFolders,
   listMessages,
   countMessages,
+  listThreads,
+  countThreads,
+  getThread,
   getMessage,
   setMessageRead,
   setMessageStarred,
@@ -464,6 +467,20 @@ function registerIpc(): void {
 
   ipcMain.handle('messages:count', (_, folderId: string | 'unified') =>
     countMessages(folderId)
+  )
+
+  ipcMain.handle(
+    'messages:listThreads',
+    (_, folderId: string | 'unified', limit?: number, offset?: number) =>
+      listThreads(folderId, limit, offset)
+  )
+
+  ipcMain.handle('messages:countThreads', (_, folderId: string | 'unified') =>
+    countThreads(folderId)
+  )
+
+  ipcMain.handle('messages:getThread', (_, accountId: string, threadId: string) =>
+    getThread(accountId, threadId)
   )
 
   ipcMain.handle('messages:get', (_, messageId: string) => getMessage(messageId))

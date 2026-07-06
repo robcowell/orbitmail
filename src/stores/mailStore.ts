@@ -4,6 +4,7 @@ import type {
   Folder,
   MessageSummary,
   MessageDetail,
+  ThreadSummary,
   SyncStatus,
   ManualAccountInput,
   FlagColor,
@@ -29,6 +30,13 @@ interface MailState {
   messages: MessageSummary[]
   messageOffset: number
   messageTotal: number
+  // Conversation threads for the current folder/unified view (non-search).
+  threads: ThreadSummary[]
+  threadOffset: number
+  threadTotal: number
+  selectedThreadId: string | null
+  selectedThread: MessageDetail[] | null
+  threadLoading: boolean
   selectedMessageId: string | null
   selectedMessage: MessageDetail | null
   readerLoading: boolean
@@ -63,6 +71,13 @@ interface MailState {
   appendMessages: (messages: MessageSummary[]) => void
   setMessageOffset: (offset: number) => void
   setMessageTotal: (total: number) => void
+  setThreads: (threads: ThreadSummary[]) => void
+  appendThreads: (threads: ThreadSummary[]) => void
+  setThreadOffset: (offset: number) => void
+  setThreadTotal: (total: number) => void
+  setSelectedThreadId: (id: string | null) => void
+  setSelectedThread: (thread: MessageDetail[] | null) => void
+  setThreadLoading: (loading: boolean) => void
   setSelectedMessageId: (id: string | null) => void
   setSelectedMessage: (msg: MessageDetail | null) => void
   setReaderLoading: (loading: boolean) => void
@@ -101,6 +116,12 @@ export const useMailStore = create<MailState>((set) => ({
   messages: [],
   messageOffset: 0,
   messageTotal: 0,
+  threads: [],
+  threadOffset: 0,
+  threadTotal: 0,
+  selectedThreadId: null,
+  selectedThread: null,
+  threadLoading: false,
   selectedMessageId: null,
   selectedMessage: null,
   readerLoading: false,
@@ -136,6 +157,13 @@ export const useMailStore = create<MailState>((set) => ({
     set((state) => ({ messages: [...state.messages, ...messages] })),
   setMessageOffset: (offset) => set({ messageOffset: offset }),
   setMessageTotal: (total) => set({ messageTotal: total }),
+  setThreads: (threads) => set({ threads }),
+  appendThreads: (threads) => set((state) => ({ threads: [...state.threads, ...threads] })),
+  setThreadOffset: (offset) => set({ threadOffset: offset }),
+  setThreadTotal: (total) => set({ threadTotal: total }),
+  setSelectedThreadId: (id) => set({ selectedThreadId: id }),
+  setSelectedThread: (thread) => set({ selectedThread: thread }),
+  setThreadLoading: (loading) => set({ threadLoading: loading }),
   setSelectedMessageId: (id) => set({ selectedMessageId: id }),
   setSelectedMessage: (msg) => set({ selectedMessage: msg }),
   setReaderLoading: (loading) => set({ readerLoading: loading }),
@@ -193,41 +221,6 @@ export const useMailStore = create<MailState>((set) => ({
       return { favoriteFolderIds }
     })
 }))
-
-// Whether two summaries are identical in every field the list renders. Used to
-// decide if a refreshed row can keep its existing object reference.
-function summaryUnchanged(a: MessageSummary, b: MessageSummary): boolean {
-  return (
-    a.id === b.id &&
-    a.isRead === b.isRead &&
-    a.isStarred === b.isStarred &&
-    a.flagColor === b.flagColor &&
-    a.date === b.date &&
-    a.subject === b.subject &&
-    a.snippet === b.snippet &&
-    a.from === b.from &&
-    a.hasAttachments === b.hasAttachments
-  )
-}
-
-// Merge a freshly-fetched page into the current list, reusing the existing row
-// object for any message that hasn't changed. This preserves React identity so
-// memoized rows skip re-render, and returns the *same* array reference when
-// nothing changed at all (so the store update is a no-op / no flicker).
-function mergeMessageList(
-  current: MessageSummary[],
-  next: MessageSummary[]
-): MessageSummary[] {
-  const currentById = new Map(current.map((m) => [m.id, m]))
-  let changed = current.length !== next.length
-  const merged = next.map((n) => {
-    const existing = currentById.get(n.id)
-    if (existing && summaryUnchanged(existing, n)) return existing
-    changed = true
-    return n
-  })
-  return changed ? merged : current
-}
 
 // Optimistically drop messages from the visible list (and search results) so the
 // UI reflects a delete/move instantly, independent of the server round-trip.
@@ -288,36 +281,216 @@ async function refreshFoldersUnread(): Promise<void> {
   useMailStore.getState().setFolders(folders)
 }
 
-function applyMessagePage(
-  messages: MessageSummary[],
-  total: number,
-  offset: number
-): void {
-  const store = useMailStore.getState()
+// ---------------------------------------------------------------------------
+// Conversation threads (non-search folder/unified views).
+// ---------------------------------------------------------------------------
 
+const THREAD_PAGE_SIZE = MESSAGE_PAGE_SIZE
+
+function threadKey(t: ThreadSummary): string {
+  return `${t.accountId} ${t.threadId}`
+}
+
+function threadUnchanged(a: ThreadSummary, b: ThreadSummary): boolean {
+  return (
+    a.threadId === b.threadId &&
+    a.accountId === b.accountId &&
+    a.latestMessageId === b.latestMessageId &&
+    a.date === b.date &&
+    a.messageCount === b.messageCount &&
+    a.hasUnread === b.hasUnread &&
+    a.isStarred === b.isStarred &&
+    a.flagColor === b.flagColor &&
+    a.subject === b.subject &&
+    a.snippet === b.snippet
+  )
+}
+
+// Reference-preserving merge (mirrors mergeMessageList) so unchanged thread rows
+// keep identity and the list doesn't flicker on background refresh.
+function mergeThreadList(current: ThreadSummary[], next: ThreadSummary[]): ThreadSummary[] {
+  const byKey = new Map(current.map((t) => [threadKey(t), t]))
+  let changed = current.length !== next.length
+  const merged = next.map((n) => {
+    const existing = byKey.get(threadKey(n))
+    if (existing && threadUnchanged(existing, n)) return existing
+    changed = true
+    return n
+  })
+  return changed ? merged : current
+}
+
+function applyThreadPage(threads: ThreadSummary[], total: number, offset: number): void {
+  const store = useMailStore.getState()
   if (offset === 0) {
-    const merged = mergeMessageList(store.messages, messages)
-    // mergeMessageList returns the same reference when nothing changed, so this
-    // is a genuine no-op in the steady state (no re-render, no flicker).
-    if (merged !== store.messages) store.setMessages(merged)
+    const merged = mergeThreadList(store.threads, threads)
+    if (merged !== store.threads) store.setThreads(merged)
   } else {
-    store.appendMessages(messages)
+    store.appendThreads(threads)
   }
-  store.setMessageOffset(offset + messages.length)
-  if (store.messageTotal !== total) {
-    store.setMessageTotal(total)
+  store.setThreadOffset(offset + threads.length)
+  if (store.threadTotal !== total) store.setThreadTotal(total)
+}
+
+async function loadFolderThreads(folderId: string | 'unified', offset = 0): Promise<void> {
+  const [threads, total] = await Promise.all([
+    window.orbitMail.messages.listThreads(folderId, THREAD_PAGE_SIZE, offset),
+    window.orbitMail.messages.countThreads(folderId)
+  ])
+  applyThreadPage(threads, total, offset)
+}
+
+// Open a conversation: load every message in the thread (across folders), show
+// the newest, and mark any unread messages read optimistically + in the
+// background. `selectedThread` drives the reader.
+export async function selectThread(accountId: string, threadId: string): Promise<void> {
+  const store = useMailStore.getState()
+  store.setSelectedThreadId(threadId)
+  store.setSelectedThread(null)
+  store.setThreadLoading(true)
+  // Clear any single-message (search) selection so the reader shows the thread.
+  store.setSelectedMessageId(null)
+  store.setSelectedMessage(null)
+  store.setSelectedMessageIds([])
+
+  const messages = await window.orbitMail.messages.getThread(accountId, threadId)
+  const after = useMailStore.getState()
+  if (after.selectedThreadId !== threadId) return // user moved on
+  after.setSelectedThread(messages)
+  after.setThreadLoading(false)
+
+  // Optimistically clear the thread's unread dot in the list.
+  markThreadReadInList(accountId, threadId)
+
+  const unread = messages.filter((m) => !m.isRead)
+  if (unread.length > 0) {
+    try {
+      await Promise.all(unread.map((m) => window.orbitMail.messages.markRead(m.id, true)))
+      await refreshFoldersUnread()
+    } catch {
+      // best-effort; the next sync reconciles read state
+    }
   }
 }
 
-async function loadFolderMessages(
-  folderId: string | 'unified',
-  offset = 0
+// Update a thread row's aggregate unread/star after a per-message change.
+function recomputeThreadAggregate(accountId: string, threadId: string): void {
+  const store = useMailStore.getState()
+  const thread = store.selectedThread
+  if (!thread) return
+  const hasUnread = thread.some((m) => !m.isRead)
+  const isStarred = thread.some((m) => m.isStarred)
+  store.setThreads(
+    store.threads.map((t) =>
+      t.threadId === threadId && t.accountId === accountId ? { ...t, hasUnread, isStarred } : t
+    )
+  )
+}
+
+function markThreadReadInList(accountId: string, threadId: string): void {
+  const store = useMailStore.getState()
+  store.setThreads(
+    store.threads.map((t) =>
+      t.threadId === threadId && t.accountId === accountId ? { ...t, hasUnread: false } : t
+    )
+  )
+}
+
+// Optimistically patch one message inside the open thread (read/star/flag) and
+// refresh the list aggregate. Returns the prior fields for rollback.
+export function patchThreadMessage(
+  messageId: string,
+  partial: Partial<MessageDetail>
+): Partial<MessageDetail> | null {
+  const store = useMailStore.getState()
+  const thread = store.selectedThread
+  if (!thread) return null
+  const target = thread.find((m) => m.id === messageId)
+  if (!target) return null
+
+  const before: Partial<MessageDetail> = {}
+  for (const key of Object.keys(partial) as (keyof MessageDetail)[]) {
+    ;(before as Record<string, unknown>)[key] = target[key]
+  }
+  store.setSelectedThread(
+    thread.map((m) => (m.id === messageId ? { ...m, ...partial } : m))
+  )
+  if (store.selectedThreadId) {
+    recomputeThreadAggregate(target.accountId, store.selectedThreadId)
+  }
+  return before
+}
+
+export function selectAdjacentThread(direction: 1 | -1): void {
+  const store = useMailStore.getState()
+  const list = store.threads
+  if (list.length === 0) return
+  const idx = list.findIndex((t) => t.threadId === store.selectedThreadId)
+  const nextIdx = idx === -1 ? (direction === 1 ? 0 : list.length - 1) : idx + direction
+  if (nextIdx < 0 || nextIdx >= list.length) return
+  const t = list[nextIdx]
+  void selectThread(t.accountId, t.threadId)
+}
+
+function removeThreadFromList(accountId: string, threadId: string): void {
+  const store = useMailStore.getState()
+  const next = store.threads.filter(
+    (t) => !(t.threadId === threadId && t.accountId === accountId)
+  )
+  const removed = store.threads.length - next.length
+  store.setThreads(next)
+  if (removed > 0) store.setThreadTotal(Math.max(0, store.threadTotal - removed))
+}
+
+// Move an entire conversation to Trash (or delete when already there) via the
+// batch endpoint. Optimistically drops the thread from the list.
+export async function deleteThread(accountId: string, threadId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const messages =
+    store.selectedThreadId === threadId && store.selectedThread
+      ? store.selectedThread
+      : await window.orbitMail.messages.getThread(accountId, threadId)
+  if (messages.length === 0) return
+
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const items = messages.map((m) => {
+    const currentFolder = folders.find((f) => f.id === m.folderId)
+    const trash =
+      currentFolder?.type === 'trash' ? null : findAccountFolder(folders, m.accountId, 'trash')
+    return { id: m.id, targetFolderId: trash?.id ?? null }
+  })
+
+  removeThreadFromList(accountId, threadId)
+  if (store.selectedThreadId === threadId) {
+    store.setSelectedThread(null)
+    store.setSelectedThreadId(null)
+  }
+  store.setToast(messages.length === 1 ? 'Deleted' : `Deleted ${messages.length} messages`)
+
+  try {
+    await window.orbitMail.messages.deleteMany(items)
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Delete failed')
+    await refreshMessages()
+  }
+}
+
+export async function toggleThreadMessageStar(
+  messageId: string,
+  isStarred: boolean
 ): Promise<void> {
-  const [messages, total] = await Promise.all([
-    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, offset),
-    window.orbitMail.messages.count(folderId)
-  ])
-  applyMessagePage(messages, total, offset)
+  const store = useMailStore.getState()
+  const before = patchThreadMessage(
+    messageId,
+    isStarred ? { isStarred: true } : { isStarred: false, flagColor: null }
+  )
+  try {
+    await window.orbitMail.messages.toggleStar(messageId, isStarred)
+  } catch (err) {
+    if (before) patchThreadMessage(messageId, before)
+    store.setToast(err instanceof Error ? err.message : 'Update failed')
+  }
 }
 
 let refreshMessagesTimer: ReturnType<typeof setTimeout> | null = null
@@ -331,9 +504,9 @@ export function cancelScheduledRefreshMessages(): void {
 
 /** Debounced refresh for background sync (IDLE / polling). Avoids list flicker. */
 export function scheduleRefreshMessages(delayMs?: number): void {
+  const state = useMailStore.getState()
   const resolvedDelay =
-    delayMs ??
-    (useMailStore.getState().messages.length === 0 ? 0 : 400)
+    delayMs ?? (state.threads.length === 0 && state.messages.length === 0 ? 0 : 400)
   cancelScheduledRefreshMessages()
   if (resolvedDelay === 0) {
     void refreshMessages()
@@ -371,22 +544,8 @@ export async function loadInitialData(): Promise<void> {
     store.setAccounts(accounts)
     store.setFolders(folders)
     store.setSyncStatus(syncStatus)
-    store.setMessageOffset(0)
-    await loadFolderMessages(persisted.selectedFolderId, 0)
-
-    if (persisted.selectedMessageId) {
-      const msg = await window.orbitMail.messages.get(persisted.selectedMessageId)
-      if (msg) {
-        store.setSelectedMessageId(msg.id)
-        store.setSelectedMessage(msg)
-        store.setSelectedMessageIds([msg.id])
-        store.setSelectionAnchorId(msg.id)
-      } else {
-        store.setSelectedMessageId(null)
-        store.setSelectedMessage(null)
-        scheduleSaveUiPreferences({ selectedMessageId: null })
-      }
-    }
+    store.setThreadOffset(0)
+    await loadFolderThreads(persisted.selectedFolderId, 0)
 
     if (accounts.length === 0) {
       store.setShowAddAccount(true)
@@ -396,22 +555,23 @@ export async function loadInitialData(): Promise<void> {
   }
 }
 
+// Background refresh of the current folder's thread list (non-search) + folders.
 export async function refreshMessages(): Promise<void> {
   const folderId = useMailStore.getState().selectedFolderId
-  const [messages, total, folders] = await Promise.all([
-    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, 0),
-    window.orbitMail.messages.count(folderId),
+  const [threads, total, folders] = await Promise.all([
+    window.orbitMail.messages.listThreads(folderId, THREAD_PAGE_SIZE, 0),
+    window.orbitMail.messages.countThreads(folderId),
     window.orbitMail.folders.list()
   ])
 
-  applyMessagePage(messages, total, 0)
+  applyThreadPage(threads, total, 0)
   useMailStore.getState().setFolders(folders)
 }
 
 export async function loadMoreMessages(): Promise<void> {
   const store = useMailStore.getState()
-  if (store.messages.length >= store.messageTotal) return
-  await loadFolderMessages(store.selectedFolderId, store.messageOffset)
+  if (store.threads.length >= store.threadTotal) return
+  await loadFolderThreads(store.selectedFolderId, store.threadOffset)
 }
 
 export async function addAccount(provider: 'gmail' | 'o365'): Promise<void> {
@@ -577,6 +737,9 @@ function rangeIds(list: MessageSummary[], fromId: string, toId: string): string[
 // failure) rather than blocking on a full list refresh.
 export async function selectMessage(messageId: string): Promise<void> {
   const store = useMailStore.getState()
+  // Selecting a single message (e.g. a search result) supersedes any open thread.
+  store.setSelectedThreadId(null)
+  store.setSelectedThread(null)
   store.setSelectedMessageId(messageId)
   store.setSelectedMessageIds([messageId])
   store.setSelectionAnchorId(messageId)
@@ -739,7 +902,9 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
   store.setSelectedMessage(null)
   store.setSelectedMessageIds([])
   store.setSelectionAnchorId(null)
-  store.setMessageOffset(0)
+  store.setSelectedThreadId(null)
+  store.setSelectedThread(null)
+  store.setThreadOffset(0)
   store.setSearchQuery('')
   store.setSearchResults([])
   scheduleSaveUiPreferences({
@@ -747,12 +912,12 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
     selectedMessageId: null
   })
   // Clear the previous folder's rows and show skeletons while the (fast, local)
-  // query runs, so the switch doesn't flash the old folder's messages.
-  store.setMessages([])
-  store.setMessageTotal(0)
+  // query runs, so the switch doesn't flash the old folder's threads.
+  store.setThreads([])
+  store.setThreadTotal(0)
   store.setListLoading(true)
   try {
-    await loadFolderMessages(folderId, 0)
+    await loadFolderThreads(folderId, 0)
   } finally {
     store.setListLoading(false)
   }

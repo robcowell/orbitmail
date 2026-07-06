@@ -90,6 +90,27 @@ export interface Attachment {
   localPath: string | null
 }
 
+// One collapsed conversation row in the message list. Represents a thread as it
+// appears in the current folder/view (latest message + in-folder aggregates);
+// opening it loads the full cross-folder conversation via getThread.
+export interface ThreadSummary {
+  threadId: string
+  accountId: string
+  // The most recent message in this folder — drives the row's subject/snippet/date.
+  latestMessageId: string
+  from: string
+  subject: string
+  snippet: string
+  date: number
+  isStarred: boolean
+  flagColor: FlagColor | null
+  hasAttachments: boolean
+  messageCount: number
+  hasUnread: boolean
+  // Distinct sender display names, oldest first.
+  participants: string[]
+}
+
 export interface MessageDetail extends MessageSummary {
   cc: string
   // Raw References header (space-separated Message-IDs) — used to build a proper
@@ -237,6 +258,13 @@ export interface OrbitMailAPI {
   messages: {
     list: (folderId: string | 'unified', limit?: number, offset?: number) => Promise<MessageSummary[]>
     count: (folderId: string | 'unified') => Promise<number>
+    listThreads: (
+      folderId: string | 'unified',
+      limit?: number,
+      offset?: number
+    ) => Promise<ThreadSummary[]>
+    countThreads: (folderId: string | 'unified') => Promise<number>
+    getThread: (accountId: string, threadId: string) => Promise<MessageDetail[]>
     get: (messageId: string) => Promise<MessageDetail | null>
     markRead: (messageId: string, isRead: boolean) => Promise<void>
     toggleStar: (messageId: string, isStarred: boolean) => Promise<void>

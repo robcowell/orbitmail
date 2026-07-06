@@ -46,6 +46,11 @@ export const messages = sqliteTable(
       .references(() => accounts.id, { onDelete: 'cascade' }),
     uid: integer('uid').notNull(),
     messageId: text('message_id'),
+    // RFC 5322 threading headers + a derived thread key. `references` is the raw
+    // space-separated Message-ID chain; `threadId` groups a conversation.
+    inReplyTo: text('in_reply_to'),
+    references: text('references'),
+    threadId: text('thread_id'),
   from: text('from_addr').notNull(),
   to: text('to_addr').notNull(),
     cc: text('cc'),
@@ -70,7 +75,9 @@ export const messages = sqliteTable(
   },
   (t) => [
     index('messages_folder_date_idx').on(t.folderId, t.date),
-    index('messages_account_date_idx').on(t.accountId, t.date)
+    index('messages_account_date_idx').on(t.accountId, t.date),
+    index('messages_thread_idx').on(t.accountId, t.threadId),
+    index('messages_message_id_idx').on(t.messageId)
   ]
 )
 

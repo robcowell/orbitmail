@@ -77,6 +77,8 @@ export interface MessageSummary {
   isStarred: boolean
   flagColor: FlagColor | null
   hasAttachments: boolean
+  // Conversation grouping key derived from RFC 5322 threading headers.
+  threadId: string | null
 }
 
 export interface Attachment {
@@ -90,6 +92,9 @@ export interface Attachment {
 
 export interface MessageDetail extends MessageSummary {
   cc: string
+  // Raw References header (space-separated Message-IDs) — used to build a proper
+  // References chain when replying.
+  references: string | null
   bodyHtml: string | null
   bodyText: string | null
   attachments: Attachment[]

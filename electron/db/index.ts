@@ -5,6 +5,7 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
 import { indexMessageInFts, migrateFtsIndex } from '../services/search-index'
+import { normalizeSubject } from '../services/thread-util'
 
 let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null
 let sqliteInstance: Database.Database | null = null
@@ -62,6 +63,9 @@ function initTables(db: Database.Database): void {
       account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       uid INTEGER NOT NULL,
       message_id TEXT,
+      in_reply_to TEXT,
+      "references" TEXT,
+      thread_id TEXT,
       from_addr TEXT NOT NULL,
       to_addr TEXT NOT NULL,
       cc TEXT,
@@ -157,6 +161,12 @@ function migrateSchema(db: Database.Database): void {
     'CREATE INDEX IF NOT EXISTS messages_folder_unread_idx ON messages(folder_id) WHERE is_read = 0'
   )
 
+  // Threading: group a conversation per account; look up messages by Message-ID.
+  db.exec('CREATE INDEX IF NOT EXISTS messages_thread_idx ON messages(account_id, thread_id)')
+  db.exec('CREATE INDEX IF NOT EXISTS messages_message_id_idx ON messages(message_id)')
+
+  backfillThreadIds(db)
+
   db.exec(`
     UPDATE folders
     SET highest_synced_uid = (
@@ -189,12 +199,49 @@ function migrateSchema(db: Database.Database): void {
   if (!messageNames.has('sweep_cache_at')) {
     db.exec('ALTER TABLE messages ADD COLUMN sweep_cache_at INTEGER')
   }
+  if (!messageNames.has('in_reply_to')) {
+    db.exec('ALTER TABLE messages ADD COLUMN in_reply_to TEXT')
+  }
+  if (!messageNames.has('references')) {
+    db.exec('ALTER TABLE messages ADD COLUMN "references" TEXT')
+  }
+  if (!messageNames.has('thread_id')) {
+    db.exec('ALTER TABLE messages ADD COLUMN thread_id TEXT')
+  }
 
   const accountCols = db.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>
   const accountNames = new Set(accountCols.map((c) => c.name))
   if (!accountNames.has('sync_days')) {
     db.exec('ALTER TABLE accounts ADD COLUMN sync_days INTEGER NOT NULL DEFAULT 90')
   }
+}
+
+// One-time: give already-synced messages a thread_id. They predate the stored
+// threading headers, so group them by normalized subject; mail synced from here
+// on gets a header-derived id in the sync path. Guarded so it runs once.
+function backfillThreadIds(db: Database.Database): void {
+  const done = db
+    .prepare("SELECT value FROM app_preferences WHERE key = 'thread_backfill_v1'")
+    .get() as { value: string } | undefined
+  if (done?.value === '1') return
+
+  const rows = db
+    .prepare('SELECT id, subject FROM messages WHERE thread_id IS NULL')
+    .all() as Array<{ id: string; subject: string }>
+
+  if (rows.length > 0) {
+    const update = db.prepare('UPDATE messages SET thread_id = ? WHERE id = ?')
+    const run = db.transaction((items: Array<{ id: string; subject: string }>) => {
+      for (const r of items) {
+        update.run(`subj:${normalizeSubject(r.subject)}`, r.id)
+      }
+    })
+    run(rows)
+  }
+
+  db.prepare(
+    "INSERT INTO app_preferences (key, value) VALUES ('thread_backfill_v1', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  ).run()
 }
 
 export function getDb() {

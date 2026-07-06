@@ -418,7 +418,8 @@ const SUMMARY_COLS = {
   isRead: messages.isRead,
   isStarred: messages.isStarred,
   flagColor: messages.flagColor,
-  hasAttachments: messages.hasAttachments
+  hasAttachments: messages.hasAttachments,
+  threadId: messages.threadId
 } as const
 
 type SummaryRow = {
@@ -436,6 +437,7 @@ type SummaryRow = {
   isStarred: boolean
   flagColor: string | null
   hasAttachments: boolean
+  threadId: string | null
 }
 
 function rowToSummary(r: SummaryRow): MessageSummary {
@@ -453,7 +455,8 @@ function rowToSummary(r: SummaryRow): MessageSummary {
     isRead: r.isRead,
     isStarred: r.isStarred,
     flagColor: (r.flagColor as FlagColor | null) ?? null,
-    hasAttachments: r.hasAttachments
+    hasAttachments: r.hasAttachments,
+    threadId: r.threadId
   }
 }
 
@@ -698,6 +701,7 @@ export function getMessage(messageId: string): MessageDetail | null {
   return {
     ...rowToSummary(r),
     cc: r.cc ?? '',
+    references: r.references ?? null,
     bodyHtml: r.bodyHtml,
     bodyText: r.bodyText,
     attachments: atts.map((a) => ({
@@ -836,6 +840,9 @@ export interface UpsertMessageData {
   accountId: string
   uid: number
   messageId?: string
+  inReplyTo?: string | null
+  references?: string | null
+  threadId?: string | null
   from: string
   to: string
   cc?: string
@@ -864,6 +871,9 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
     db.update(messages)
       .set({
         messageId: data.messageId,
+        inReplyTo: data.inReplyTo,
+        references: data.references,
+        threadId: data.threadId,
         from: data.from,
         to: data.to,
         cc: data.cc,
@@ -886,6 +896,9 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
       accountId: data.accountId,
       uid: data.uid,
       messageId: data.messageId,
+      inReplyTo: data.inReplyTo,
+      references: data.references,
+      threadId: data.threadId,
       from: data.from,
       to: data.to,
       cc: data.cc,
@@ -1135,6 +1148,7 @@ type SearchRow = {
   is_starred: number
   flag_color: string | null
   has_attachments: number
+  thread_id: string | null
 }
 
 function mapSearchRows(rows: SearchRow[]): MessageSummary[] {
@@ -1152,13 +1166,14 @@ function mapSearchRows(rows: SearchRow[]): MessageSummary[] {
     isRead: Boolean(r.is_read),
     isStarred: Boolean(r.is_starred),
     flagColor: (r.flag_color as FlagColor | null) ?? null,
-    hasAttachments: Boolean(r.has_attachments)
+    hasAttachments: Boolean(r.has_attachments),
+    threadId: r.thread_id
   }))
 }
 
 const SEARCH_SELECT = `SELECT m.id, m.folder_id, m.account_id, m.uid, m.message_id,
               m.from_addr, m.to_addr, m.subject, m.snippet, m.date,
-              m.is_read, m.is_starred, m.flag_color, m.has_attachments`
+              m.is_read, m.is_starred, m.flag_color, m.has_attachments, m.thread_id`
 
 function searchMessagesFts(
   sqlite: ReturnType<typeof getRawSqlite>,

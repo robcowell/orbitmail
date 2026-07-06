@@ -15,6 +15,7 @@ import {
 import { pop3ClientOptions } from './account-credentials'
 import { recordAttachmentsMetadata } from './attachment-fetch'
 import { isWithinSyncWindow } from './sync-policy'
+import { computeThreadId, normalizeReferences } from './thread-util'
 import type { SyncProgressHandler } from './imap-sync'
 
 const SYNC_BATCH_SIZE = 200
@@ -106,12 +107,23 @@ export async function syncPop3Account(
       const bodyText = parsed.text ?? ''
       const bodyHtml = parsed.html ? String(parsed.html) : null
       const snippet = makeSnippet(bodyText || (parsed.textAsHtml ?? subject))
+      const inReplyTo = normalizeReferences(parsed.inReplyTo)
+      const references = normalizeReferences(parsed.references)
+      const threadId = computeThreadId({
+        messageId: parsed.messageId,
+        inReplyTo,
+        references,
+        subject
+      })
 
       const { id, isNew } = upsertMessage({
         folderId: folder.id,
         accountId,
         uid,
         messageId: parsed.messageId,
+        inReplyTo,
+        references,
+        threadId,
         from,
         to,
         cc,

@@ -211,9 +211,13 @@ export function buildReplyPayload(
   const reSubject = msg.subject.startsWith('Re:') ? msg.subject : `Re: ${msg.subject}`
   const fwdSubject = msg.subject.startsWith('Fwd:') ? msg.subject : `Fwd: ${msg.subject}`
   const emptyBody = { bodyHtml: '', bodyText: '' }
+  // References = the original's own References chain + its Message-ID, so the
+  // reply groups under the true thread root (not just the immediate parent).
+  const parentId = msg.messageId ?? msg.id
+  const priorRefs = (msg.references ?? '').trim()
   const threading = {
-    inReplyTo: msg.messageId ?? msg.id,
-    references: msg.messageId ?? msg.id,
+    inReplyTo: parentId,
+    references: priorRefs ? `${priorRefs} ${parentId}` : parentId,
     originalMessageId
   }
 

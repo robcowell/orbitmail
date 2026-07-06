@@ -39,6 +39,7 @@ import {
   deletePop3MessageOnServer
 } from './pop3-sync'
 import { withImapClient } from './imap-pool'
+import { computeThreadId, normalizeReferences } from './thread-util'
 
 // POP3 accounts have no IDLE, so they poll frequently. IMAP/Gmail/O365 inboxes
 // are push-synced by IMAP IDLE, so those accounts poll on a slower cadence as a
@@ -503,6 +504,14 @@ async function fetchMessagesByUid(
     const isRead = msg.flags?.has('\\Seen') ?? false
     const isStarred = msg.flags?.has('\\Flagged') ?? false
     const hasAttachments = (parsed.attachments?.length ?? 0) > 0
+    const inReplyTo = normalizeReferences(parsed.inReplyTo)
+    const references = normalizeReferences(parsed.references)
+    const threadId = computeThreadId({
+      messageId: parsed.messageId,
+      inReplyTo,
+      references,
+      subject
+    })
 
     pending.push({
       data: {
@@ -510,6 +519,9 @@ async function fetchMessagesByUid(
         accountId,
         uid,
         messageId: parsed.messageId,
+        inReplyTo,
+        references,
+        threadId,
         from,
         to,
         cc,

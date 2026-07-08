@@ -15,6 +15,7 @@ import {
   openMessage,
   setFlag
 } from '../../utils/messageActions'
+import { printMessageById } from '../../utils/printMessage'
 import { buildMailMenuItems } from './mailMenu'
 
 interface MessageContextMenuProps {
@@ -61,7 +62,8 @@ export function MessageContextMenu({ message, x, y, onClose }: MessageContextMen
           setFlag: (color) => setFlag(message.id, color),
           archive: () => archiveMessageById(message.id),
           move: (folderId) => moveToFolder(message.id, folderId),
-          copy: (folderId) => copyToFolder(message.id, folderId)
+          copy: (folderId) => copyToFolder(message.id, folderId),
+          print: () => printMessageById(message.id)
         },
         run
       ),

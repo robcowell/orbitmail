@@ -18,6 +18,7 @@ import {
   deleteThread
 } from './stores/mailStore'
 import { exposeFlushHook } from './stores/persistence'
+import { printMessageDetail, printThreadDetails } from './utils/printMessage'
 
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
@@ -154,6 +155,17 @@ function MainApp() {
       if (e.key === '/' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
         document.querySelector<HTMLInputElement>('.search-input')?.focus()
+      }
+      if ((e.key === 'p' || e.key === 'P') && (e.metaKey || e.ctrlKey)) {
+        // Print the open conversation, or the selected single message.
+        const thread = store.selectedThread
+        if (thread && thread.length > 0) {
+          e.preventDefault()
+          printThreadDetails(thread).catch(() => {})
+        } else if (store.selectedMessage) {
+          e.preventDefault()
+          printMessageDetail(store.selectedMessage).catch(() => {})
+        }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (store.selectedThreadId && store.selectedThread?.length) {

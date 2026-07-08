@@ -13,6 +13,7 @@ import {
   setThreadFlagColor
 } from '../../stores/mailStore'
 import { extractSenderEmail, type MessageComposeMode } from '../../utils/messageActions'
+import { printThreadById } from '../../utils/printMessage'
 import { buildMailMenuItems } from './mailMenu'
 
 interface ThreadContextMenuProps {
@@ -69,7 +70,8 @@ export function ThreadContextMenu({ thread, x, y, onClose }: ThreadContextMenuPr
         setFlag: (color) => setThreadFlagColor(accountId, threadId, color),
         archive: () => archiveThread(accountId, threadId),
         move: (folderId) => moveThreadToFolder(accountId, threadId, folderId),
-        copy: (folderId) => copyThreadToFolder(accountId, threadId, folderId)
+        copy: (folderId) => copyThreadToFolder(accountId, threadId, folderId),
+        print: () => printThreadById(accountId, threadId)
       },
       run
     )

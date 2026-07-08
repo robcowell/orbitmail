@@ -378,6 +378,59 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
   composeWindow.loadURL(composeUrl)
 }
 
+// Prints a self-contained HTML document (built in the renderer from the message
+// headers + sanitized body) by loading it into a hidden, script-free window and
+// invoking the OS print dialog. Resolves once the dialog is dismissed; a user
+// cancel resolves with { printed: false } rather than rejecting.
+function printDocument(html: string): Promise<{ printed: boolean }> {
+  return new Promise((resolve, reject) => {
+    const printWindow = new BrowserWindow({
+      show: false,
+      parent: mainWindow ?? undefined,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        // The document is untrusted email HTML — no scripting, no preload.
+        javascript: false
+      }
+    })
+
+    let settled = false
+    const finish = (fn: () => void) => {
+      if (!settled) {
+        settled = true
+        fn()
+      }
+      if (!printWindow.isDestroyed()) printWindow.close()
+    }
+
+    printWindow.webContents.once('did-finish-load', () => {
+      printWindow.webContents.print(
+        { silent: false, printBackground: true },
+        (success, failureReason) => {
+          // "cancelled" (dialog dismissed) is a normal outcome, not an error.
+          if (!success && failureReason && failureReason !== 'cancelled') {
+            finish(() => reject(new Error(failureReason)))
+          } else {
+            finish(() => resolve({ printed: success }))
+          }
+        }
+      )
+    })
+
+    printWindow.webContents.once('did-fail-load', (_e, _code, description) => {
+      finish(() => reject(new Error(description || 'Failed to load print document')))
+    })
+
+    printWindow
+      .loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+      .catch((err: unknown) => {
+        finish(() => reject(err instanceof Error ? err : new Error('Failed to load print document')))
+      })
+  })
+}
+
 function registerIpc(): void {
   ipcMain.handle('accounts:list', () => listAccounts())
 
@@ -714,6 +767,8 @@ function registerIpc(): void {
   ipcMain.handle('shell:openExternal', async (_, url: string) => {
     await shell.openExternal(url)
   })
+
+  ipcMain.handle('print:document', (_, html: string) => printDocument(html))
 
   ipcMain.handle('attachments:download', async (_, attachmentId: string) => {
     return ensureAttachmentLocal(attachmentId)

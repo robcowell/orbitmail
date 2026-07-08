@@ -89,6 +89,9 @@ const api: OrbitMailAPI = {
   shell: {
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url)
   },
+  print: {
+    document: (html: string) => ipcRenderer.invoke('print:document', html)
+  },
   app: {
     onNeedsAccount: (callback) => {
       const handler = () => callback()

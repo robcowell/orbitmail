@@ -31,7 +31,8 @@ import {
   getFolderById,
   searchMessages,
   updateAccountDisplayName,
-  getLatestInboxMessage
+  getLatestInboxMessage,
+  regroupThreadsIfNeeded
 } from './services/db-service'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
@@ -306,6 +307,14 @@ function createMainWindow(): void {
     mainWindow?.show()
   })
 
+  // DIAGNOSTIC (dev only): surface renderer console (incl. [renderer-lag] and
+  // React errors) in the same terminal as the main-process logs.
+  if (!app.isPackaged) {
+    mainWindow.webContents.on('console-message', (_e, _l, message) => {
+      if (/lag|error|warning|maximum update/i.test(message)) console.log('[renderer]', message)
+    })
+  }
+
   mainWindow.on('close', () => {
     if (!mainWindow) return
     const bounds = mainWindow.getBounds()
@@ -432,6 +441,24 @@ function printDocument(html: string): Promise<{ printed: boolean }> {
 }
 
 function registerIpc(): void {
+  // DIAGNOSTIC (dev only): time every IPC handler and warn on slow ones, so a
+  // handler that blocks the main-process event loop (and thus freezes all
+  // renderer IPC) is easy to spot in the terminal.
+  if (!app.isPackaged) {
+    const origHandle = ipcMain.handle.bind(ipcMain)
+    ipcMain.handle = function (channel: string, listener: (...a: never[]) => unknown) {
+      return origHandle(channel, async (event, ...args) => {
+        const started = Date.now()
+        try {
+          return await (listener as (...a: unknown[]) => unknown)(event, ...args)
+        } finally {
+          const ms = Date.now() - started
+          if (ms > 80) console.warn(`[ipc-slow] ${channel} ${ms}ms`)
+        }
+      })
+    } as typeof ipcMain.handle
+  }
+
   ipcMain.handle('accounts:list', () => listAccounts())
 
   ipcMain.handle('accounts:add', async (_, provider: 'gmail' | 'o365') => {
@@ -891,6 +918,25 @@ if (!gotSingleInstanceLock) {
         updateAppBadge(mainWindow)
       }
     })
+
+    // DIAGNOSTIC (dev only): detect stalls of the main-process event loop. A
+    // large drift means something synchronous is blocking IPC (which freezes the
+    // UI). Prints how long the loop was blocked.
+    if (!app.isPackaged) {
+      let lastTick = Date.now()
+      const lagTimer = setInterval(() => {
+        const now = Date.now()
+        const drift = now - lastTick - 1000
+        if (drift > 150) console.warn(`[main-lag] event loop blocked ~${drift}ms`)
+        lastTick = now
+      }, 1000)
+      lagTimer.unref()
+    }
+
+    // One-time upgrade: transitively re-link conversations so existing split
+    // threads merge before the renderer's first (local) query. No-op after the
+    // first run (guarded by a preferences flag).
+    regroupThreadsIfNeeded()
 
     // Show the window as early as possible; the renderer then loads the user's
     // cached mail from the local DB. Local-only setup (mailto handler, badge)

@@ -53,6 +53,12 @@ interface MailState {
   isOnline: boolean
   collapsedAccountIds: Record<string, boolean>
   favoriteFolderIds: string[]
+  // Conversation grouping on/off (persisted). When off, the list is flat.
+  threadedView: boolean
+  // Thread keys ("<accountId> <threadId>") currently expanded inline in the
+  // list, and a cache of each expanded thread's messages (undefined = loading).
+  expandedThreadKeys: string[]
+  expandedThreadMessages: Record<string, MessageDetail[]>
   aiAnalysisById: Record<string, AiAnalysis>
   aiAnalyzingId: string | null
   draftingReplyId: string | null
@@ -95,6 +101,9 @@ interface MailState {
   toggleAccountCollapsed: (accountId: string) => void
   expandAccount: (accountId: string) => void
   toggleFavoriteFolder: (folderId: string) => void
+  setThreadedView: (enabled: boolean) => void
+  setExpandedThreadKeys: (keys: string[]) => void
+  setExpandedThreadMessages: (map: Record<string, MessageDetail[]>) => void
   setAiAnalysis: (messageId: string, analysis: AiAnalysis) => void
   setAiAnalyzingId: (id: string | null) => void
   setDraftingReplyId: (id: string | null) => void
@@ -138,6 +147,9 @@ export const useMailStore = create<MailState>((set) => ({
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   collapsedAccountIds: {},
   favoriteFolderIds: [],
+  threadedView: true,
+  expandedThreadKeys: [],
+  expandedThreadMessages: {},
   aiAnalysisById: {},
   aiAnalyzingId: null,
   draftingReplyId: null,
@@ -219,7 +231,10 @@ export const useMailStore = create<MailState>((set) => ({
         : [...state.favoriteFolderIds, folderId]
       scheduleSaveUiPreferences({ favoriteFolderIds })
       return { favoriteFolderIds }
-    })
+    }),
+  setThreadedView: (enabled) => set({ threadedView: enabled }),
+  setExpandedThreadKeys: (keys) => set({ expandedThreadKeys: keys }),
+  setExpandedThreadMessages: (map) => set({ expandedThreadMessages: map })
 }))
 
 // Optimistically drop messages from the visible list (and search results) so the
@@ -338,6 +353,91 @@ async function loadFolderThreads(folderId: string | 'unified', offset = 0): Prom
     window.orbitMail.messages.countThreads(folderId)
   ])
   applyThreadPage(threads, total, offset)
+}
+
+function applyMessagePage(messages: MessageSummary[], total: number, offset: number): void {
+  const store = useMailStore.getState()
+  if (offset === 0) store.setMessages(messages)
+  else store.appendMessages(messages)
+  store.setMessageOffset(offset + messages.length)
+  if (store.messageTotal !== total) store.setMessageTotal(total)
+}
+
+// Flat (unthreaded) list of every message in the folder, newest first.
+async function loadFolderMessages(folderId: string | 'unified', offset = 0): Promise<void> {
+  const [messages, total] = await Promise.all([
+    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, offset),
+    window.orbitMail.messages.count(folderId)
+  ])
+  applyMessagePage(messages, total, offset)
+}
+
+// Load the current folder's list in whichever mode is active.
+async function loadFolderList(folderId: string | 'unified', offset = 0): Promise<void> {
+  if (useMailStore.getState().threadedView) await loadFolderThreads(folderId, offset)
+  else await loadFolderMessages(folderId, offset)
+}
+
+// Flip conversation grouping on/off, persist it, and reload the current folder.
+export async function toggleThreadedView(): Promise<void> {
+  const store = useMailStore.getState()
+  const threadedView = !store.threadedView
+  store.setThreadedView(threadedView)
+  scheduleSaveUiPreferences({ threadedView })
+
+  // Clear selection + both list backings so the switch doesn't show stale rows.
+  store.setSelectedThreadId(null)
+  store.setSelectedThread(null)
+  store.setSelectedMessageId(null)
+  store.setSelectedMessage(null)
+  store.setSelectedMessageIds([])
+  store.setExpandedThreadKeys([])
+  store.setExpandedThreadMessages({})
+  store.setThreads([])
+  store.setThreadTotal(0)
+  store.setThreadOffset(0)
+  store.setMessages([])
+  store.setMessageTotal(0)
+  store.setMessageOffset(0)
+
+  store.setListLoading(true)
+  try {
+    await loadFolderList(store.selectedFolderId, 0)
+  } finally {
+    store.setListLoading(false)
+  }
+}
+
+function expandKey(accountId: string, threadId: string): string {
+  return `${accountId} ${threadId}`
+}
+
+// Expand/collapse a thread's messages inline in the list. On expand, the
+// conversation is fetched (across folders) and cached; collapse just hides it.
+export async function toggleThreadExpanded(accountId: string, threadId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const key = expandKey(accountId, threadId)
+  const isExpanded = store.expandedThreadKeys.includes(key)
+
+  if (isExpanded) {
+    store.setExpandedThreadKeys(store.expandedThreadKeys.filter((k) => k !== key))
+    return
+  }
+
+  store.setExpandedThreadKeys([...store.expandedThreadKeys, key])
+  if (store.expandedThreadMessages[key]) return // already cached
+
+  try {
+    const messages = await window.orbitMail.messages.getThread(accountId, threadId)
+    const after = useMailStore.getState()
+    if (!after.expandedThreadKeys.includes(key)) return // collapsed while loading
+    after.setExpandedThreadMessages({ ...after.expandedThreadMessages, [key]: messages })
+  } catch {
+    // Leave it expanded but uncached; the row shows a loading state and a retry
+    // happens on the next expand.
+    const after = useMailStore.getState()
+    after.setExpandedThreadKeys(after.expandedThreadKeys.filter((k) => k !== key))
+  }
 }
 
 // Open a conversation: load every message in the thread (across folders), show
@@ -730,7 +830,8 @@ export async function loadInitialData(): Promise<void> {
     store.setFolders(folders)
     store.setSyncStatus(syncStatus)
     store.setThreadOffset(0)
-    await loadFolderThreads(persisted.selectedFolderId, 0)
+    store.setMessageOffset(0)
+    await loadFolderList(persisted.selectedFolderId, 0)
 
     if (accounts.length === 0) {
       store.setShowAddAccount(true)
@@ -740,23 +841,38 @@ export async function loadInitialData(): Promise<void> {
   }
 }
 
-// Background refresh of the current folder's thread list (non-search) + folders.
+// Background refresh of the current folder's list (non-search) + folders.
 export async function refreshMessages(): Promise<void> {
-  const folderId = useMailStore.getState().selectedFolderId
-  const [threads, total, folders] = await Promise.all([
-    window.orbitMail.messages.listThreads(folderId, THREAD_PAGE_SIZE, 0),
-    window.orbitMail.messages.countThreads(folderId),
-    window.orbitMail.folders.list()
+  const store = useMailStore.getState()
+  const folderId = store.selectedFolderId
+  await Promise.all([
+    loadFolderList(folderId, 0),
+    window.orbitMail.folders.list().then((folders) => useMailStore.getState().setFolders(folders))
   ])
-
-  applyThreadPage(threads, total, 0)
-  useMailStore.getState().setFolders(folders)
+  // Refresh any inline-expanded conversations so newly-arrived replies appear.
+  const after = useMailStore.getState()
+  if (after.expandedThreadKeys.length > 0) {
+    const updated: Record<string, MessageDetail[]> = { ...after.expandedThreadMessages }
+    await Promise.all(
+      after.expandedThreadKeys.map(async (key) => {
+        const [accountId, threadId] = key.split(' ')
+        if (!accountId || !threadId) return
+        updated[key] = await window.orbitMail.messages.getThread(accountId, threadId)
+      })
+    )
+    useMailStore.getState().setExpandedThreadMessages(updated)
+  }
 }
 
 export async function loadMoreMessages(): Promise<void> {
   const store = useMailStore.getState()
-  if (store.threads.length >= store.threadTotal) return
-  await loadFolderThreads(store.selectedFolderId, store.threadOffset)
+  if (store.threadedView) {
+    if (store.threads.length >= store.threadTotal) return
+    await loadFolderThreads(store.selectedFolderId, store.threadOffset)
+  } else {
+    if (store.messages.length >= store.messageTotal) return
+    await loadFolderMessages(store.selectedFolderId, store.messageOffset)
+  }
 }
 
 export async function addAccount(provider: 'gmail' | 'o365'): Promise<void> {
@@ -932,7 +1048,10 @@ export async function selectMessage(messageId: string): Promise<void> {
 
   const summary =
     store.messages.find((m) => m.id === messageId) ??
-    store.searchResults.find((m) => m.id === messageId)
+    store.searchResults.find((m) => m.id === messageId) ??
+    Object.values(store.expandedThreadMessages)
+      .flat()
+      .find((m) => m.id === messageId)
   const wasUnread = summary ? !summary.isRead : false
 
   if (summary) {
@@ -1090,6 +1209,9 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
   store.setThreadOffset(0)
+  store.setMessageOffset(0)
+  store.setExpandedThreadKeys([])
+  store.setExpandedThreadMessages({})
   store.setSearchQuery('')
   store.setSearchResults([])
   scheduleSaveUiPreferences({
@@ -1097,12 +1219,14 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
     selectedMessageId: null
   })
   // Clear the previous folder's rows and show skeletons while the (fast, local)
-  // query runs, so the switch doesn't flash the old folder's threads.
+  // query runs, so the switch doesn't flash the old folder's rows.
   store.setThreads([])
   store.setThreadTotal(0)
+  store.setMessages([])
+  store.setMessageTotal(0)
   store.setListLoading(true)
   try {
-    await loadFolderThreads(folderId, 0)
+    await loadFolderList(folderId, 0)
   } finally {
     store.setListLoading(false)
   }

@@ -1,6 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { VList, type VListHandle } from 'virtua'
-import type { FlagColor, MessageSummary, ThreadSummary } from '../../../shared/types'
+import type {
+  FlagColor,
+  MessageSummary,
+  MessageDetail,
+  ThreadSummary
+} from '../../../shared/types'
 import {
   useMailStore,
   selectMessage,
@@ -10,6 +15,7 @@ import {
   toggleMessageSelection,
   selectThread,
   selectAdjacentThread,
+  toggleThreadExpanded,
   loadMoreMessages
 } from '../../stores/mailStore'
 import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
@@ -17,7 +23,7 @@ import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
 import { ThreadContextMenu } from '../messages/ThreadContextMenu'
 import { flagColorHex } from '../../constants/flags'
-import { Tray, Flag, Paperclip, MagnifyingGlass } from '../icons'
+import { Tray, Flag, Paperclip, MagnifyingGlass, CaretRight } from '../icons'
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
@@ -57,6 +63,7 @@ interface MessageRowProps {
   isStarred: boolean
   flagColor: FlagColor | null
   folderName: string | null
+  nested?: boolean
   onSelect: (event: React.MouseEvent, id: string) => void
   onContextMenu: (event: React.MouseEvent, message: MessageSummary) => void
 }
@@ -71,11 +78,13 @@ const MessageRow = memo(function MessageRow({
   isStarred,
   flagColor,
   folderName,
+  nested,
   onSelect,
   onContextMenu
 }: MessageRowProps) {
   const className = [
     'message-row',
+    nested ? 'message-row-nested' : '',
     !isRead ? 'unread' : '',
     isSelected ? 'selected' : '',
     isActive ? 'active' : ''
@@ -123,7 +132,10 @@ interface ThreadRowProps {
   participantsLabel: string
   formattedDate: string
   isSelected: boolean
+  expandable: boolean
+  isExpanded: boolean
   onSelect: (accountId: string, threadId: string) => void
+  onToggleExpand: (accountId: string, threadId: string) => void
   onContextMenu: (event: React.MouseEvent, thread: ThreadSummary) => void
 }
 
@@ -132,13 +144,17 @@ const ThreadRow = memo(function ThreadRow({
   participantsLabel,
   formattedDate,
   isSelected,
+  expandable,
+  isExpanded,
   onSelect,
+  onToggleExpand,
   onContextMenu
 }: ThreadRowProps) {
   const className = [
     'message-row',
     thread.hasUnread ? 'unread' : '',
-    isSelected ? 'selected' : ''
+    isSelected ? 'selected' : '',
+    isExpanded ? 'expanded' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -149,6 +165,26 @@ const ThreadRow = memo(function ThreadRow({
       onClick={() => onSelect(thread.accountId, thread.threadId)}
       onContextMenu={(event) => onContextMenu(event, thread)}
     >
+      {expandable ? (
+        <button
+          type="button"
+          className="thread-disclosure"
+          aria-label={isExpanded ? 'Collapse conversation' : 'Expand conversation'}
+          aria-expanded={isExpanded}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggleExpand(thread.accountId, thread.threadId)
+          }}
+        >
+          <CaretRight
+            size={12}
+            weight="bold"
+            style={{ transform: isExpanded ? 'rotate(90deg)' : undefined }}
+          />
+        </button>
+      ) : (
+        <span className="thread-disclosure-spacer" />
+      )}
       <div className={`unread-dot${thread.hasUnread ? '' : ' read'}`} />
       <div className="message-content">
         <div className="message-top">
@@ -189,8 +225,13 @@ function participantsLabel(names: string[]): string {
 // ---- List ----------------------------------------------------------------
 
 export function MessageList() {
+  const threadedView = useMailStore((s) => s.threadedView)
   const threads = useMailStore((s) => s.threads)
   const threadTotal = useMailStore((s) => s.threadTotal)
+  const expandedThreadKeys = useMailStore((s) => s.expandedThreadKeys)
+  const expandedThreadMessages = useMailStore((s) => s.expandedThreadMessages)
+  const messages = useMailStore((s) => s.messages)
+  const messageTotal = useMailStore((s) => s.messageTotal)
   const selectedThreadId = useMailStore((s) => s.selectedThreadId)
   const searchQuery = useMailStore((s) => s.searchQuery)
   const searchResults = useMailStore((s) => s.searchResults)
@@ -225,16 +266,25 @@ export function MessageList() {
     [folders]
   )
 
-  // Search rows (flat messages).
+  // Flat message rows — used for search results and for unthreaded folder view.
+  const buildFlatRow = useCallback(
+    (message: MessageSummary, showFolder: boolean) => ({
+      message,
+      displayName: extractName(message.from),
+      formattedDate: formatDate(message.date),
+      folderName: showFolder ? folderNameById.get(message.folderId) ?? 'Mailbox' : null
+    }),
+    [folderNameById]
+  )
+
+  // Search always shows the folder; the flat folder view only shows it in unified.
   const messageRows = useMemo(
-    () =>
-      searchResults.map((message) => ({
-        message,
-        displayName: extractName(message.from),
-        formattedDate: formatDate(message.date),
-        folderName: folderNameById.get(message.folderId) ?? 'Mailbox'
-      })),
-    [searchResults, folderNameById]
+    () => searchResults.map((m) => buildFlatRow(m, true)),
+    [searchResults, buildFlatRow]
+  )
+  const flatRows = useMemo(
+    () => messages.map((m) => buildFlatRow(m, selectedFolderId === 'unified')),
+    [messages, buildFlatRow, selectedFolderId]
   )
 
   // Thread rows (folder / unified view).
@@ -249,18 +299,28 @@ export function MessageList() {
   )
 
   const selectedIdSet = useMemo(() => new Set(selectedMessageIds), [selectedMessageIds])
+  const expandedSet = useMemo(() => new Set(expandedThreadKeys), [expandedThreadKeys])
 
-  const itemCount = isSearching ? searchResults.length : threads.length
-  // Search isn't paginated; only the thread list has "load more".
-  const hasMore = !isSearching && threads.length < threadTotal
+  const showThreads = !isSearching && threadedView
+  const showFlat = !isSearching && !threadedView
+
+  const itemCount = isSearching
+    ? searchResults.length
+    : threadedView
+      ? threads.length
+      : messages.length
+  // Search isn't paginated; the folder list (threaded or flat) has "load more".
+  const hasMore =
+    !isSearching &&
+    (threadedView ? threads.length < threadTotal : messages.length < messageTotal)
 
   // Keep the selected row visible during keyboard nav.
-  const selectionKey = isSearching ? selectedMessageId : selectedThreadId
+  const selectionKey = showThreads ? selectedThreadId : selectedMessageId
   const rowIndexRef = useRef<() => number>(() => -1)
   rowIndexRef.current = () =>
-    isSearching
-      ? searchResults.findIndex((m) => m.id === selectedMessageId)
-      : threads.findIndex((t) => t.threadId === selectedThreadId)
+    showThreads
+      ? threads.findIndex((t) => t.threadId === selectedThreadId)
+      : (isSearching ? searchResults : messages).findIndex((m) => m.id === selectedMessageId)
   useEffect(() => {
     if (!selectionKey) return
     const idx = rowIndexRef.current()
@@ -271,11 +331,12 @@ export function MessageList() {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
     event.preventDefault()
     const direction = event.key === 'ArrowDown' ? 1 : -1
-    if (isSearching) {
-      if (event.shiftKey) extendSelectionToAdjacent(direction)
-      else selectAdjacentMessage(direction)
-    } else {
+    if (showThreads) {
       selectAdjacentThread(direction)
+    } else if (event.shiftKey) {
+      extendSelectionToAdjacent(direction)
+    } else {
+      selectAdjacentMessage(direction)
     }
   }
 
@@ -286,9 +347,19 @@ export function MessageList() {
     else void selectMessage(messageId)
   }, [])
 
+  // Inline thread children are plain single-message opens (no range/multi-select).
+  const handleChildClick = useCallback((_event: React.MouseEvent, messageId: string) => {
+    containerRef.current?.focus()
+    void selectMessage(messageId)
+  }, [])
+
   const handleThreadClick = useCallback((accountId: string, threadId: string) => {
     containerRef.current?.focus()
     void selectThread(accountId, threadId)
+  }, [])
+
+  const handleToggleExpand = useCallback((accountId: string, threadId: string) => {
+    void toggleThreadExpanded(accountId, threadId)
   }, [])
 
   const handleContextMenu = useCallback((event: React.MouseEvent, message: MessageSummary) => {
@@ -358,6 +429,96 @@ export function MessageList() {
     )
   }
 
+  // Build a single flat array of row elements for the virtualized list. Passing
+  // one clean array (never a boolean / nested-array child) keeps virtua's item
+  // accounting stable.
+  const listItems: React.ReactNode[] = []
+  if (isSearching || showFlat) {
+    for (const row of isSearching ? messageRows : flatRows) {
+      listItems.push(
+        <MessageRow
+          key={row.message.id}
+          message={row.message}
+          displayName={row.displayName}
+          formattedDate={row.formattedDate}
+          isRead={row.message.isRead}
+          isSelected={selectedIdSet.has(row.message.id)}
+          isActive={selectedMessageId === row.message.id && selectedMessageIds.length > 1}
+          isStarred={row.message.isStarred}
+          flagColor={row.message.flagColor}
+          folderName={row.folderName}
+          onSelect={handleMessageClick}
+          onContextMenu={handleContextMenu}
+        />
+      )
+    }
+  } else if (showThreads) {
+    for (const row of threadRows) {
+      const key = `${row.thread.accountId} ${row.thread.threadId}`
+      const isExpanded = expandedSet.has(key)
+      listItems.push(
+        <ThreadRow
+          key={key}
+          thread={row.thread}
+          participantsLabel={row.participants}
+          formattedDate={row.formattedDate}
+          isSelected={selectedThreadId === row.thread.threadId}
+          expandable={row.thread.messageCount > 1}
+          isExpanded={isExpanded}
+          onSelect={handleThreadClick}
+          onToggleExpand={handleToggleExpand}
+          onContextMenu={handleThreadContextMenu}
+        />
+      )
+      if (!isExpanded) continue
+      const children = expandedThreadMessages[key]
+      if (!children) {
+        listItems.push(
+          <div key={`${key}:loading`} className="thread-children-loading">
+            Loading conversation…
+          </div>
+        )
+        continue
+      }
+      for (const m of children) {
+        listItems.push(
+          <MessageRow
+            key={`${key}:${m.id}`}
+            message={m}
+            nested
+            displayName={extractName(m.from)}
+            formattedDate={formatDate(m.date)}
+            isRead={m.isRead}
+            isSelected={selectedMessageId === m.id && !selectedThreadId}
+            isActive={false}
+            isStarred={m.isStarred}
+            flagColor={m.flagColor}
+            folderName={folderNameById.get(m.folderId) ?? null}
+            onSelect={handleChildClick}
+            onContextMenu={handleContextMenu}
+          />
+        )
+      }
+    }
+  }
+  if (hasMore) {
+    listItems.push(
+      <div className="load-more-wrap" key="__load_more__">
+        <button
+          className="btn btn-secondary load-more-btn"
+          onClick={handleLoadMore}
+          disabled={loadingMore}
+        >
+          {loadingMore
+            ? 'Loading…'
+            : threadedView
+              ? `Load more (${threads.length} of ${threadTotal})`
+              : `Load more (${messages.length} of ${messageTotal})`}
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div ref={containerRef} className="message-list" tabIndex={0} onKeyDown={handleKeyDown}>
       {isSearching && (
@@ -368,48 +529,7 @@ export function MessageList() {
       )}
 
       <VList ref={vlistRef} className="message-list-scroller">
-        {isSearching
-          ? messageRows.map((row) => (
-              <MessageRow
-                key={row.message.id}
-                message={row.message}
-                displayName={row.displayName}
-                formattedDate={row.formattedDate}
-                isRead={row.message.isRead}
-                isSelected={selectedIdSet.has(row.message.id)}
-                isActive={
-                  selectedMessageId === row.message.id && selectedMessageIds.length > 1
-                }
-                isStarred={row.message.isStarred}
-                flagColor={row.message.flagColor}
-                folderName={row.folderName}
-                onSelect={handleMessageClick}
-                onContextMenu={handleContextMenu}
-              />
-            ))
-          : threadRows.map((row) => (
-              <ThreadRow
-                key={`${row.thread.accountId} ${row.thread.threadId}`}
-                thread={row.thread}
-                participantsLabel={row.participants}
-                formattedDate={row.formattedDate}
-                isSelected={selectedThreadId === row.thread.threadId}
-                onSelect={handleThreadClick}
-                onContextMenu={handleThreadContextMenu}
-              />
-            ))}
-
-        {hasMore && (
-          <div className="load-more-wrap" key="__load_more__">
-            <button
-              className="btn btn-secondary load-more-btn"
-              onClick={handleLoadMore}
-              disabled={loadingMore}
-            >
-              {loadingMore ? 'Loading…' : `Load more (${threads.length} of ${threadTotal})`}
-            </button>
-          </div>
-        )}
+        {listItems}
       </VList>
 
       {contextMenu && (

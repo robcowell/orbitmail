@@ -162,6 +162,9 @@ export interface UiPreferences {
   selectedMessageId: string | null
   collapsedAccountIds: Record<string, boolean>
   favoriteFolderIds: string[]
+  // Group the message list into conversations. When false, every message is
+  // shown as its own flat row.
+  threadedView: boolean
 }
 
 export interface PersistedAppState {

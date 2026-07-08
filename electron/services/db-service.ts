@@ -465,32 +465,29 @@ function rowToSummary(r: SummaryRow): MessageSummary {
 export function listMessages(
   folderId: string | 'unified',
   limit = 200,
-  offset = 0
+  offset = 0,
+  unreadOnly = false
 ): MessageSummary[] {
   const db = getDb()
-  let rows: SummaryRow[]
 
+  let scope
   if (folderId === 'unified') {
     const inboxIds = getInboxFolderIds()
     if (inboxIds.length === 0) return []
-    rows = db
-      .select(SUMMARY_COLS)
-      .from(messages)
-      .where(inArray(messages.folderId, inboxIds))
-      .orderBy(desc(messages.date))
-      .limit(limit)
-      .offset(offset)
-      .all()
+    scope = inArray(messages.folderId, inboxIds)
   } else {
-    rows = db
-      .select(SUMMARY_COLS)
-      .from(messages)
-      .where(eq(messages.folderId, folderId))
-      .orderBy(desc(messages.date))
-      .limit(limit)
-      .offset(offset)
-      .all()
+    scope = eq(messages.folderId, folderId)
   }
+
+  const where = unreadOnly ? and(scope, eq(messages.isRead, false)) : scope
+  const rows = db
+    .select(SUMMARY_COLS)
+    .from(messages)
+    .where(where)
+    .orderBy(desc(messages.date))
+    .limit(limit)
+    .offset(offset)
+    .all()
 
   return rows.map(rowToSummary)
 }
@@ -676,13 +673,17 @@ interface ThreadMsgRow {
 export function listThreads(
   folderId: string | 'unified',
   limit = 200,
-  offset = 0
+  offset = 0,
+  unreadOnly = false
 ): ThreadSummary[] {
   const scopeIds = threadScopeIds(folderId)
   if (scopeIds.length === 0) return []
   const scope = new Set(scopeIds)
   const sqlite = getRawSqlite()
   const ph = scopeIds.map(() => '?').join(', ')
+  // Unread-only restricts the conversation set to threads with an unread copy in
+  // the viewed folder(s) — matching how hasUnread is computed below.
+  const unreadClause = unreadOnly ? ' AND is_read = 0' : ''
 
   // Page of thread keys with a message in this folder, ordered by the
   // conversation's most recent message (account-wide — a Sent reply counts).
@@ -694,7 +695,7 @@ export function listThreads(
          FROM messages
          WHERE (account_id, COALESCE(thread_id, id)) IN (
            SELECT DISTINCT account_id, COALESCE(thread_id, id)
-           FROM messages WHERE folder_id IN (${ph})
+           FROM messages WHERE folder_id IN (${ph})${unreadClause}
          )
        )
        GROUP BY aid, tkey
@@ -770,15 +771,16 @@ export function listThreads(
   })
 }
 
-export function countThreads(folderId: string | 'unified'): number {
+export function countThreads(folderId: string | 'unified', unreadOnly = false): number {
   const scopeIds = threadScopeIds(folderId)
   if (scopeIds.length === 0) return 0
   const sqlite = getRawSqlite()
   const ph = scopeIds.map(() => '?').join(', ')
+  const unreadClause = unreadOnly ? ' AND is_read = 0' : ''
   const row = sqlite
     .prepare(
       `SELECT COUNT(*) AS n FROM (
-         SELECT 1 FROM messages WHERE folder_id IN (${ph})
+         SELECT 1 FROM messages WHERE folder_id IN (${ph})${unreadClause}
          GROUP BY account_id, COALESCE(thread_id, id)
        )`
     )
@@ -1451,24 +1453,22 @@ export function setMessageFlag(messageId: string, flagColor: FlagColor | null): 
     .run()
 }
 
-export function countMessages(folderId: string | 'unified'): number {
+export function countMessages(folderId: string | 'unified', unreadOnly = false): number {
   const db = getDb()
 
+  let scope
   if (folderId === 'unified') {
     const inboxIds = getInboxFolderIds()
     if (inboxIds.length === 0) return 0
-    const row = db
-      .select({ value: count() })
-      .from(messages)
-      .where(inArray(messages.folderId, inboxIds))
-      .get()
-    return row?.value ?? 0
+    scope = inArray(messages.folderId, inboxIds)
+  } else {
+    scope = eq(messages.folderId, folderId)
   }
 
   const row = db
     .select({ value: count() })
     .from(messages)
-    .where(eq(messages.folderId, folderId))
+    .where(unreadOnly ? and(scope, eq(messages.isRead, false)) : scope)
     .get()
   return row?.value ?? 0
 }

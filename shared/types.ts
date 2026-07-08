@@ -165,6 +165,9 @@ export interface UiPreferences {
   // Group the message list into conversations. When false, every message is
   // shown as its own flat row.
   threadedView: boolean
+  // Per-account "unread only" list filter. Keyed by account id, plus 'unified'
+  // for the combined inbox view. Missing/false = show all messages.
+  unreadFilterByAccount: Record<string, boolean>
 }
 
 export interface PersistedAppState {
@@ -259,14 +262,20 @@ export interface OrbitMailAPI {
     updateSyncDays: (accountId: string, syncDays: number) => Promise<Account>
   }
   messages: {
-    list: (folderId: string | 'unified', limit?: number, offset?: number) => Promise<MessageSummary[]>
-    count: (folderId: string | 'unified') => Promise<number>
+    list: (
+      folderId: string | 'unified',
+      limit?: number,
+      offset?: number,
+      unreadOnly?: boolean
+    ) => Promise<MessageSummary[]>
+    count: (folderId: string | 'unified', unreadOnly?: boolean) => Promise<number>
     listThreads: (
       folderId: string | 'unified',
       limit?: number,
-      offset?: number
+      offset?: number,
+      unreadOnly?: boolean
     ) => Promise<ThreadSummary[]>
-    countThreads: (folderId: string | 'unified') => Promise<number>
+    countThreads: (folderId: string | 'unified', unreadOnly?: boolean) => Promise<number>
     getThread: (accountId: string, threadId: string) => Promise<MessageDetail[]>
     get: (messageId: string) => Promise<MessageDetail | null>
     markRead: (messageId: string, isRead: boolean) => Promise<void>

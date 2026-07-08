@@ -12,7 +12,8 @@ export function getUiSnapshot(): UiPreferences {
     selectedMessageId: mail.selectedMessageId,
     collapsedAccountIds: mail.collapsedAccountIds,
     favoriteFolderIds: mail.favoriteFolderIds,
-    threadedView: mail.threadedView
+    threadedView: mail.threadedView,
+    unreadFilterByAccount: mail.unreadFilterByAccount
   }
 }
 
@@ -23,7 +24,8 @@ export function applyUiPreferences(ui: UiPreferences): void {
     selectedMessageId: ui.selectedMessageId,
     collapsedAccountIds: ui.collapsedAccountIds,
     favoriteFolderIds: ui.favoriteFolderIds,
-    threadedView: ui.threadedView
+    threadedView: ui.threadedView,
+    unreadFilterByAccount: ui.unreadFilterByAccount ?? {}
   })
 }
 

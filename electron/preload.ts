@@ -34,12 +34,13 @@ const api: OrbitMailAPI = {
     markAllRead: (folderId) => ipcRenderer.invoke('folders:markAllRead', folderId)
   },
   messages: {
-    list: (folderId, limit, offset) =>
-      ipcRenderer.invoke('messages:list', folderId, limit, offset),
-    count: (folderId) => ipcRenderer.invoke('messages:count', folderId),
-    listThreads: (folderId, limit, offset) =>
-      ipcRenderer.invoke('messages:listThreads', folderId, limit, offset),
-    countThreads: (folderId) => ipcRenderer.invoke('messages:countThreads', folderId),
+    list: (folderId, limit, offset, unreadOnly) =>
+      ipcRenderer.invoke('messages:list', folderId, limit, offset, unreadOnly),
+    count: (folderId, unreadOnly) => ipcRenderer.invoke('messages:count', folderId, unreadOnly),
+    listThreads: (folderId, limit, offset, unreadOnly) =>
+      ipcRenderer.invoke('messages:listThreads', folderId, limit, offset, unreadOnly),
+    countThreads: (folderId, unreadOnly) =>
+      ipcRenderer.invoke('messages:countThreads', folderId, unreadOnly),
     getThread: (accountId, threadId) =>
       ipcRenderer.invoke('messages:getThread', accountId, threadId),
     get: (messageId) => ipcRenderer.invoke('messages:get', messageId),

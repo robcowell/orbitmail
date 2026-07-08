@@ -55,6 +55,9 @@ interface MailState {
   favoriteFolderIds: string[]
   // Conversation grouping on/off (persisted). When off, the list is flat.
   threadedView: boolean
+  // Per-account "unread only" list filter (persisted). Keyed by account id, plus
+  // 'unified' for the combined inbox. Missing/false = show all messages.
+  unreadFilterByAccount: Record<string, boolean>
   // Thread keys ("<accountId> <threadId>") currently expanded inline in the
   // list, and a cache of each expanded thread's messages (undefined = loading).
   expandedThreadKeys: string[]
@@ -102,6 +105,7 @@ interface MailState {
   expandAccount: (accountId: string) => void
   toggleFavoriteFolder: (folderId: string) => void
   setThreadedView: (enabled: boolean) => void
+  setUnreadFilterByAccount: (map: Record<string, boolean>) => void
   setExpandedThreadKeys: (keys: string[]) => void
   setExpandedThreadMessages: (map: Record<string, MessageDetail[]>) => void
   setAiAnalysis: (messageId: string, analysis: AiAnalysis) => void
@@ -148,6 +152,7 @@ export const useMailStore = create<MailState>((set) => ({
   collapsedAccountIds: {},
   favoriteFolderIds: [],
   threadedView: true,
+  unreadFilterByAccount: {},
   expandedThreadKeys: [],
   expandedThreadMessages: {},
   aiAnalysisById: {},
@@ -233,6 +238,7 @@ export const useMailStore = create<MailState>((set) => ({
       return { favoriteFolderIds }
     }),
   setThreadedView: (enabled) => set({ threadedView: enabled }),
+  setUnreadFilterByAccount: (map) => set({ unreadFilterByAccount: map }),
   setExpandedThreadKeys: (keys) => set({ expandedThreadKeys: keys }),
   setExpandedThreadMessages: (map) => set({ expandedThreadMessages: map })
 }))
@@ -347,10 +353,24 @@ function applyThreadPage(threads: ThreadSummary[], total: number, offset: number
   if (store.threadTotal !== total) store.setThreadTotal(total)
 }
 
+// Resolve the per-account filter key for a folder view: the folder's owning
+// account, or 'unified' for the combined inbox / an unknown folder.
+function filterKeyForFolder(folderId: string | 'unified'): string {
+  if (folderId === 'unified') return 'unified'
+  const folder = useMailStore.getState().folders.find((f) => f.id === folderId)
+  return folder?.accountId ?? 'unified'
+}
+
+// Whether the given folder view is currently filtered to unread messages only.
+function unreadOnlyForFolder(folderId: string | 'unified'): boolean {
+  return useMailStore.getState().unreadFilterByAccount[filterKeyForFolder(folderId)] ?? false
+}
+
 async function loadFolderThreads(folderId: string | 'unified', offset = 0): Promise<void> {
+  const unreadOnly = unreadOnlyForFolder(folderId)
   const [threads, total] = await Promise.all([
-    window.orbitMail.messages.listThreads(folderId, THREAD_PAGE_SIZE, offset),
-    window.orbitMail.messages.countThreads(folderId)
+    window.orbitMail.messages.listThreads(folderId, THREAD_PAGE_SIZE, offset, unreadOnly),
+    window.orbitMail.messages.countThreads(folderId, unreadOnly)
   ])
   applyThreadPage(threads, total, offset)
 }
@@ -365,9 +385,10 @@ function applyMessagePage(messages: MessageSummary[], total: number, offset: num
 
 // Flat (unthreaded) list of every message in the folder, newest first.
 async function loadFolderMessages(folderId: string | 'unified', offset = 0): Promise<void> {
+  const unreadOnly = unreadOnlyForFolder(folderId)
   const [messages, total] = await Promise.all([
-    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, offset),
-    window.orbitMail.messages.count(folderId)
+    window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, offset, unreadOnly),
+    window.orbitMail.messages.count(folderId, unreadOnly)
   ])
   applyMessagePage(messages, total, offset)
 }
@@ -386,6 +407,50 @@ export async function toggleThreadedView(): Promise<void> {
   scheduleSaveUiPreferences({ threadedView })
 
   // Clear selection + both list backings so the switch doesn't show stale rows.
+  store.setSelectedThreadId(null)
+  store.setSelectedThread(null)
+  store.setSelectedMessageId(null)
+  store.setSelectedMessage(null)
+  store.setSelectedMessageIds([])
+  store.setExpandedThreadKeys([])
+  store.setExpandedThreadMessages({})
+  store.setThreads([])
+  store.setThreadTotal(0)
+  store.setThreadOffset(0)
+  store.setMessages([])
+  store.setMessageTotal(0)
+  store.setMessageOffset(0)
+
+  store.setListLoading(true)
+  try {
+    await loadFolderList(store.selectedFolderId, 0)
+  } finally {
+    store.setListLoading(false)
+  }
+}
+
+// Whether the current folder view is filtered to unread only (for the toolbar).
+export function isUnreadOnlyView(state: MailState): boolean {
+  const folderId = state.selectedFolderId
+  const key =
+    folderId === 'unified'
+      ? 'unified'
+      : state.folders.find((f) => f.id === folderId)?.accountId ?? 'unified'
+  return state.unreadFilterByAccount[key] ?? false
+}
+
+// Flip the current account's "unread only" filter, persist it, and reload the
+// folder. The choice is remembered per account (and separately for the unified
+// inbox), so switching accounts restores that account's last filter.
+export async function toggleUnreadFilter(): Promise<void> {
+  const store = useMailStore.getState()
+  const key = filterKeyForFolder(store.selectedFolderId)
+  const next = !(store.unreadFilterByAccount[key] ?? false)
+  const unreadFilterByAccount = { ...store.unreadFilterByAccount, [key]: next }
+  store.setUnreadFilterByAccount(unreadFilterByAccount)
+  scheduleSaveUiPreferences({ unreadFilterByAccount })
+
+  // Clear selection + list backings so the switch doesn't show stale rows.
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
   store.setSelectedMessageId(null)

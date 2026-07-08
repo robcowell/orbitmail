@@ -19,6 +19,24 @@ function headerRow(label: string, value: string | null | undefined): string {
   return `<tr><th>${label}</th><td>${escapeHtml(value)}</td></tr>`
 }
 
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function attachmentsSection(message: MessageDetail): string {
+  if (message.attachments.length === 0) return ''
+  const items = message.attachments
+    .map(
+      (att) =>
+        `<li>${escapeHtml(att.filename)} <span class="att-size">(${formatSize(att.size)})</span></li>`
+    )
+    .join('')
+  const label = message.attachments.length === 1 ? 'Attachment' : 'Attachments'
+  return `<div class="attachments"><span class="att-label">${label}:</span><ul>${items}</ul></div>`
+}
+
 function messageSection(message: MessageDetail): string {
   const body = message.bodyHtml
     ? DOMPurify.sanitize(message.bodyHtml, {
@@ -34,6 +52,7 @@ function messageSection(message: MessageDetail): string {
       ${headerRow('Cc', message.cc)}
       ${headerRow('Date', new Date(message.date).toLocaleString())}
     </table>
+    ${attachmentsSection(message)}
     <div class="body">${body}</div>
   </section>`
 }
@@ -73,6 +92,18 @@ const PRINT_STYLES = `
     white-space: nowrap;
   }
   table.headers td { vertical-align: top; padding: 1px 0; }
+  .attachments {
+    font-size: 13px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+  }
+  .attachments .att-label { font-weight: 600; color: #666; }
+  .attachments ul { margin: 4px 0 0; padding-left: 20px; }
+  .attachments li { margin: 1px 0; }
+  .attachments .att-size { color: #888; }
   .body { font-size: 14px; }
   .body img { max-width: 100%; height: auto; }
   .body table { max-width: 100%; }

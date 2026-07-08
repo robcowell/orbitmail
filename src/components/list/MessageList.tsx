@@ -429,6 +429,96 @@ export function MessageList() {
     )
   }
 
+  // Build a single flat array of row elements for the virtualized list. Passing
+  // one clean array (never a boolean / nested-array child) keeps virtua's item
+  // accounting stable.
+  const listItems: React.ReactNode[] = []
+  if (isSearching || showFlat) {
+    for (const row of isSearching ? messageRows : flatRows) {
+      listItems.push(
+        <MessageRow
+          key={row.message.id}
+          message={row.message}
+          displayName={row.displayName}
+          formattedDate={row.formattedDate}
+          isRead={row.message.isRead}
+          isSelected={selectedIdSet.has(row.message.id)}
+          isActive={selectedMessageId === row.message.id && selectedMessageIds.length > 1}
+          isStarred={row.message.isStarred}
+          flagColor={row.message.flagColor}
+          folderName={row.folderName}
+          onSelect={handleMessageClick}
+          onContextMenu={handleContextMenu}
+        />
+      )
+    }
+  } else if (showThreads) {
+    for (const row of threadRows) {
+      const key = `${row.thread.accountId} ${row.thread.threadId}`
+      const isExpanded = expandedSet.has(key)
+      listItems.push(
+        <ThreadRow
+          key={key}
+          thread={row.thread}
+          participantsLabel={row.participants}
+          formattedDate={row.formattedDate}
+          isSelected={selectedThreadId === row.thread.threadId}
+          expandable={row.thread.messageCount > 1}
+          isExpanded={isExpanded}
+          onSelect={handleThreadClick}
+          onToggleExpand={handleToggleExpand}
+          onContextMenu={handleThreadContextMenu}
+        />
+      )
+      if (!isExpanded) continue
+      const children = expandedThreadMessages[key]
+      if (!children) {
+        listItems.push(
+          <div key={`${key}:loading`} className="thread-children-loading">
+            Loading conversation…
+          </div>
+        )
+        continue
+      }
+      for (const m of children) {
+        listItems.push(
+          <MessageRow
+            key={`${key}:${m.id}`}
+            message={m}
+            nested
+            displayName={extractName(m.from)}
+            formattedDate={formatDate(m.date)}
+            isRead={m.isRead}
+            isSelected={selectedMessageId === m.id && !selectedThreadId}
+            isActive={false}
+            isStarred={m.isStarred}
+            flagColor={m.flagColor}
+            folderName={folderNameById.get(m.folderId) ?? null}
+            onSelect={handleChildClick}
+            onContextMenu={handleContextMenu}
+          />
+        )
+      }
+    }
+  }
+  if (hasMore) {
+    listItems.push(
+      <div className="load-more-wrap" key="__load_more__">
+        <button
+          className="btn btn-secondary load-more-btn"
+          onClick={handleLoadMore}
+          disabled={loadingMore}
+        >
+          {loadingMore
+            ? 'Loading…'
+            : threadedView
+              ? `Load more (${threads.length} of ${threadTotal})`
+              : `Load more (${messages.length} of ${messageTotal})`}
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div ref={containerRef} className="message-list" tabIndex={0} onKeyDown={handleKeyDown}>
       {isSearching && (
@@ -439,90 +529,7 @@ export function MessageList() {
       )}
 
       <VList ref={vlistRef} className="message-list-scroller">
-        {(isSearching || showFlat) &&
-          (isSearching ? messageRows : flatRows).map((row) => (
-            <MessageRow
-              key={row.message.id}
-              message={row.message}
-              displayName={row.displayName}
-              formattedDate={row.formattedDate}
-              isRead={row.message.isRead}
-              isSelected={selectedIdSet.has(row.message.id)}
-              isActive={selectedMessageId === row.message.id && selectedMessageIds.length > 1}
-              isStarred={row.message.isStarred}
-              flagColor={row.message.flagColor}
-              folderName={row.folderName}
-              onSelect={handleMessageClick}
-              onContextMenu={handleContextMenu}
-            />
-          ))}
-
-        {showThreads &&
-          threadRows.flatMap((row) => {
-            const key = `${row.thread.accountId} ${row.thread.threadId}`
-            const isExpanded = expandedSet.has(key)
-            const nodes: React.ReactNode[] = [
-              <ThreadRow
-                key={key}
-                thread={row.thread}
-                participantsLabel={row.participants}
-                formattedDate={row.formattedDate}
-                isSelected={selectedThreadId === row.thread.threadId}
-                expandable={row.thread.messageCount > 1}
-                isExpanded={isExpanded}
-                onSelect={handleThreadClick}
-                onToggleExpand={handleToggleExpand}
-                onContextMenu={handleThreadContextMenu}
-              />
-            ]
-            if (isExpanded) {
-              const children = expandedThreadMessages[key]
-              if (!children) {
-                nodes.push(
-                  <div key={`${key}:loading`} className="thread-children-loading">
-                    Loading conversation…
-                  </div>
-                )
-              } else {
-                for (const m of children) {
-                  nodes.push(
-                    <MessageRow
-                      key={`${key}:${m.id}`}
-                      message={m}
-                      nested
-                      displayName={extractName(m.from)}
-                      formattedDate={formatDate(m.date)}
-                      isRead={m.isRead}
-                      isSelected={selectedMessageId === m.id && !selectedThreadId}
-                      isActive={false}
-                      isStarred={m.isStarred}
-                      flagColor={m.flagColor}
-                      folderName={folderNameById.get(m.folderId) ?? null}
-                      onSelect={handleChildClick}
-                      onContextMenu={handleContextMenu}
-                    />
-                  )
-                }
-              }
-            }
-            return nodes
-          })}
-
-        {hasMore && (
-          <div className="load-more-wrap" key="__load_more__">
-            <button
-              className="btn btn-secondary load-more-btn"
-              onClick={handleLoadMore}
-              disabled={loadingMore}
-            >
-              {loadingMore
-                ? 'Loading…'
-                : threadedView
-                  ? `Load more (${threads.length} of ${threadTotal})`
-                  : `Load more (${messages.length} of ${messageTotal})`}
-            </button>
-          </div>
-        )}
+        {listItems}
       </VList>
 
       {contextMenu && (

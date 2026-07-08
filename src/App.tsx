@@ -98,6 +98,22 @@ function MainApp() {
   const showTasks = useMailStore((s) => s.showTasks)
   const setShowTasks = useMailStore((s) => s.setShowTasks)
 
+  // DIAGNOSTIC (dev only): detect stalls of the renderer UI thread. If this
+  // fires while the app feels frozen, the freeze is renderer-side (a render
+  // loop / heavy sync work); if it stays quiet but the UI is stuck, the block
+  // is in the main process (watch its terminal for [main-lag]/[ipc-slow]).
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    let last = performance.now()
+    const id = window.setInterval(() => {
+      const now = performance.now()
+      const drift = now - last - 1000
+      if (drift > 150) console.warn(`[renderer-lag] UI thread blocked ~${Math.round(drift)}ms`)
+      last = now
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [])
+
   useEffect(() => {
     exposeFlushHook()
     loadInitialData()

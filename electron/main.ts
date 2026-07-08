@@ -542,22 +542,22 @@ function registerIpc(): void {
 
   ipcMain.handle(
     'messages:list',
-    (_, folderId: string | 'unified', limit?: number, offset?: number) =>
-      listMessages(folderId, limit, offset)
+    (_, folderId: string | 'unified', limit?: number, offset?: number, unreadOnly?: boolean) =>
+      listMessages(folderId, limit, offset, unreadOnly)
   )
 
-  ipcMain.handle('messages:count', (_, folderId: string | 'unified') =>
-    countMessages(folderId)
+  ipcMain.handle('messages:count', (_, folderId: string | 'unified', unreadOnly?: boolean) =>
+    countMessages(folderId, unreadOnly)
   )
 
   ipcMain.handle(
     'messages:listThreads',
-    (_, folderId: string | 'unified', limit?: number, offset?: number) =>
-      listThreads(folderId, limit, offset)
+    (_, folderId: string | 'unified', limit?: number, offset?: number, unreadOnly?: boolean) =>
+      listThreads(folderId, limit, offset, unreadOnly)
   )
 
-  ipcMain.handle('messages:countThreads', (_, folderId: string | 'unified') =>
-    countThreads(folderId)
+  ipcMain.handle('messages:countThreads', (_, folderId: string | 'unified', unreadOnly?: boolean) =>
+    countThreads(folderId, unreadOnly)
   )
 
   ipcMain.handle('messages:getThread', (_, accountId: string, threadId: string) =>

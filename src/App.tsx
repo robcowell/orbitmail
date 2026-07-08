@@ -3,6 +3,7 @@ import { ThreePaneLayout } from './components/layout/ThreePaneLayout'
 import { Toolbar } from './components/layout/Toolbar'
 import { Sidebar } from './components/sidebar/Sidebar'
 import { MessageList } from './components/list/MessageList'
+import { MessageListHeader } from './components/list/MessageListHeader'
 import { MessageView } from './components/reader/MessageView'
 import { AddAccountWizard } from './components/accounts/AddAccountWizard'
 import { AiSettingsDialog } from './components/settings/AiSettingsDialog'
@@ -214,7 +215,14 @@ function MainApp() {
       <Toolbar />
       <ThreePaneLayout
         sidebar={<Sidebar />}
-        list={<MessageList />}
+        list={
+          <>
+            <MessageListHeader />
+            <div className="message-list-body">
+              <MessageList />
+            </div>
+          </>
+        }
         reader={<MessageView />}
       />
       <StatusBar />

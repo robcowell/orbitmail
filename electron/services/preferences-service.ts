@@ -9,6 +9,7 @@ export interface UiPreferences {
   collapsedAccountIds: Record<string, boolean>
   favoriteFolderIds: string[]
   threadedView: boolean
+  unreadFilterByAccount: Record<string, boolean>
 }
 
 export interface WindowPreferences {
@@ -33,7 +34,8 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   selectedMessageId: null,
   collapsedAccountIds: {},
   favoriteFolderIds: [],
-  threadedView: true
+  threadedView: true,
+  unreadFilterByAccount: {}
 }
 
 export const DEFAULT_APP_STATE: PersistedAppState = {

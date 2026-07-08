@@ -492,6 +492,26 @@ textarea {
   justify-content: center;
 }
 
+/* Per-view controls sitting above the scrollable message list. */
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--toolbar-height);
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-main);
+  flex-shrink: 0;
+}
+
+/* Fills the pane below the list toolbar; the list/empty state stretches into it. */
+.message-list-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .message-list {
   display: flex;
   flex-direction: column;

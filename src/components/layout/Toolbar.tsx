@@ -6,9 +6,7 @@ import {
   markMessageUnread,
   toggleMessageStar,
   runSearch,
-  clearSearch,
-  openTasksDialog,
-  toggleThreadedView
+  clearSearch
 } from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
@@ -23,10 +21,7 @@ import {
   ArrowsClockwise,
   MagnifyingGlass,
   Star,
-  Envelope,
-  Sparkle,
-  ListChecks,
-  Stack
+  Envelope
 } from '../icons'
 
 function ThemeToggle() {
@@ -59,7 +54,6 @@ export function Toolbar() {
   const setToast = useMailStore((s) => s.setToast)
   const syncStatus = useMailStore((s) => s.syncStatus)
   const isOnline = useMailStore((s) => s.isOnline)
-  const threadedView = useMailStore((s) => s.threadedView)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const searchAccountId = resolveSearchAccountId(selectedFolderId, folders)
@@ -251,31 +245,6 @@ export function Toolbar() {
       </div>
 
       <div className="toolbar-spacer" />
-
-      <button
-        className={`toolbar-btn${threadedView ? ' active' : ''}`}
-        title={threadedView ? 'Conversation view on — click for flat list' : 'Group by conversation'}
-        aria-pressed={threadedView}
-        onClick={() => void toggleThreadedView()}
-      >
-        <Stack {...iconProps} weight={threadedView ? 'fill' : 'duotone'} />
-      </button>
-
-      <button
-        className="toolbar-btn"
-        title="Tasks from your mail"
-        onClick={() => void openTasksDialog()}
-      >
-        <ListChecks {...iconProps} />
-      </button>
-
-      <button
-        className="toolbar-btn"
-        title="AI settings"
-        onClick={() => useMailStore.getState().setShowAiSettings(true)}
-      >
-        <Sparkle {...iconProps} />
-      </button>
 
       <ThemeToggle />
 

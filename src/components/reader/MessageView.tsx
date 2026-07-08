@@ -16,9 +16,11 @@ import {
   Flag,
   Sparkle,
   CaretRight,
-  ArrowBendUpLeft
+  ArrowBendUpLeft,
+  Printer
 } from '../icons'
 import { flagColorHex } from '../../constants/flags'
+import { printMessageDetail, printThreadDetails } from '../../utils/printMessage'
 
 function extractName(from: string): string {
   const match = from.match(/^(.+?)\s*</)
@@ -169,6 +171,14 @@ export function MessageView() {
     }
   }
 
+  const handlePrint = async () => {
+    try {
+      await printMessageDetail(selectedMessage)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Print failed')
+    }
+  }
+
   const handleOpenAttachment = async (attachmentId: string) => {
     if (fetchingAttachmentId) return
 
@@ -203,6 +213,15 @@ export function MessageView() {
             >
               <Sparkle size={16} weight={aiAnalysis ? 'fill' : 'duotone'} />
               {isAnalyzing ? 'Analyzing…' : aiAnalysis ? 'Re-analyze' : 'Analyze'}
+            </button>
+            <button
+              type="button"
+              className="reader-ai-btn"
+              title="Print this message"
+              onClick={handlePrint}
+            >
+              <Printer size={16} weight="duotone" />
+              Print
             </button>
             <button
               type="button"
@@ -331,6 +350,7 @@ function formatSize(bytes: number): string {
 // ---- Conversation (thread) reader ----------------------------------------
 
 function ThreadView({ messages }: { messages: MessageDetail[] }) {
+  const setToast = useMailStore((s) => s.setToast)
   const latest = messages[messages.length - 1]
 
   const handleReply = () => {
@@ -339,6 +359,14 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
       mode: 'reply',
       originalMessageId: latest.id
     })
+  }
+
+  const handlePrint = async () => {
+    try {
+      await printThreadDetails(messages)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Print failed')
+    }
   }
 
   return (
@@ -360,6 +388,15 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
             >
               <ArrowBendUpLeft size={16} weight="duotone" />
               Reply
+            </button>
+            <button
+              type="button"
+              className="reader-ai-btn"
+              title="Print this conversation"
+              onClick={handlePrint}
+            >
+              <Printer size={16} weight="duotone" />
+              Print
             </button>
             <DraftReplyButton messageId={latest.id} />
           </div>

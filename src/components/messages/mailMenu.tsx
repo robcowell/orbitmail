@@ -21,7 +21,8 @@ import {
   Prohibit,
   Flag,
   Archive,
-  ListChecks
+  ListChecks,
+  Printer
 } from '../icons'
 
 function FlagDot({ color }: { color: string }) {
@@ -53,6 +54,7 @@ export interface MailMenuActions {
   archive: () => void | Promise<void>
   move: (folderId: string) => void | Promise<void>
   copy: (folderId: string) => void | Promise<void>
+  print: () => void | Promise<void>
 }
 
 type RunFn = (action: () => void | Promise<void>, successMessage?: string) => void
@@ -103,6 +105,12 @@ export function buildMailMenuItems(
       label: 'Open',
       icon: <EnvelopeSimpleOpen size={16} weight="duotone" />,
       onClick: () => run(actions.open)
+    },
+    {
+      id: 'print',
+      label: 'Print…',
+      icon: <Printer size={16} weight="duotone" />,
+      onClick: () => run(actions.print)
     },
     { id: 'sep-1', label: '', separator: true, onClick: () => {} },
     {

@@ -37,6 +37,7 @@ import { Export } from '@phosphor-icons/react/dist/ssr/Export'
 import { PencilSimple } from '@phosphor-icons/react/dist/ssr/PencilSimple'
 import { Info } from '@phosphor-icons/react/dist/ssr/Info'
 import { Sparkle } from '@phosphor-icons/react/dist/ssr/Sparkle'
+import { Printer } from '@phosphor-icons/react/dist/ssr/Printer'
 import type { FolderType } from '../../shared/types'
 
 export const iconProps = {
@@ -102,7 +103,8 @@ export {
   Export,
   PencilSimple,
   Info,
-  Sparkle
+  Sparkle,
+  Printer
 }
 
 export type { IconProps }

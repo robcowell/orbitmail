@@ -297,6 +297,11 @@ export interface OrbitMailAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
+  print: {
+    // Renders a self-contained HTML document in an offscreen window and opens
+    // the OS print dialog. Resolves { printed: false } if the user cancels.
+    document: (html: string) => Promise<{ printed: boolean }>
+  }
   app: {
     onNeedsAccount: (callback: () => void) => () => void
   }

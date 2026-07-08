@@ -31,7 +31,8 @@ import {
   getFolderById,
   searchMessages,
   updateAccountDisplayName,
-  getLatestInboxMessage
+  getLatestInboxMessage,
+  regroupThreadsIfNeeded
 } from './services/db-service'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
@@ -891,6 +892,11 @@ if (!gotSingleInstanceLock) {
         updateAppBadge(mainWindow)
       }
     })
+
+    // One-time upgrade: transitively re-link conversations so existing split
+    // threads merge before the renderer's first (local) query. No-op after the
+    // first run (guarded by a preferences flag).
+    regroupThreadsIfNeeded()
 
     // Show the window as early as possible; the renderer then loads the user's
     // cached mail from the local DB. Local-only setup (mailto handler, badge)

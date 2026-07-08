@@ -608,6 +608,60 @@ textarea {
   background: transparent;
 }
 
+/* Thread expand/collapse disclosure caret (and its spacer for single-message
+   threads, so every row's content lines up). */
+.thread-disclosure {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.thread-disclosure:hover {
+  background: var(--bg-list-hover);
+  color: var(--text-primary);
+}
+
+.thread-disclosure svg {
+  transition: transform 0.12s ease;
+}
+
+.thread-disclosure-spacer {
+  flex-shrink: 0;
+  width: 16px;
+}
+
+/* Inline child message under an expanded thread. */
+.message-row-nested {
+  padding-left: 34px;
+  min-height: 44px;
+  background: var(--bg-list-hover);
+}
+
+.message-row-nested .message-subject {
+  display: none;
+}
+
+.message-row.expanded {
+  background: var(--bg-list-hover);
+}
+
+.thread-children-loading {
+  padding: 10px 12px 10px 46px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+
 .message-content {
   flex: 1;
   min-width: 0;

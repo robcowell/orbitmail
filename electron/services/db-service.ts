@@ -25,6 +25,7 @@ import {
 } from './account-credentials'
 import { DEFAULT_SYNC_DAYS, getSyncCutoffTimestamp } from './sync-policy'
 import { buildFtsQuery, buildLikePattern } from './search-index'
+import { normalizeSubject } from './thread-util'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
@@ -511,6 +512,146 @@ function extractName(from: string): string {
 // Folder ids the current view scopes to (unified = every inbox). Empty = nothing.
 function threadScopeIds(folderId: string | 'unified'): string[] {
   return folderId === 'unified' ? getInboxFolderIds() : [folderId]
+}
+
+// ---------------------------------------------------------------------------
+// Thread regrouping — union-find over RFC 5322 Message-ID relationships.
+//
+// Keying a message by references[0] alone splits a conversation whenever a
+// client sends In-Reply-To but omits References (the reply keys to its parent
+// instead of the root). Here we link every message to every id it mentions
+// (own Message-ID, In-Reply-To, all References) and assign the whole connected
+// set one stable thread_id, so those splits merge back together.
+// ---------------------------------------------------------------------------
+
+// Canonicalize a Message-ID for comparison: trim, drop one pair of surrounding
+// angle brackets, lowercase. (Message-IDs are practically case-insensitive and
+// clients vary on bracket/whitespace formatting.)
+function canonicalizeMessageId(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let s = raw.trim()
+  if (s.startsWith('<') && s.endsWith('>')) s = s.slice(1, -1)
+  s = s.trim().toLowerCase()
+  return s.length > 0 ? s : null
+}
+
+// Split a raw References / In-Reply-To header into canonical id tokens.
+function tokenizeReferences(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  const out: string[] = []
+  for (const token of raw.split(/\s+/)) {
+    const id = canonicalizeMessageId(token)
+    if (id) out.push(id)
+  }
+  return out
+}
+
+interface RegroupRow {
+  id: string
+  message_id: string | null
+  in_reply_to: string | null
+  references: string | null
+  thread_id: string | null
+  subject: string
+  date: number
+}
+
+// Recompute thread_id for every message in an account so that messages linked
+// (transitively) by Message-ID / In-Reply-To / References share one id.
+export function regroupThreadsForAccount(accountId: string): void {
+  const sqlite = getRawSqlite()
+  const rows = sqlite
+    .prepare(
+      `SELECT id, message_id, in_reply_to, "references", thread_id, subject, date
+       FROM messages WHERE account_id = ?`
+    )
+    .all(accountId) as RegroupRow[]
+  if (rows.length === 0) return
+
+  // Union-find over canonical Message-ID tokens.
+  const parent = new Map<string, string>()
+  const makeSet = (x: string): void => {
+    if (!parent.has(x)) parent.set(x, x)
+  }
+  const find = (x: string): string => {
+    let root = x
+    while (parent.get(root) !== root) root = parent.get(root)!
+    let cur = x
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur)!
+      parent.set(cur, root)
+      cur = next
+    }
+    return root
+  }
+  const union = (a: string, b: string): void => {
+    makeSet(a)
+    makeSet(b)
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent.set(ra, rb)
+  }
+
+  for (const r of rows) {
+    const own = canonicalizeMessageId(r.message_id)
+    const refs = [...tokenizeReferences(r.references), ...tokenizeReferences(r.in_reply_to)]
+    if (own) {
+      makeSet(own)
+      for (const ref of refs) union(own, ref)
+    } else if (refs.length > 0) {
+      // No Message-ID of its own: still cluster the ids it references together.
+      for (let i = 1; i < refs.length; i++) union(refs[0], refs[i])
+    }
+  }
+
+  // Stable representative per set: the canonical id of the earliest message in
+  // it (tie-break lexicographically). Referenced-but-absent ids carry no date,
+  // so a real message always wins the root — the conversation's opener.
+  const repByRoot = new Map<string, { id: string; date: number }>()
+  for (const r of rows) {
+    const own = canonicalizeMessageId(r.message_id)
+    if (!own) continue
+    const root = find(own)
+    const cur = repByRoot.get(root)
+    if (!cur || r.date < cur.date || (r.date === cur.date && own < cur.id)) {
+      repByRoot.set(root, { id: own, date: r.date })
+    }
+  }
+
+  const update = sqlite.prepare('UPDATE messages SET thread_id = ? WHERE id = ?')
+  const apply = sqlite.transaction((items: RegroupRow[]) => {
+    for (const r of items) {
+      const own = canonicalizeMessageId(r.message_id)
+      const threadId = own
+        ? repByRoot.get(find(own))?.id ?? own
+        : `subj:${normalizeSubject(r.subject)}`
+      if (threadId !== r.thread_id) update.run(threadId, r.id)
+    }
+  })
+  apply(rows)
+}
+
+// Regroup every account (used by the one-time upgrade backfill).
+export function regroupAllThreads(): void {
+  const sqlite = getRawSqlite()
+  const accountRows = sqlite.prepare('SELECT id FROM accounts').all() as Array<{ id: string }>
+  for (const a of accountRows) regroupThreadsForAccount(a.id)
+}
+
+// Run the transitive regroup once on upgrade so existing split conversations
+// merge. Guarded by a preferences flag so it only runs a single time.
+export function regroupThreadsIfNeeded(): void {
+  const sqlite = getRawSqlite()
+  const done = sqlite
+    .prepare("SELECT value FROM app_preferences WHERE key = 'thread_regroup_v2'")
+    .get() as { value: string } | undefined
+  if (done?.value === '1') return
+  regroupAllThreads()
+  sqlite
+    .prepare(
+      "INSERT INTO app_preferences (key, value) VALUES ('thread_regroup_v2', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    )
+    .run()
 }
 
 interface ThreadMsgRow {

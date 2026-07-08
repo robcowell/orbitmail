@@ -23,6 +23,7 @@ import {
   recalculateFolderUnread,
   type UpsertMessageData,
   getAccountSyncDays,
+  regroupThreadsForAccount,
   pruneMessagesOutsideSyncWindow,
   listFolders,
   getFolderHighestModseq,
@@ -637,7 +638,10 @@ export async function syncAccount(
 ): Promise<number> {
   if (provider === 'pop3') {
     const newCount = await syncPop3Account(accountId, options.onProgress ?? incrementSyncProgress)
-    if (newCount > 0) onFolderSynced?.()
+    if (newCount > 0) {
+      regroupThreadsForAccount(accountId)
+      onFolderSynced?.()
+    }
     return newCount
   }
 
@@ -674,6 +678,10 @@ export async function syncAccount(
     }
     return synced
   })
+
+  // New mail can bridge previously-separate threads, so re-link the account's
+  // conversations whenever anything was fetched.
+  if (newCount > 0) regroupThreadsForAccount(accountId)
 
   pruneMessagesOutsideSyncWindow(accountId, getAccountSyncDays(accountId))
   return newCount

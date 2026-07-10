@@ -12,6 +12,7 @@ import type {
   FolderType,
   Provider,
   FlagColor,
+  SearchField,
   SweepScope,
   SweepTask,
   CompletedTask
@@ -24,7 +25,7 @@ import {
   type AccountCredentials
 } from './account-credentials'
 import { DEFAULT_SYNC_DAYS, getSyncCutoffTimestamp } from './sync-policy'
-import { buildFtsQuery, buildLikePattern } from './search-index'
+import { buildLikePattern } from './search-index'
 import { normalizeSubject } from './thread-util'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
@@ -1650,69 +1651,53 @@ const SEARCH_SELECT = `SELECT m.id, m.folder_id, m.account_id, m.uid, m.message_
               m.from_addr, m.to_addr, m.subject, m.snippet, m.date,
               m.is_read, m.is_starred, m.flag_color, m.has_attachments, m.thread_id`
 
-function searchMessagesFts(
-  sqlite: ReturnType<typeof getRawSqlite>,
-  ftsQuery: string,
-  accountId: string,
-  limit: number
-): MessageSummary[] {
-  const rows = sqlite
-    .prepare(
-      `${SEARCH_SELECT}
-       FROM messages_fts fts
-       JOIN messages m ON m.id = fts.message_id
-       WHERE messages_fts MATCH ? AND m.account_id = ?
-       ORDER BY rank, m.date DESC
-       LIMIT ?`
-    )
-    .all(ftsQuery, accountId, limit) as SearchRow[]
-
-  return mapSearchRows(rows)
+// Columns each search scope matches against. 'all' spans sender, recipient,
+// subject and body. Note: the messages_fts index only covers subject/snippet/
+// body_text (not From/To), so scoped search uses substring LIKE over the
+// messages table directly — correct for every scope and fast at cache sizes.
+const SEARCH_FIELD_COLUMNS: Record<SearchField, string[]> = {
+  all: ['m.from_addr', 'm.to_addr', 'm.subject', 'm.snippet', 'm.body_text', 'm.body_html'],
+  from: ['m.from_addr'],
+  to: ['m.to_addr'],
+  subject: ['m.subject'],
+  body: ['m.body_text', 'm.body_html']
 }
 
-function searchMessagesLike(
-  sqlite: ReturnType<typeof getRawSqlite>,
-  likePattern: string,
+export function searchMessages(
+  text: string,
   accountId: string,
-  limit: number
+  field: SearchField = 'all',
+  limit = 50
 ): MessageSummary[] {
+  const sqlite = getRawSqlite()
+  const likePattern = buildLikePattern(text)
+  if (!likePattern || !accountId) return []
+
+  const columns = SEARCH_FIELD_COLUMNS[field] ?? SEARCH_FIELD_COLUMNS.all
+  const where = columns.map((col) => `${col} LIKE ? COLLATE NOCASE`).join(' OR ')
+
   const rows = sqlite
     .prepare(
       `${SEARCH_SELECT}
        FROM messages m
-       WHERE m.account_id = ?
-         AND (
-           m.subject LIKE ? COLLATE NOCASE OR
-           m.snippet LIKE ? COLLATE NOCASE OR
-           m.body_text LIKE ? COLLATE NOCASE OR
-           m.body_html LIKE ? COLLATE NOCASE
-         )
+       WHERE m.account_id = ? AND (${where})
        ORDER BY m.date DESC
        LIMIT ?`
     )
-    .all(accountId, likePattern, likePattern, likePattern, likePattern, limit) as SearchRow[]
+    .all(accountId, ...columns.map(() => likePattern), limit) as SearchRow[]
 
   return mapSearchRows(rows)
 }
 
-export function searchMessages(text: string, accountId: string, limit = 50): MessageSummary[] {
+// Load specific messages as summaries, newest first. Used by the server-side
+// search fallback to return exactly the rows it just imported, preserving the
+// server's match (which may be a From/To hit that local search doesn't cover).
+export function getMessageSummariesByIds(ids: string[]): MessageSummary[] {
+  if (ids.length === 0) return []
   const sqlite = getRawSqlite()
-  const ftsQuery = buildFtsQuery(text)
-  const likePattern = buildLikePattern(text)
-  if ((!ftsQuery && !likePattern) || !accountId) return []
-
-  if (ftsQuery) {
-    try {
-      const ftsResults = searchMessagesFts(sqlite, ftsQuery, accountId, limit)
-      if (ftsResults.length > 0) return ftsResults
-    } catch {
-      // Fall back to LIKE if the FTS query is malformed.
-    }
-  }
-
-  if (likePattern) {
-    return searchMessagesLike(sqlite, likePattern, accountId, limit)
-  }
-
-  return []
+  const placeholders = ids.map(() => '?').join(',')
+  const rows = sqlite
+    .prepare(`${SEARCH_SELECT} FROM messages m WHERE m.id IN (${placeholders}) ORDER BY m.date DESC`)
+    .all(...ids) as SearchRow[]
+  return mapSearchRows(rows)
 }

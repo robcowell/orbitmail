@@ -2,6 +2,10 @@ export type Provider = 'gmail' | 'o365' | 'imap' | 'pop3'
 
 export type FolderType = 'inbox' | 'sent' | 'drafts' | 'trash' | 'junk' | 'custom'
 
+// Which field(s) a search matches against. 'all' spans sender, recipient,
+// subject and body.
+export type SearchField = 'all' | 'from' | 'to' | 'subject' | 'body'
+
 export type ConnectionSecurity = 'ssl' | 'starttls' | 'none'
 
 export interface ServerConfig {
@@ -168,6 +172,8 @@ export interface UiPreferences {
   // Per-account "unread only" list filter. Keyed by account id, plus 'unified'
   // for the combined inbox view. Missing/false = show all messages.
   unreadFilterByAccount: Record<string, boolean>
+  // Last-used search scope (All / From / To / Subject / Body).
+  searchField: SearchField
 }
 
 export interface PersistedAppState {
@@ -298,7 +304,15 @@ export interface OrbitMailAPI {
     onMessagesUpdated: (callback: () => void) => () => void
   }
   search: {
-    query: (text: string, accountId: string, limit?: number) => Promise<MessageSummary[]>
+    query: (
+      text: string,
+      accountId: string,
+      field?: SearchField,
+      limit?: number
+    ) => Promise<MessageSummary[]>
+    // Live IMAP search on the server, used as a fallback when the local cache
+    // has no match. Returns [] for POP3 accounts.
+    server: (text: string, accountId: string, field?: SearchField) => Promise<MessageSummary[]>
   }
   compose: {
     open: (payload?: Partial<ComposePayload>) => Promise<void>

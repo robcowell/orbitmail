@@ -22,6 +22,7 @@ import { Planet } from '@phosphor-icons/react/dist/ssr/Planet'
 import { Star } from '@phosphor-icons/react/dist/ssr/Star'
 import { Envelope } from '@phosphor-icons/react/dist/ssr/Envelope'
 import { X } from '@phosphor-icons/react/dist/ssr/X'
+import { XCircle } from '@phosphor-icons/react/dist/ssr/XCircle'
 import { GearSix } from '@phosphor-icons/react/dist/ssr/GearSix'
 import { CaretRight } from '@phosphor-icons/react/dist/ssr/CaretRight'
 import { BellSlash } from '@phosphor-icons/react/dist/ssr/BellSlash'
@@ -90,6 +91,7 @@ export {
   Star,
   Envelope,
   X,
+  XCircle,
   GearSix,
   CaretRight,
   BellSlash,

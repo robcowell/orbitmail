@@ -13,7 +13,8 @@ export function getUiSnapshot(): UiPreferences {
     collapsedAccountIds: mail.collapsedAccountIds,
     favoriteFolderIds: mail.favoriteFolderIds,
     threadedView: mail.threadedView,
-    unreadFilterByAccount: mail.unreadFilterByAccount
+    unreadFilterByAccount: mail.unreadFilterByAccount,
+    searchField: mail.searchField
   }
 }
 
@@ -25,7 +26,8 @@ export function applyUiPreferences(ui: UiPreferences): void {
     collapsedAccountIds: ui.collapsedAccountIds,
     favoriteFolderIds: ui.favoriteFolderIds,
     threadedView: ui.threadedView,
-    unreadFilterByAccount: ui.unreadFilterByAccount ?? {}
+    unreadFilterByAccount: ui.unreadFilterByAccount ?? {},
+    searchField: ui.searchField ?? 'all'
   })
 }
 

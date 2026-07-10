@@ -12,6 +12,7 @@ import type {
   SweepTask,
   CompletedTask,
   SweepScope,
+  SearchField,
   DraftTone
 } from '../../shared/types'
 import {
@@ -45,6 +46,13 @@ interface MailState {
   selectedFolderId: string | 'unified'
   searchQuery: string
   searchResults: MessageSummary[]
+  // Which field(s) the search matches against (All / From / To / Subject / Body).
+  searchField: SearchField
+  // True while the server-side search fallback is running (local cache was empty).
+  searchLoading: boolean
+  // True once a live server search has run for the current query (auto or manual),
+  // so the results banner can stop offering "search the whole mailbox".
+  serverSearched: boolean
   syncStatus: SyncStatus
   showAddAccount: boolean
   toast: string | null
@@ -95,6 +103,9 @@ interface MailState {
   setSelectedFolderId: (id: string | 'unified') => void
   setSearchQuery: (q: string) => void
   setSearchResults: (results: MessageSummary[]) => void
+  setSearchField: (field: SearchField) => void
+  setSearchLoading: (loading: boolean) => void
+  setServerSearched: (searched: boolean) => void
   setSyncStatus: (status: SyncStatus) => void
   setShowAddAccount: (show: boolean) => void
   setToast: (msg: string | null) => void
@@ -143,6 +154,9 @@ export const useMailStore = create<MailState>((set) => ({
   selectedFolderId: 'unified',
   searchQuery: '',
   searchResults: [],
+  searchField: 'all',
+  searchLoading: false,
+  serverSearched: false,
   syncStatus: { syncing: false, lastSyncAt: null, error: null, syncCurrent: 0, syncTotal: 0 },
   showAddAccount: false,
   toast: null,
@@ -189,6 +203,12 @@ export const useMailStore = create<MailState>((set) => ({
   setSelectedFolderId: (id) => set({ selectedFolderId: id }),
   setSearchQuery: (q) => set({ searchQuery: q }),
   setSearchResults: (results) => set({ searchResults: results }),
+  setSearchField: (field) => {
+    set({ searchField: field })
+    scheduleSaveUiPreferences({ searchField: field })
+  },
+  setSearchLoading: (loading) => set({ searchLoading: loading }),
+  setServerSearched: (searched) => set({ serverSearched: searched }),
   setSyncStatus: (status) => set({ syncStatus: status }),
   setShowAddAccount: (show) => set({ showAddAccount: show }),
   setToast: (msg) => set({ toast: msg }),
@@ -1567,17 +1587,83 @@ export function clearSearch(): void {
   const store = useMailStore.getState()
   store.setSearchQuery('')
   store.setSearchResults([])
+  store.setSearchLoading(false)
+  store.setServerSearched(false)
 }
 
-export async function runSearch(query: string, accountId: string): Promise<void> {
+export async function runSearch(
+  query: string,
+  accountId: string,
+  field: SearchField = 'all'
+): Promise<void> {
   const store = useMailStore.getState()
   store.setSearchQuery(query)
+  store.setSearchField(field)
+  store.setServerSearched(false)
   if (!query.trim()) {
     store.setSearchResults([])
+    store.setSearchLoading(false)
     return
   }
-  const results = await window.orbitMail.search.query(query, accountId)
+
+  // A newer keystroke — or a scope change — started a different search while we
+  // were awaiting.
+  const isStale = () => {
+    const s = useMailStore.getState()
+    return s.searchQuery !== query || s.searchField !== field
+  }
+
+  const results = await window.orbitMail.search.query(query, accountId, field)
+  if (isStale()) return
   store.setSearchResults(results)
+
+  // If the local cache had nothing, auto-run the live server search. When there
+  // ARE local hits we leave the server search to the explicit banner action —
+  // a broad term (e.g. a sender name) often matches quoted bodies locally while
+  // the message the user actually wants sits outside the synced window.
+  if (results.length === 0) {
+    await searchWholeMailbox(query, accountId)
+  }
+}
+
+// Live "search the entire mailbox" on the server, merged into the current
+// results (deduped by id, newest first). Reachable both as the empty-result
+// fallback and as an explicit action from the search-results banner.
+export async function searchWholeMailbox(query: string, accountId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const q = query.trim()
+  if (!q) return
+
+  const field = useMailStore.getState().searchField
+  const isStale = () => {
+    const s = useMailStore.getState()
+    return s.searchQuery !== q || s.searchField !== field
+  }
+
+  store.setSearchLoading(true)
+  try {
+    const serverResults = await window.orbitMail.search.server(q, accountId, field)
+    if (isStale()) return
+
+    const byId = new Map(useMailStore.getState().searchResults.map((m) => [m.id, m]))
+    let added = 0
+    for (const m of serverResults) {
+      if (!byId.has(m.id)) added++
+      byId.set(m.id, m)
+    }
+    const merged = [...byId.values()].sort((a, b) => b.date - a.date)
+    store.setSearchResults(merged)
+    store.setServerSearched(true)
+    store.setToast(
+      added === 0
+        ? 'No new matches on the server'
+        : added === 1
+          ? 'Found 1 more on the server'
+          : `Found ${added} more on the server`
+    )
+  } finally {
+    if (!isStale()) store.setSearchLoading(false)
+  }
 }
 
 // Request an AI analysis of a message and cache it in the store. Surfaces

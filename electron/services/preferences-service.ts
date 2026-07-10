@@ -1,3 +1,4 @@
+import type { SearchField } from '../../shared/types'
 import { getRawSqlite } from '../db'
 
 const PREFERENCES_KEY = 'app_state'
@@ -10,6 +11,7 @@ export interface UiPreferences {
   favoriteFolderIds: string[]
   threadedView: boolean
   unreadFilterByAccount: Record<string, boolean>
+  searchField: SearchField
 }
 
 export interface WindowPreferences {
@@ -35,7 +37,8 @@ export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   collapsedAccountIds: {},
   favoriteFolderIds: [],
   threadedView: true,
-  unreadFilterByAccount: {}
+  unreadFilterByAccount: {},
+  searchField: 'all'
 }
 
 export const DEFAULT_APP_STATE: PersistedAppState = {

@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { SearchField } from '../../../shared/types'
 import {
   useMailStore,
   moveMessageToTrash,
@@ -22,7 +23,8 @@ import {
   MagnifyingGlass,
   Star,
   Envelope,
-  XCircle
+  XCircle,
+  CaretRight
 } from '../icons'
 
 function ThemeToggle() {
@@ -45,6 +47,72 @@ function ThemeToggle() {
   )
 }
 
+const SEARCH_FIELDS: { value: SearchField; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'from', label: 'From' },
+  { value: 'to', label: 'To' },
+  { value: 'subject', label: 'Subject' },
+  { value: 'body', label: 'Body' }
+]
+
+// Dropdown that picks which field the search matches against (All/From/To/…).
+function SearchScopeMenu({
+  value,
+  disabled,
+  onChange
+}: {
+  value: SearchField
+  disabled: boolean
+  onChange: (field: SearchField) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const current = SEARCH_FIELDS.find((f) => f.value === value) ?? SEARCH_FIELDS[0]
+
+  return (
+    <div className="search-scope" ref={ref}>
+      <button
+        type="button"
+        className="search-scope-btn"
+        disabled={disabled}
+        title="Choose which fields to search"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {current.label}
+        <CaretRight size={11} weight="bold" style={{ transform: 'rotate(90deg)', opacity: 0.7 }} />
+      </button>
+      {open && (
+        <div className="search-scope-menu" role="menu">
+          {SEARCH_FIELDS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              role="menuitem"
+              className={`search-scope-option${f.value === value ? ' active' : ''}`}
+              onClick={() => {
+                setOpen(false)
+                onChange(f.value)
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Toolbar() {
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
   const selectedMessage = useMailStore((s) => s.selectedMessage)
@@ -52,6 +120,7 @@ export function Toolbar() {
   const folders = useMailStore((s) => s.folders)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const searchQuery = useMailStore((s) => s.searchQuery)
+  const searchField = useMailStore((s) => s.searchField)
   const setToast = useMailStore((s) => s.setToast)
   const syncStatus = useMailStore((s) => s.syncStatus)
   const isOnline = useMailStore((s) => s.isOnline)
@@ -159,7 +228,7 @@ export function Toolbar() {
     }
 
     searchTimerRef.current = setTimeout(() => {
-      void runSearch(value, searchAccountId).catch((err) => {
+      void runSearch(value, searchAccountId, searchField).catch((err) => {
         setToast(err instanceof Error ? err.message : 'Search failed')
       })
     }, 200)
@@ -169,6 +238,17 @@ export function Toolbar() {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
     clearSearch()
     searchInputRef.current?.focus()
+  }
+
+  // Changing scope re-runs the current query immediately against the new field.
+  const handleScopeChange = (field: SearchField) => {
+    useMailStore.getState().setSearchField(field)
+    if (searchAccountId && searchQuery.trim()) {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+      void runSearch(searchQuery, searchAccountId, field).catch((err) => {
+        setToast(err instanceof Error ? err.message : 'Search failed')
+      })
+    }
   }
 
   const searchPlaceholder = searchEnabled
@@ -256,8 +336,14 @@ export function Toolbar() {
 
       <ThemeToggle />
 
-      <div className={`search-wrap${searchEnabled ? '' : ' search-wrap-disabled'}`}>
-        <MagnifyingGlass {...iconProps} size={16} className="search-icon" />
+      <div className="search-area">
+        <SearchScopeMenu
+          value={searchField}
+          disabled={!searchEnabled}
+          onChange={handleScopeChange}
+        />
+        <div className={`search-wrap${searchEnabled ? '' : ' search-wrap-disabled'}`}>
+          <MagnifyingGlass {...iconProps} size={16} className="search-icon" />
         <input
           ref={searchInputRef}
           className="search-input"
@@ -278,6 +364,7 @@ export function Toolbar() {
             <XCircle size={16} weight="fill" />
           </button>
         )}
+        </div>
       </div>
     </div>
   )

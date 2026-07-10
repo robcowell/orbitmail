@@ -9,6 +9,7 @@ import type {
   FlagColor,
   SweepScope,
   DraftTone,
+  SearchField,
   AttachmentDraft
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
@@ -752,12 +753,14 @@ function registerIpc(): void {
 
   ipcMain.handle('sync:getStatus', () => getSyncStatus())
 
-  ipcMain.handle('search:query', (_, text: string, accountId: string, limit?: number) =>
-    searchMessages(text, accountId, limit)
+  ipcMain.handle(
+    'search:query',
+    (_, text: string, accountId: string, field?: SearchField, limit?: number) =>
+      searchMessages(text, accountId, field, limit)
   )
 
-  ipcMain.handle('search:server', (_, text: string, accountId: string) =>
-    searchServerMessages(text, accountId)
+  ipcMain.handle('search:server', (_, text: string, accountId: string, field?: SearchField) =>
+    searchServerMessages(text, accountId, field)
   )
 
   ipcMain.handle('compose:open', async (_, payload?: Partial<ComposePayload>) => {

@@ -12,6 +12,7 @@ import type {
   SweepTask,
   CompletedTask,
   SweepScope,
+  SearchField,
   DraftTone
 } from '../../shared/types'
 import {
@@ -45,6 +46,8 @@ interface MailState {
   selectedFolderId: string | 'unified'
   searchQuery: string
   searchResults: MessageSummary[]
+  // Which field(s) the search matches against (All / From / To / Subject / Body).
+  searchField: SearchField
   // True while the server-side search fallback is running (local cache was empty).
   searchLoading: boolean
   // True once a live server search has run for the current query (auto or manual),
@@ -100,6 +103,7 @@ interface MailState {
   setSelectedFolderId: (id: string | 'unified') => void
   setSearchQuery: (q: string) => void
   setSearchResults: (results: MessageSummary[]) => void
+  setSearchField: (field: SearchField) => void
   setSearchLoading: (loading: boolean) => void
   setServerSearched: (searched: boolean) => void
   setSyncStatus: (status: SyncStatus) => void
@@ -150,6 +154,7 @@ export const useMailStore = create<MailState>((set) => ({
   selectedFolderId: 'unified',
   searchQuery: '',
   searchResults: [],
+  searchField: 'all',
   searchLoading: false,
   serverSearched: false,
   syncStatus: { syncing: false, lastSyncAt: null, error: null, syncCurrent: 0, syncTotal: 0 },
@@ -198,6 +203,10 @@ export const useMailStore = create<MailState>((set) => ({
   setSelectedFolderId: (id) => set({ selectedFolderId: id }),
   setSearchQuery: (q) => set({ searchQuery: q }),
   setSearchResults: (results) => set({ searchResults: results }),
+  setSearchField: (field) => {
+    set({ searchField: field })
+    scheduleSaveUiPreferences({ searchField: field })
+  },
   setSearchLoading: (loading) => set({ searchLoading: loading }),
   setServerSearched: (searched) => set({ serverSearched: searched }),
   setSyncStatus: (status) => set({ syncStatus: status }),
@@ -1582,9 +1591,14 @@ export function clearSearch(): void {
   store.setServerSearched(false)
 }
 
-export async function runSearch(query: string, accountId: string): Promise<void> {
+export async function runSearch(
+  query: string,
+  accountId: string,
+  field: SearchField = 'all'
+): Promise<void> {
   const store = useMailStore.getState()
   store.setSearchQuery(query)
+  store.setSearchField(field)
   store.setServerSearched(false)
   if (!query.trim()) {
     store.setSearchResults([])
@@ -1592,10 +1606,14 @@ export async function runSearch(query: string, accountId: string): Promise<void>
     return
   }
 
-  // A newer keystroke started a different search while we were awaiting.
-  const isStale = () => useMailStore.getState().searchQuery !== query
+  // A newer keystroke — or a scope change — started a different search while we
+  // were awaiting.
+  const isStale = () => {
+    const s = useMailStore.getState()
+    return s.searchQuery !== query || s.searchField !== field
+  }
 
-  const results = await window.orbitMail.search.query(query, accountId)
+  const results = await window.orbitMail.search.query(query, accountId, field)
   if (isStale()) return
   store.setSearchResults(results)
 
@@ -1616,11 +1634,15 @@ export async function searchWholeMailbox(query: string, accountId: string): Prom
   const q = query.trim()
   if (!q) return
 
-  const isStale = () => useMailStore.getState().searchQuery !== q
+  const field = useMailStore.getState().searchField
+  const isStale = () => {
+    const s = useMailStore.getState()
+    return s.searchQuery !== q || s.searchField !== field
+  }
 
   store.setSearchLoading(true)
   try {
-    const serverResults = await window.orbitMail.search.server(q, accountId)
+    const serverResults = await window.orbitMail.search.server(q, accountId, field)
     if (isStale()) return
 
     const byId = new Map(useMailStore.getState().searchResults.map((m) => [m.id, m]))

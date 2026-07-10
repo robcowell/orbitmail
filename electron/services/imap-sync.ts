@@ -3,7 +3,13 @@ import { simpleParser, type Attachment } from 'mailparser'
 import { writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import type { Provider, FolderType, SyncStatus, MessageSummary } from '../../shared/types'
+import type {
+  Provider,
+  FolderType,
+  SyncStatus,
+  MessageSummary,
+  SearchField
+} from '../../shared/types'
 import { getAttachmentsDir } from '../db'
 import {
   getAccountTokens,
@@ -578,12 +584,41 @@ function pickServerSearchFolder(accountId: string): Folder | null {
   return all.find((f) => f.type === 'inbox' || f.imapPath.toUpperCase() === 'INBOX') ?? null
 }
 
+// Translate a search scope into a server query. Gmail uses its raw operators;
+// standard IMAP uses the matching SEARCH keys. 'all' spans From/To/Subject/Body.
+function buildServerSearchQuery(field: SearchField, query: string, provider: Provider) {
+  if (provider === 'gmail') {
+    // Gmail has no body-only operator, so 'body' (and 'all') use a plain term,
+    // which matches everywhere including the body.
+    const op: Partial<Record<SearchField, string>> = {
+      from: 'from:',
+      to: 'to:',
+      subject: 'subject:'
+    }
+    return { gmraw: op[field] ? `${op[field]}(${query})` : query }
+  }
+
+  switch (field) {
+    case 'from':
+      return { from: query }
+    case 'to':
+      return { to: query }
+    case 'subject':
+      return { subject: query }
+    case 'body':
+      return { body: query }
+    default:
+      return { or: [{ from: query }, { to: query }, { subject: query }, { body: query }] }
+  }
+}
+
 // Live IMAP search fallback: when the local cache has no match, query the server
 // directly, import the matches into the DB (so they become openable rows), and
 // return them as summaries. POP3 has no server-side search, so it returns [].
 export async function searchServerMessages(
   text: string,
-  accountId: string
+  accountId: string,
+  field: SearchField = 'all'
 ): Promise<MessageSummary[]> {
   const query = text.trim()
   if (!query) return []
@@ -594,12 +629,7 @@ export async function searchServerMessages(
   const folder = pickServerSearchFolder(accountId)
   if (!folder) return []
 
-  // Gmail: use its full search syntax (matches From/Subject/body/etc.). Standard
-  // IMAP: OR together the common fields so a sender-name search still hits.
-  const searchQuery =
-    account.provider === 'gmail'
-      ? { gmraw: query }
-      : { or: [{ from: query }, { to: query }, { subject: query }, { body: query }] }
+  const searchQuery = buildServerSearchQuery(field, query, account.provider)
 
   return withImapClient(accountId, account.provider, async (client) => {
     const lock = await client.getMailboxLock(folder.imapPath)

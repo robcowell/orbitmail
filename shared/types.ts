@@ -299,6 +299,9 @@ export interface OrbitMailAPI {
   }
   search: {
     query: (text: string, accountId: string, limit?: number) => Promise<MessageSummary[]>
+    // Live IMAP search on the server, used as a fallback when the local cache
+    // has no match. Returns [] for POP3 accounts.
+    server: (text: string, accountId: string) => Promise<MessageSummary[]>
   }
   compose: {
     open: (payload?: Partial<ComposePayload>) => Promise<void>

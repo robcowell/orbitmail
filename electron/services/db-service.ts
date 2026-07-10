@@ -1716,3 +1716,16 @@ export function searchMessages(text: string, accountId: string, limit = 50): Mes
 
   return []
 }
+
+// Load specific messages as summaries, newest first. Used by the server-side
+// search fallback to return exactly the rows it just imported, preserving the
+// server's match (which may be a From/To hit that local search doesn't cover).
+export function getMessageSummariesByIds(ids: string[]): MessageSummary[] {
+  if (ids.length === 0) return []
+  const sqlite = getRawSqlite()
+  const placeholders = ids.map(() => '?').join(',')
+  const rows = sqlite
+    .prepare(`${SEARCH_SELECT} FROM messages m WHERE m.id IN (${placeholders}) ORDER BY m.date DESC`)
+    .all(...ids) as SearchRow[]
+  return mapSearchRows(rows)
+}

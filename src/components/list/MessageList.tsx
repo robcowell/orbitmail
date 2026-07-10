@@ -16,7 +16,8 @@ import {
   selectThread,
   selectAdjacentThread,
   toggleThreadExpanded,
-  loadMoreMessages
+  loadMoreMessages,
+  searchWholeMailbox
 } from '../../stores/mailStore'
 import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
 import { EmptyState } from '../EmptyState'
@@ -235,6 +236,8 @@ export function MessageList() {
   const selectedThreadId = useMailStore((s) => s.selectedThreadId)
   const searchQuery = useMailStore((s) => s.searchQuery)
   const searchResults = useMailStore((s) => s.searchResults)
+  const searchLoading = useMailStore((s) => s.searchLoading)
+  const serverSearched = useMailStore((s) => s.serverSearched)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
   const selectedMessageIds = useMailStore((s) => s.selectedMessageIds)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
@@ -407,6 +410,21 @@ export function MessageList() {
     )
   }
 
+  // Local cache had no match and a live server search is in flight.
+  if (itemCount === 0 && isSearching && searchLoading) {
+    return (
+      <EmptyState
+        icon={<MagnifyingGlass size={40} weight="duotone" />}
+        title="Searching the server…"
+        description={
+          searchScopeLabel
+            ? `Looking for “${searchQuery.trim()}” in ${searchScopeLabel}`
+            : `Looking for “${searchQuery.trim()}” on the mail server`
+        }
+      />
+    )
+  }
+
   if (itemCount === 0) {
     return (
       <EmptyState
@@ -523,8 +541,22 @@ export function MessageList() {
     <div ref={containerRef} className="message-list" tabIndex={0} onKeyDown={handleKeyDown}>
       {isSearching && (
         <div className="search-results-banner">
-          {searchResults.length} result{searchResults.length === 1 ? '' : 's'}
-          {searchScopeLabel ? ` in ${searchScopeLabel}` : ''}
+          <span>
+            {searchResults.length} result{searchResults.length === 1 ? '' : 's'}
+            {searchScopeLabel ? ` in ${searchScopeLabel}` : ''}
+            {serverSearched ? ' · searched server' : ''}
+          </span>
+          {searchAccountId && !serverSearched && (
+            <button
+              type="button"
+              className="search-server-btn"
+              disabled={searchLoading}
+              title="Search the entire mailbox on the mail server, including older mail not synced locally"
+              onClick={() => void searchWholeMailbox(searchQuery, searchAccountId)}
+            >
+              {searchLoading ? 'Searching server…' : 'Search whole mailbox'}
+            </button>
+          )}
         </div>
       )}
 

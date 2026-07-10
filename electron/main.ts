@@ -54,7 +54,8 @@ import {
   setOnNewMailArrived,
   initSyncFromPersistence,
   exportMessageRawToTemp,
-  syncSentFolder
+  syncSentFolder,
+  searchServerMessages
 } from './services/imap-sync'
 import {
   startIdleMonitoring,
@@ -753,6 +754,10 @@ function registerIpc(): void {
 
   ipcMain.handle('search:query', (_, text: string, accountId: string, limit?: number) =>
     searchMessages(text, accountId, limit)
+  )
+
+  ipcMain.handle('search:server', (_, text: string, accountId: string) =>
+    searchServerMessages(text, accountId)
   )
 
   ipcMain.handle('compose:open', async (_, payload?: Partial<ComposePayload>) => {

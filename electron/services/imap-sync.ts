@@ -3,7 +3,7 @@ import { simpleParser, type Attachment } from 'mailparser'
 import { writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import type { Provider, FolderType, SyncStatus } from '../../shared/types'
+import type { Provider, FolderType, SyncStatus, MessageSummary } from '../../shared/types'
 import { getAttachmentsDir } from '../db'
 import {
   getAccountTokens,
@@ -13,6 +13,8 @@ import {
   upsertMessagesBatch,
   updateFolderUnread,
   listAccounts,
+  getAccountById,
+  getMessageSummariesByIds,
   getMessage,
   getFolderById,
   getFolderMaxUid,
@@ -470,9 +472,12 @@ async function fetchMessagesByUid(
   accountId: string,
   folderId: string,
   uids: number[],
-  onProgress?: SyncProgressHandler
-): Promise<{ newCount: number; maxUid: number | null }> {
-  if (uids.length === 0) return { newCount: 0, maxUid: null }
+  onProgress?: SyncProgressHandler,
+  // ignoreWindow: fetch matches even if older than the sync window. Used by the
+  // server-side search fallback, which must surface mail outside the local cache.
+  options: { ignoreWindow?: boolean } = {}
+): Promise<{ newCount: number; maxUid: number | null; ids: string[] }> {
+  if (uids.length === 0) return { newCount: 0, maxUid: null, ids: [] }
 
   const syncDays = getAccountSyncDays(accountId)
   let maxUid: number | null = null
@@ -508,7 +513,7 @@ async function fetchMessagesByUid(
     const bodyHtml = parsed.html ? String(parsed.html) : null
     const snippet = makeSnippet(bodyText || (parsed.textAsHtml ?? subject))
     const date = parsed.date?.getTime() ?? Date.now()
-    if (!isWithinSyncWindow(date, syncDays)) continue
+    if (!options.ignoreWindow && !isWithinSyncWindow(date, syncDays)) continue
 
     const isRead = msg.flags?.has('\\Seen') ?? false
     const isStarred = msg.flags?.has('\\Flagged') ?? false
@@ -558,7 +563,63 @@ async function fetchMessagesByUid(
     onProgress?.()
   })
 
-  return { newCount, maxUid }
+  return { newCount, maxUid, ids: results.map((r) => r.id) }
+}
+
+const SERVER_SEARCH_LIMIT = 50
+
+// Pick a single folder that best represents "the whole mailbox" for a live
+// server search: Gmail's All Mail holds one copy of every message; otherwise
+// fall back to the INBOX.
+function pickServerSearchFolder(accountId: string): Folder | null {
+  const all = listFolders(accountId).filter((f) => !f.isVirtualView)
+  const allMail = all.find((f) => /(^|\/)All Mail$/i.test(f.imapPath))
+  if (allMail) return allMail
+  return all.find((f) => f.type === 'inbox' || f.imapPath.toUpperCase() === 'INBOX') ?? null
+}
+
+// Live IMAP search fallback: when the local cache has no match, query the server
+// directly, import the matches into the DB (so they become openable rows), and
+// return them as summaries. POP3 has no server-side search, so it returns [].
+export async function searchServerMessages(
+  text: string,
+  accountId: string
+): Promise<MessageSummary[]> {
+  const query = text.trim()
+  if (!query) return []
+
+  const account = getAccountById(accountId)
+  if (!account || account.provider === 'pop3') return []
+
+  const folder = pickServerSearchFolder(accountId)
+  if (!folder) return []
+
+  // Gmail: use its full search syntax (matches From/Subject/body/etc.). Standard
+  // IMAP: OR together the common fields so a sender-name search still hits.
+  const searchQuery =
+    account.provider === 'gmail'
+      ? { gmraw: query }
+      : { or: [{ from: query }, { to: query }, { subject: query }, { body: query }] }
+
+  return withImapClient(accountId, account.provider, async (client) => {
+    const lock = await client.getMailboxLock(folder.imapPath)
+    try {
+      const found = (await client.search(searchQuery, { uid: true })) ?? []
+      const uids = found
+        .map((uid) => normalizeImapUint(uid))
+        .filter((uid): uid is number => uid != null)
+        .sort((a, b) => b - a)
+        .slice(0, SERVER_SEARCH_LIMIT)
+      if (uids.length === 0) return []
+
+      const { ids } = await fetchMessagesByUid(client, accountId, folder.id, uids, undefined, {
+        ignoreWindow: true
+      })
+      return getMessageSummariesByIds(ids)
+    } finally {
+      lock.release()
+    }
+  })
 }
 
 export async function syncFolder(

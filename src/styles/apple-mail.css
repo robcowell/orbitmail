@@ -282,12 +282,37 @@ textarea {
 }
 
 .search-results-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 8px 14px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border);
+}
+
+.search-server-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #2b7de9);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.search-server-btn:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(43, 125, 233, 0.1));
+}
+
+.search-server-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .three-pane {

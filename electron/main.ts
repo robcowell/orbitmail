@@ -826,8 +826,10 @@ function registerIpc(): void {
     blockSender(email)
   })
 
-  ipcMain.handle('ai:analyze', (_, messageId: string, force?: boolean) =>
-    analyzeMessage(messageId, { force })
+  ipcMain.handle(
+    'ai:analyze',
+    (_, messageId: string, force?: boolean, includeAttachments?: boolean) =>
+      analyzeMessage(messageId, { force, includeAttachments })
   )
 
   ipcMain.handle(

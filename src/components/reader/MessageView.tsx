@@ -92,6 +92,92 @@ function DraftReplyButton({ messageId }: { messageId: string }) {
   )
 }
 
+// "Analyze" button. When the message has attachments, opens a small menu so the
+// user chooses whether to include them — attachments cost extra tokens, so it's
+// an explicit opt-in. With no attachments it analyzes the body directly.
+function AnalyzeButton({ message, iconSize = 16 }: { message: MessageDetail; iconSize?: number }) {
+  const aiAnalysis = useMailStore((s) => s.aiAnalysisById[message.id])
+  const aiAnalyzingId = useMailStore((s) => s.aiAnalyzingId)
+  const isAnalyzing = aiAnalyzingId === message.id
+  const hasAttachments = message.attachments.length > 0
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const run = (includeAttachments: boolean) => {
+    setOpen(false)
+    void analyzeMessage(message.id, !!aiAnalysis, includeAttachments)
+  }
+
+  const label = isAnalyzing ? 'Analyzing…' : aiAnalysis ? 'Re-analyze' : 'Analyze'
+  const title = aiAnalysis ? 'Re-run AI analysis' : 'Analyze with AI'
+
+  if (!hasAttachments) {
+    return (
+      <button
+        type="button"
+        className="reader-ai-btn"
+        title={title}
+        disabled={isAnalyzing}
+        onClick={() => run(false)}
+      >
+        <Sparkle size={iconSize} weight={aiAnalysis ? 'fill' : 'duotone'} />
+        {label}
+      </button>
+    )
+  }
+
+  return (
+    <div className="draft-reply" ref={ref}>
+      <button
+        type="button"
+        className="reader-ai-btn"
+        title={title}
+        disabled={isAnalyzing}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Sparkle size={iconSize} weight={aiAnalysis ? 'fill' : 'duotone'} />
+        {label}
+        <CaretRight
+          size={12}
+          weight="bold"
+          style={{ transform: 'rotate(90deg)', opacity: 0.7 }}
+        />
+      </button>
+      {open && !isAnalyzing && (
+        <div className="draft-reply-menu" role="menu">
+          <button
+            type="button"
+            className="draft-reply-option"
+            role="menuitem"
+            onClick={() => run(false)}
+          >
+            <span className="draft-reply-option-label">Text only</span>
+            <span className="draft-reply-option-hint">Message body</span>
+          </button>
+          <button
+            type="button"
+            className="draft-reply-option"
+            role="menuitem"
+            onClick={() => run(true)}
+          >
+            <span className="draft-reply-option-label">Include attachments</span>
+            <span className="draft-reply-option-hint">Uses more tokens</span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
@@ -204,16 +290,7 @@ export function MessageView() {
           <div className="reader-subject">{selectedMessage.subject}</div>
           <div className="reader-header-actions">
             <DraftReplyButton messageId={selectedMessage.id} />
-            <button
-              type="button"
-              className="reader-ai-btn"
-              title={aiAnalysis ? 'Re-run AI analysis' : 'Analyze with AI'}
-              disabled={isAnalyzing}
-              onClick={() => void analyzeMessage(selectedMessage.id, !!aiAnalysis)}
-            >
-              <Sparkle size={16} weight={aiAnalysis ? 'fill' : 'duotone'} />
-              {isAnalyzing ? 'Analyzing…' : aiAnalysis ? 'Re-analyze' : 'Analyze'}
-            </button>
+            <AnalyzeButton message={selectedMessage} />
             <button
               type="button"
               className="reader-ai-btn"
@@ -500,16 +577,7 @@ const ThreadMessage = memo(function ThreadMessage({
               style={{ color: flagColorHex(message.flagColor) ?? '#f5a623' }}
             />
           </button>
-          <button
-            type="button"
-            className="reader-ai-btn"
-            title={aiAnalysis ? 'Re-run AI analysis' : 'Analyze with AI'}
-            disabled={isAnalyzing}
-            onClick={() => void analyzeMessage(message.id, !!aiAnalysis)}
-          >
-            <Sparkle size={14} weight={aiAnalysis ? 'fill' : 'duotone'} />
-            {isAnalyzing ? 'Analyzing…' : aiAnalysis ? 'Re-analyze' : 'Analyze'}
-          </button>
+          <AnalyzeButton message={message} iconSize={14} />
           <span className="thread-msg-date">{new Date(message.date).toLocaleString()}</span>
         </div>
       </div>

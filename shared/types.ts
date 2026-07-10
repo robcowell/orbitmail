@@ -191,6 +191,9 @@ export interface AiAnalysis {
   keyContext: string[]
   generatedAt: number
   cached: boolean
+  // Attachments that were requested but couldn't be sent to the model
+  // (unsupported type, too large, or un-fetchable). Transient — not persisted.
+  skippedAttachments?: string[]
 }
 
 export interface AiStatus {
@@ -330,7 +333,11 @@ export interface OrbitMailAPI {
     blockSender: (email: string) => Promise<void>
   }
   ai: {
-    analyze: (messageId: string, force?: boolean) => Promise<AiAnalysisResult>
+    analyze: (
+      messageId: string,
+      force?: boolean,
+      includeAttachments?: boolean
+    ) => Promise<AiAnalysisResult>
     draftReply: (
       messageId: string,
       tone: DraftTone,

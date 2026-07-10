@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from 'fs'
 import { safeStorage } from 'electron'
 import Anthropic from '@anthropic-ai/sdk'
 import { jsonSchemaOutputFormat } from '@anthropic-ai/sdk/helpers/json-schema'
@@ -11,9 +12,11 @@ import type {
   SweepTask
 } from '../../shared/types'
 import { getRawSqlite } from '../db'
+import { ensureAttachmentLocal } from './attachment-fetch'
 import {
   getMessage,
   listAccounts,
+  listMessageAttachments,
   listThreadMessages,
   getMessageAiAnalysis,
   setMessageAiAnalysis,
@@ -33,6 +36,11 @@ import {
 const AI_KEY_PREF = 'ai_api_key'
 const MODEL = 'claude-opus-4-8'
 const MAX_BODY_CHARS = 8000
+// Attachments are opt-in for analysis (they cost extra tokens). Bound what we
+// send: skip anything larger than this, and truncate extracted text.
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024
+const MAX_ATTACHMENT_TEXT_CHARS = 8000
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const SWEEP_MAX_MESSAGES = 40
 const SWEEP_BODY_CHARS = 1500
 // Completed tasks older than this are pruned and no longer fed back to the model.
@@ -168,11 +176,80 @@ function friendlyError(err: unknown): string {
   return `Analysis failed: ${err instanceof Error ? err.message : String(err)}`
 }
 
+function isTextualAttachment(mime: string, filename: string): boolean {
+  if (mime.startsWith('text/')) return true
+  if (/^application\/(json|xml|x-yaml|yaml|csv)$/i.test(mime)) return true
+  return /\.(txt|md|markdown|csv|tsv|json|xml|log|ya?ml|html?)$/i.test(filename)
+}
+
+// Build Anthropic content blocks for a message's attachments. Text-like files
+// are extracted inline (truncated); images and PDFs are sent as native blocks.
+// Anything else, oversized, or un-fetchable is skipped and named in `skipped`.
+async function buildAttachmentBlocks(
+  messageId: string
+): Promise<{ blocks: Anthropic.ContentBlockParam[]; skipped: string[] }> {
+  const blocks: Anthropic.ContentBlockParam[] = []
+  const skipped: string[] = []
+
+  for (const att of listMessageAttachments(messageId)) {
+    const mime = att.mimeType || 'application/octet-stream'
+    const isImage = IMAGE_TYPES.has(mime)
+    const isPdf = mime === 'application/pdf'
+    const isText = isTextualAttachment(mime, att.filename)
+
+    if (!isImage && !isPdf && !isText) {
+      skipped.push(att.filename)
+      continue
+    }
+
+    try {
+      const localPath = await ensureAttachmentLocal(att.id)
+      if (statSync(localPath).size > MAX_ATTACHMENT_BYTES) {
+        skipped.push(att.filename)
+        continue
+      }
+
+      if (isText) {
+        let text = readFileSync(localPath, 'utf8')
+        if (text.length > MAX_ATTACHMENT_TEXT_CHARS) {
+          text = text.slice(0, MAX_ATTACHMENT_TEXT_CHARS) + '\n... [truncated]'
+        }
+        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (${mime}):\n${text}` })
+      } else if (isImage) {
+        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (image):` })
+        blocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: mime as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+            data: readFileSync(localPath).toString('base64')
+          }
+        })
+      } else {
+        blocks.push({ type: 'text', text: `Attachment "${att.filename}" (PDF):` })
+        blocks.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: 'application/pdf',
+            data: readFileSync(localPath).toString('base64')
+          }
+        })
+      }
+    } catch {
+      skipped.push(att.filename)
+    }
+  }
+
+  return { blocks, skipped }
+}
+
 export async function analyzeMessage(
   messageId: string,
-  options: { force?: boolean } = {}
+  options: { force?: boolean; includeAttachments?: boolean } = {}
 ): Promise<AiAnalysis | { error: string }> {
-  if (!options.force) {
+  // Opting into attachments always re-runs: the cached analysis was body-only.
+  if (!options.force && !options.includeAttachments) {
     const cached = getMessageAiAnalysis(messageId)
     if (cached) {
       try {
@@ -217,6 +294,20 @@ Subject: ${message.subject}
 Body:
 ${body || '(no body content)'}`
 
+  let content: string | Anthropic.ContentBlockParam[] = userPrompt
+  let skippedAttachments: string[] = []
+  if (options.includeAttachments) {
+    const { blocks, skipped } = await buildAttachmentBlocks(messageId)
+    skippedAttachments = skipped
+    if (blocks.length > 0) {
+      content = [
+        { type: 'text', text: userPrompt },
+        { type: 'text', text: 'The following attachments are provided for additional context:' },
+        ...blocks
+      ]
+    }
+  }
+
   const client = new Anthropic({ apiKey })
 
   try {
@@ -228,7 +319,7 @@ ${body || '(no body content)'}`
         format: jsonSchemaOutputFormat(ANALYSIS_SCHEMA)
       },
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }]
+      messages: [{ role: 'user', content }]
     })
 
     if (response.stop_reason === 'refusal') {
@@ -249,7 +340,12 @@ ${body || '(no body content)'}`
     }
     setMessageAiAnalysis(messageId, JSON.stringify(stored), generatedAt)
 
-    return { ...stored, generatedAt, cached: false }
+    return {
+      ...stored,
+      generatedAt,
+      cached: false,
+      ...(skippedAttachments.length > 0 ? { skippedAttachments } : {})
+    }
   } catch (err) {
     return { error: friendlyError(err) }
   }

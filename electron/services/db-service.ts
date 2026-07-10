@@ -1603,6 +1603,11 @@ export function getAttachment(attachmentId: string) {
   return db.select().from(attachments).where(eq(attachments.id, attachmentId)).get()
 }
 
+export function listMessageAttachments(messageId: string) {
+  const db = getDb()
+  return db.select().from(attachments).where(eq(attachments.messageId, messageId)).all()
+}
+
 type SearchRow = {
   id: string
   folder_id: string

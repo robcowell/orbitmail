@@ -114,8 +114,8 @@ const api: OrbitMailAPI = {
     blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email)
   },
   ai: {
-    analyze: (messageId: string, force?: boolean) =>
-      ipcRenderer.invoke('ai:analyze', messageId, force),
+    analyze: (messageId: string, force?: boolean, includeAttachments?: boolean) =>
+      ipcRenderer.invoke('ai:analyze', messageId, force, includeAttachments),
     draftReply: (messageId: string, tone: DraftTone, mode?: 'reply' | 'reply-all') =>
       ipcRenderer.invoke('ai:draftReply', messageId, tone, mode),
     sweep: (folderId: string, scope: SweepScope) =>

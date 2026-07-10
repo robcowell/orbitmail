@@ -1582,12 +1582,16 @@ export async function runSearch(query: string, accountId: string): Promise<void>
 
 // Request an AI analysis of a message and cache it in the store. Surfaces
 // errors via toast (and opens AI settings when no key is configured).
-export async function analyzeMessage(messageId: string, force = false): Promise<void> {
+export async function analyzeMessage(
+  messageId: string,
+  force = false,
+  includeAttachments = false
+): Promise<void> {
   const store = useMailStore.getState()
   if (store.aiAnalyzingId) return
   store.setAiAnalyzingId(messageId)
   try {
-    const result = await window.orbitMail.ai.analyze(messageId, force)
+    const result = await window.orbitMail.ai.analyze(messageId, force, includeAttachments)
     if ('error' in result) {
       store.setToast(result.error)
       const status = await window.orbitMail.ai.getStatus()
@@ -1595,6 +1599,15 @@ export async function analyzeMessage(messageId: string, force = false): Promise<
       return
     }
     store.setAiAnalysis(messageId, result)
+    const skipped = result.skippedAttachments
+    if (skipped && skipped.length > 0) {
+      const names = skipped.join(', ')
+      store.setToast(
+        skipped.length === 1
+          ? `Couldn't include attachment: ${names}`
+          : `Couldn't include ${skipped.length} attachments: ${names}`
+      )
+    }
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Analysis failed')
   } finally {

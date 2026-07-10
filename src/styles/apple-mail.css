@@ -257,7 +257,7 @@ textarea {
 .search-input {
   width: 240px;
   height: 34px;
-  padding: 0 12px 0 34px;
+  padding: 0 32px 0 34px;
   border: 1px solid var(--border);
   border-radius: 999px;
   font-size: 13px;
@@ -270,6 +270,24 @@ textarea {
 .search-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.search-clear {
+  position: absolute;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.search-clear:hover {
+  color: var(--text-secondary);
 }
 
 .search-wrap-disabled .search-input {
@@ -966,6 +984,7 @@ textarea {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
   background: var(--bg-main);
+  color: var(--text-primary);
 }
 
 .attachment-chip:hover {

@@ -21,7 +21,8 @@ import {
   ArrowsClockwise,
   MagnifyingGlass,
   Star,
-  Envelope
+  Envelope,
+  XCircle
 } from '../icons'
 
 function ThemeToggle() {
@@ -55,6 +56,7 @@ export function Toolbar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
   const isOnline = useMailStore((s) => s.isOnline)
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   const searchAccountId = resolveSearchAccountId(selectedFolderId, folders)
   const searchScopeLabel = searchAccountLabel(searchAccountId, accounts)
@@ -163,6 +165,12 @@ export function Toolbar() {
     }, 200)
   }
 
+  const handleClearSearch = () => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    clearSearch()
+    searchInputRef.current?.focus()
+  }
+
   const searchPlaceholder = searchEnabled
     ? searchScopeLabel
       ? `Search ${searchScopeLabel}…`
@@ -251,6 +259,7 @@ export function Toolbar() {
       <div className={`search-wrap${searchEnabled ? '' : ' search-wrap-disabled'}`}>
         <MagnifyingGlass {...iconProps} size={16} className="search-icon" />
         <input
+          ref={searchInputRef}
           className="search-input"
           placeholder={searchPlaceholder}
           value={searchQuery}
@@ -258,6 +267,17 @@ export function Toolbar() {
           aria-disabled={!searchEnabled}
           onChange={(e) => handleSearch(e.target.value)}
         />
+        {searchQuery.length > 0 && (
+          <button
+            type="button"
+            className="search-clear"
+            title="Clear search"
+            aria-label="Clear search"
+            onClick={handleClearSearch}
+          >
+            <XCircle size={16} weight="fill" />
+          </button>
+        )}
       </div>
     </div>
   )

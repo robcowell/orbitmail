@@ -107,6 +107,9 @@ const MessageRow = memo(function MessageRow({
         <div className="message-top">
           <span className="message-sender">{displayName}</span>
           <span className="message-date">
+            {message.hasAttachments && (
+              <Paperclip size={12} weight="duotone" className="message-attach" />
+            )}
             {(flagColor || isStarred) && (
               <Flag
                 size={12}

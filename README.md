@@ -14,12 +14,13 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 - **Conversation threading** — messages group into one row per conversation; opening a thread shows the full back-and-forth across folders, with your Sent replies interleaved
 - **Folder navigation** — Inbox, Sent, Drafts, Trash, Junk, and custom IMAP folders
 - **Incremental sync** — only new messages are downloaded after the initial sync
-- **Near-realtime updates** — background sync plus IMAP IDLE on inbox folders
+- **Near-realtime updates** — background sync plus IMAP IDLE on inbox folders, with live flag changes and server-side deletions (EXPUNGE) pushed and reconciled
 - **Read, compose, reply, and forward** — separate compose window with threading headers on reply
 - **Move and archive** — delete moves to Trash; archive moves to All Mail / Archive when available
 - **Star and mark unread** — synced to the server
-- **Attachments** — view incoming attachments; attach files when sending
-- **Full-text search** — search subject, snippet, and body text locally
+- **Attachments** — view incoming attachments (rows carrying attachments are flagged with a paperclip in the list); attach files when sending
+- **Scoped search** — search across **All / From / To / Subject / Body** with a one-click clear, matched instantly against locally cached mail; your last-used scope is remembered
+- **Whole-mailbox search** — when local results come up empty (or on demand via **Search whole mailbox**), Orbit Mail runs a live search on the server to reach mail older than the sync window, importing matches so they open like any cached message (IMAP accounts only)
 - **Load more** — paginated message lists for older mail
 
 ### Accounts
@@ -44,7 +45,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 
 Bring your own [Anthropic API key](https://console.anthropic.com/) to unlock optional AI features — **off by default**; nothing is sent anywhere until you add a key via the ✦ button in the toolbar (**AI settings**).
 
-- **Analyze** — the **Analyze** button in the message header turns the open email into action items, open questions, and key context, with sender awareness (what *you* need to do vs. what you asked of others). Results are cached per message.
+- **Analyze** — the **Analyze** button in the message header turns the open email into action items, open questions, and key context, with sender awareness (what *you* need to do vs. what you asked of others). Results are cached per message. On messages with attachments you can choose to **include the attachments** for extra context — it prompts first, since that uses more tokens.
 - **Draft reply** — the **Draft reply** button generates an editable reply grounded in the whole conversation, in your choice of tone (**Brief / Neutral / Detailed**), and opens it in the composer with the quoted original kept collapsible.
 - **Tasks sweep** — the checklist button opens a task list built from the current folder, so you can triage a whole inbox at once. Each task is prioritised and links back to its source email.
   - **Unread (default) or All messages** — choose which mail a sweep scans from the toggle in the dialog.
@@ -208,7 +209,7 @@ See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 
 - **Gmail / Microsoft sign-in on self-built copies** — you must configure OAuth credentials when building from source; see [DEVELOPERS.md](DEVELOPERS.md)
 - **POP3** — inbox sync only; move/archive are not supported on the server
-- **Initial sync depth** — first sync fetches up to 200 messages per folder; use **Load more** for older mail
+- **Initial sync depth** — first sync fetches up to 200 messages per folder; use **Load more** for older mail, or **Search whole mailbox** to pull in older matches on demand (IMAP accounts)
 - **Compose** — rich text (HTML) editor; no signatures or inline images yet
 - **No local draft autosave** — Drafts folder syncs from the server only
 - **Linux only** — no Windows or macOS builds yet

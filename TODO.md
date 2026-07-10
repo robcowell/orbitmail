@@ -11,6 +11,10 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Conversation threading** — messages group by RFC 5322 headers (`thread_id` derived from `References`/`In-Reply-To`, subject fallback) into one collapsed row per conversation; opening a thread loads the full **account-wide** conversation across folders (Sent replies interleaved) in a stacked, collapsible reader. Includes AI **reply drafts** with tone options (Brief/Neutral/Detailed).
 - **Performance & perceived-speed pass (phases 1–3)** — tuned SQLite pragmas + `COUNT(*)` + summary-column projection + partial unread index + batched sync writes; optimistic read/star/flag/move/delete with rollback and an instant-painting reader; `virtua`-virtualized message list with memoized rows and reference-preserving refresh; folder-switch skeletons; a pooled per-account IMAP client with a per-account op mutex; parallel account sync; cached Sent path; send does a Sent-only sync; attachments fetch just their BODYSTRUCTURE part.
 - **Bring-your-own-credentials** setup documented (README → "Run your own copy"; DEVELOPERS.md → OAuth setup + verification/CASA notes).
+- **Search upgrades** — scoped search (**All/From/To/Subject/Body**, persisted in `UiPreferences`) that now also matches sender/recipient (previously subject/snippet/body only); a one-click clear button; and a live **server-side (IMAP) fallback** that searches the whole mailbox when the local cache has no match (or on demand via *Search whole mailbox*), importing matches so they open like any cached message. POP3 has no server-side search.
+- **Sync reconciliation** — server-side deletions (EXPUNGE) are reconciled into the local cache, and flag/expunge changes are pushed over IMAP IDLE.
+- **AI attachments in Analyze** — per-message **Analyze** can optionally include a message's attachments for extra context (opt-in prompt, since it costs more tokens).
+- **Quality-of-life fixes** — dark-mode attachment-chip contrast, search clear button, and an attachment paperclip on message-list rows.
 
 ## Critical
 
@@ -48,7 +52,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - Editable / trimmable quoted text (currently the collapsed quote is read-only and always included on send)
 - Reply-all
 - Attachment save-as (download path picker)
-- Search operators (`from:`, `subject:`) and result highlighting
+- Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
 - Auto-update, code signing, CI, integration tests
 - Cross-platform builds (Windows/macOS)
 - POP3 move support or reduced POP3 scope

@@ -119,7 +119,7 @@ MICROSOFT_TENANT_ID=common
 
 The AI features — per-message **Analyze** and the folder **Tasks** sweep — are off unless the user supplies an Anthropic API key. Unlike the OAuth credentials above, this key is **not** read from `.env`: it's entered in-app (✦ toolbar button → AI settings), encrypted with Electron `safeStorage`, and stored in the `app_preferences` table under `ai_api_key`. So there is nothing to configure at build time for AI.
 
-`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with model `claude-opus-4-8` and structured output. Message content is sent to Anthropic only when the user triggers a feature.
+`electron/services/ai-service.ts` uses `@anthropic-ai/sdk` with model `claude-opus-4-8` and structured output. Message content is sent to Anthropic only when the user triggers a feature. On **Analyze**, the user can opt to include a message's attachments for extra context (text extracted inline; images and PDFs sent as native content blocks) — the UI prompts first because attachments increase token usage.
 
 **Caching.** Per-message analysis is cached on the `messages` row (`ai_analysis` / `ai_analysis_at`). The Tasks sweep is also incremental:
 
@@ -164,7 +164,8 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 - **Initial sync** — up to 200 messages per folder (UID-sorted batch)
 - **Incremental sync** — UID-based delta fetch; only new UIDs since `highestSyncedUid`
 - **Background poll** — POP3 every 20s; IDLE-capable IMAP accounts every 90s (IDLE already push-syncs their inboxes), plus one immediate catch-up sync shortly after launch. Accounts sync in parallel.
-- **IMAP IDLE** — inbox folders on supported accounts for near-realtime delivery
+- **IMAP IDLE** — inbox folders on supported accounts for near-realtime delivery, including live flag changes and expunge (deletion) pushes
+- **Server-side reconciliation** — sync detects messages expunged on the server and removes them from the local cache; flag changes propagate in both directions (`imap-idle.ts`, `imap-sync.ts`)
 - **Connection pool** — one reused IMAP client per account (`imap-pool.ts`) with a
   per-account operation mutex and 30s idle-close, so a batch of server ops shares a
   single connection instead of reconnecting each time. Kept separate from the IDLE
@@ -183,6 +184,22 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   (`getThread`), so received + Sent messages interleave in the reader.
 - Search results stay flat (single-message reader); a one-message thread renders
   like an ordinary message.
+
+### Search
+
+- **Local search** — scope-aware substring `LIKE` over the cached `messages` table
+  (`searchMessages` in `db-service.ts`). The scope (`SearchField`) selects the
+  columns matched: `all` (From/To/Subject/Snippet/Body), `from`, `to`, `subject`,
+  or `body`. The chosen scope is persisted in `UiPreferences`.
+- **Server-side fallback** — when local search returns nothing (or on the explicit
+  *Search whole mailbox* action), `searchServerMessages` (`imap-sync.ts`) runs a
+  live IMAP search — Gmail `X-GM-RAW` over *All Mail*, or `from`/`to`/`subject`/`body`
+  SEARCH keys over the INBOX for plain IMAP — imports the matches into the DB so they
+  open like any cached message, and returns them. This reaches mail outside the local
+  sync window. POP3 has no server-side search.
+- The FTS5 index (`messages_fts`) is still built on sync but is **not** currently used
+  by the query path; scoped substring search is used instead because it also covers
+  From/To, which the FTS index does not store.
 
 ### Performance notes
 
@@ -216,10 +233,10 @@ orbit-mail/
 
 | Path | Role |
 |------|------|
-| `electron/services/imap-sync.ts` | IMAP sync, UID tracking, background poll (accounts in parallel) |
+| `electron/services/imap-sync.ts` | IMAP sync, UID tracking, background poll (accounts in parallel), expunge reconciliation, server-side search |
 | `electron/services/imap-pool.ts` | Pooled per-account IMAP client + per-account op mutex |
-| `electron/services/imap-idle.ts` | IMAP IDLE connections per account |
-| `electron/services/db-service.ts` | SQLite CRUD, unread recalculation |
+| `electron/services/imap-idle.ts` | IMAP IDLE per account (new mail, flag + expunge push) |
+| `electron/services/db-service.ts` | SQLite CRUD, scope-aware search, unread recalculation |
 | `electron/services/ai-service.ts` | Optional AI: message analysis, incremental inbox task sweep (unread/all scope, persisted + cached tasks), encrypted Anthropic key storage |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
 | `shared/types.ts` | Shared types and `OrbitMailAPI` contract |

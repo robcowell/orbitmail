@@ -1169,6 +1169,44 @@ export function setFolderHighestModseq(folderId: string, modseq: string): void {
   db.update(folders).set({ highestModseq: modseq }).where(eq(folders.id, folderId)).run()
 }
 
+// Last-seen server message count (STATUS MESSAGES); a drop signals an expunge.
+export function getFolderServerCount(folderId: string): number | null {
+  const db = getDb()
+  const folder = db
+    .select({ serverMessageCount: folders.serverMessageCount })
+    .from(folders)
+    .where(eq(folders.id, folderId))
+    .get()
+  return folder?.serverMessageCount ?? null
+}
+
+export function setFolderServerCount(folderId: string, count: number): void {
+  const db = getDb()
+  db.update(folders).set({ serverMessageCount: count }).where(eq(folders.id, folderId)).run()
+}
+
+// Remove local rows for messages expunged on the server. Folder-scoped, so the
+// same Message-ID's copies under other folders (Gmail labels) are untouched.
+// Uses deleteMessage per row to reuse attachment-file cleanup + FTS + unread
+// recount; returns the number removed.
+export function deleteMessagesByUid(folderId: string, uids: number[]): number {
+  if (uids.length === 0) return 0
+  const db = getDb()
+  const wanted = new Set(uids)
+  const rows = db
+    .select({ id: messages.id, uid: messages.uid })
+    .from(messages)
+    .where(eq(messages.folderId, folderId))
+    .all()
+  let removed = 0
+  for (const r of rows) {
+    if (!wanted.has(r.uid)) continue
+    deleteMessage(r.id)
+    removed++
+  }
+  return removed
+}
+
 // Reconcile server flags into local rows: for the given folder, set is_read /
 // is_starred for the listed UIDs, but only where they actually changed (so we
 // don't churn writes or clobber the app-local flag_color). Clearing a star also

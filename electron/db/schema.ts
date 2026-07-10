@@ -32,7 +32,10 @@ export const folders = sqliteTable(
       .default(false),
     // CONDSTORE highest MODSEQ seen for this folder, as a string (64-bit; can
     // exceed Number.MAX_SAFE_INTEGER). Drives incremental flag reconciliation.
-    highestModseq: text('highest_modseq')
+    highestModseq: text('highest_modseq'),
+    // Server-side message count last seen (STATUS MESSAGES). A drop signals an
+    // expunge; persisted so deletions made while the app was closed are caught.
+    serverMessageCount: integer('server_message_count')
   },
   (t) => [index('folders_account_idx').on(t.accountId)]
 )

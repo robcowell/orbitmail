@@ -1754,6 +1754,20 @@ textarea {
   cursor: default;
 }
 
+/* Manual Reply is the primary action: filled accent, so the AI "Draft reply"
+   outline button reads as the secondary option beside it. */
+.reader-ai-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.reader-ai-btn.primary:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  filter: brightness(1.08);
+}
+
 .draft-reply {
   position: relative;
 }

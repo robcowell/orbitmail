@@ -266,6 +266,14 @@ export function MessageView() {
     }
   }
 
+  const handleReply = () => {
+    void window.orbitMail.compose.open({
+      accountId: selectedMessage.accountId,
+      mode: 'reply',
+      originalMessageId: selectedMessage.id
+    })
+  }
+
   return (
     <div
       onContextMenu={(event) => {
@@ -277,6 +285,15 @@ export function MessageView() {
         <div className="reader-header-top">
           <div className="reader-subject">{selectedMessage.subject}</div>
           <div className="reader-header-actions">
+            <button
+              type="button"
+              className="reader-ai-btn primary"
+              title="Reply to this message"
+              onClick={handleReply}
+            >
+              <ArrowBendUpLeft size={16} weight="duotone" />
+              Reply
+            </button>
             <DraftReplyButton messageId={selectedMessage.id} />
             <AnalyzeButton message={selectedMessage} />
             <button
@@ -579,7 +596,7 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
           <div className="reader-header-actions">
             <button
               type="button"
-              className="reader-ai-btn"
+              className="reader-ai-btn primary"
               title="Reply to the latest message"
               onClick={handleReply}
             >

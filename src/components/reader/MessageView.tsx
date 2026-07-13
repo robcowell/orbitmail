@@ -17,7 +17,8 @@ import {
   Sparkle,
   CaretRight,
   ArrowBendUpLeft,
-  Printer
+  Printer,
+  TrayArrowDown
 } from '../icons'
 import { flagColorHex } from '../../constants/flags'
 import { printMessageDetail, printThreadDetails } from '../../utils/printMessage'
@@ -191,7 +192,6 @@ export function MessageView() {
   )
   const aiAnalyzingId = useMailStore((s) => s.aiAnalyzingId)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
-  const [fetchingAttachmentId, setFetchingAttachmentId] = useState<string | null>(null)
 
   // Sanitizing a large email is expensive; only redo it when the message body
   // actually changes, not on every unrelated store update (star, AI, selection).
@@ -265,19 +265,6 @@ export function MessageView() {
     }
   }
 
-  const handleOpenAttachment = async (attachmentId: string) => {
-    if (fetchingAttachmentId) return
-
-    setFetchingAttachmentId(attachmentId)
-    try {
-      await window.orbitMail.attachments.open(attachmentId)
-    } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to open attachment')
-    } finally {
-      setFetchingAttachmentId(null)
-    }
-  }
-
   return (
     <div
       onContextMenu={(event) => {
@@ -333,24 +320,10 @@ export function MessageView() {
         </div>
       </div>
 
-      {selectedMessage.attachments.length > 0 && (
-        <div className="reader-attachments">
-          {selectedMessage.attachments.map((att) => (
-            <button
-              key={att.id}
-              className="attachment-chip"
-              disabled={fetchingAttachmentId === att.id}
-              onClick={() => void handleOpenAttachment(att.id)}
-            >
-              <Paperclip size={14} weight="duotone" />
-              {fetchingAttachmentId === att.id ? 'Opening…' : att.filename}
-              <span style={{ color: 'var(--text-muted)' }}>
-                ({formatSize(att.size)})
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
+      <AttachmentList
+        attachments={selectedMessage.attachments}
+        messageId={selectedMessage.id}
+      />
 
       {(aiAnalysis || isAnalyzing) && (
         <div className="reader-ai-panel">
@@ -422,6 +395,103 @@ function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// Attachment chips shared by the single-message and thread readers. Each chip
+// opens on click; a trailing button saves it to disk, and "Save all" appears
+// when a message carries more than one attachment.
+function AttachmentList({
+  attachments,
+  messageId
+}: {
+  attachments: MessageDetail['attachments']
+  messageId: string
+}) {
+  const setToast = useMailStore((s) => s.setToast)
+  const [busy, setBusy] = useState<{ id: string; kind: 'open' | 'save' } | null>(null)
+  const [savingAll, setSavingAll] = useState(false)
+  const anyBusy = busy !== null || savingAll
+
+  if (attachments.length === 0) return null
+
+  const handleOpen = async (id: string) => {
+    if (anyBusy) return
+    setBusy({ id, kind: 'open' })
+    try {
+      await window.orbitMail.attachments.open(id)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to open attachment')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleSave = async (id: string, filename: string) => {
+    if (anyBusy) return
+    setBusy({ id, kind: 'save' })
+    try {
+      const saved = await window.orbitMail.attachments.saveAs(id)
+      if (saved) setToast(`Saved ${filename}`)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to save attachment')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleSaveAll = async () => {
+    if (anyBusy) return
+    setSavingAll(true)
+    try {
+      const count = await window.orbitMail.attachments.saveAll(messageId)
+      if (count != null) setToast(`Saved ${count} attachment${count === 1 ? '' : 's'}`)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Failed to save attachments')
+    } finally {
+      setSavingAll(false)
+    }
+  }
+
+  return (
+    <div className="reader-attachments">
+      {attachments.map((att) => (
+        <div key={att.id} className="attachment-item">
+          <button
+            type="button"
+            className="attachment-chip"
+            disabled={anyBusy}
+            onClick={() => void handleOpen(att.id)}
+            title="Open attachment"
+          >
+            <Paperclip size={14} weight="duotone" />
+            {busy?.id === att.id && busy.kind === 'open' ? 'Opening…' : att.filename}
+            <span style={{ color: 'var(--text-muted)' }}>({formatSize(att.size)})</span>
+          </button>
+          <button
+            type="button"
+            className="attachment-save-btn"
+            disabled={anyBusy}
+            onClick={() => void handleSave(att.id, att.filename)}
+            title="Save attachment…"
+          >
+            <TrayArrowDown size={14} weight="duotone" />
+          </button>
+        </div>
+      ))}
+      {attachments.length > 1 && (
+        <button
+          type="button"
+          className="attachment-save-all-btn"
+          disabled={anyBusy}
+          onClick={() => void handleSaveAll()}
+          title="Save all attachments…"
+        >
+          <TrayArrowDown size={14} weight="duotone" />
+          {savingAll ? 'Saving…' : 'Save all'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 // ---- Conversation (thread) reader ----------------------------------------
@@ -504,7 +574,6 @@ const ThreadMessage = memo(function ThreadMessage({
   const aiAnalysis = useMailStore((s) => s.aiAnalysisById[message.id])
   const aiAnalyzingId = useMailStore((s) => s.aiAnalyzingId)
   const [expanded, setExpanded] = useState(defaultExpanded)
-  const [fetchingAttachmentId, setFetchingAttachmentId] = useState<string | null>(null)
   const isAnalyzing = aiAnalyzingId === message.id
 
   const sanitizedHtml = useMemo(() => {
@@ -522,18 +591,6 @@ const ThreadMessage = memo(function ThreadMessage({
     if (!href || href.startsWith('#')) return
     event.preventDefault()
     void window.orbitMail.shell.openExternal(href)
-  }
-
-  const handleOpenAttachment = async (attachmentId: string) => {
-    if (fetchingAttachmentId) return
-    setFetchingAttachmentId(attachmentId)
-    try {
-      await window.orbitMail.attachments.open(attachmentId)
-    } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to open attachment')
-    } finally {
-      setFetchingAttachmentId(null)
-    }
   }
 
   if (!expanded) {
@@ -582,22 +639,7 @@ const ThreadMessage = memo(function ThreadMessage({
         </div>
       </div>
 
-      {message.attachments.length > 0 && (
-        <div className="reader-attachments">
-          {message.attachments.map((att) => (
-            <button
-              key={att.id}
-              className="attachment-chip"
-              disabled={fetchingAttachmentId === att.id}
-              onClick={() => void handleOpenAttachment(att.id)}
-            >
-              <Paperclip size={14} weight="duotone" />
-              {fetchingAttachmentId === att.id ? 'Opening…' : att.filename}
-              <span style={{ color: 'var(--text-muted)' }}>({formatSize(att.size)})</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <AttachmentList attachments={message.attachments} messageId={message.id} />
 
       {(aiAnalysis || isAnalyzing) && (
         <div className="reader-ai-panel">

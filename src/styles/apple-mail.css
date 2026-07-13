@@ -1065,6 +1065,65 @@ textarea {
   border-color: var(--accent);
 }
 
+/* Chip + save button are visually joined into one pill. */
+.attachment-item {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.attachment-item .attachment-chip {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.attachment-save-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
+  cursor: pointer;
+  background: var(--bg-main);
+  color: var(--text-secondary);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.attachment-save-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.attachment-save-all-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.attachment-save-all-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.attachment-chip:disabled,
+.attachment-save-btn:disabled,
+.attachment-save-all-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .compose-form {
   display: flex;
   flex-direction: column;

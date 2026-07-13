@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join, basename } from 'path'
-import { statSync, writeFileSync } from 'fs'
+import { statSync, writeFileSync, copyFileSync } from 'fs'
 import type {
   ComposePayload,
   SyncStatus,
@@ -33,7 +33,9 @@ import {
   searchMessages,
   updateAccountDisplayName,
   getLatestInboxMessage,
-  regroupThreadsIfNeeded
+  regroupThreadsIfNeeded,
+  getAttachment,
+  listMessageAttachments
 } from './services/db-service'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
@@ -812,6 +814,52 @@ function registerIpc(): void {
   ipcMain.handle('attachments:open', async (_, attachmentId: string) => {
     const localPath = await ensureAttachmentLocal(attachmentId)
     await shell.openPath(localPath)
+  })
+
+  // Save a single attachment to a user-chosen location. Returns the saved path,
+  // or null if the user cancelled the dialog.
+  ipcMain.handle('attachments:saveAs', async (_, attachmentId: string) => {
+    const att = getAttachment(attachmentId)
+    if (!att) throw new Error('Attachment not found')
+    const localPath = await ensureAttachmentLocal(attachmentId)
+    const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+      defaultPath: att.filename
+    })
+    if (result.canceled || !result.filePath) return null
+    copyFileSync(localPath, result.filePath)
+    return result.filePath
+  })
+
+  // Save every attachment on a message into a user-chosen directory. Returns the
+  // number of files saved, or null if the user cancelled the dialog.
+  ipcMain.handle('attachments:saveAll', async (_, messageId: string) => {
+    const atts = listMessageAttachments(messageId)
+    if (atts.length === 0) throw new Error('No attachments to save')
+    const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    const dir = result.filePaths[0]
+
+    // Avoid clobbering when two attachments share a filename: suffix duplicates.
+    const usedNames = new Set<string>()
+    let saved = 0
+    for (const att of atts) {
+      const localPath = await ensureAttachmentLocal(att.id)
+      let name = basename(att.filename)
+      if (usedNames.has(name)) {
+        const dot = name.lastIndexOf('.')
+        const stem = dot > 0 ? name.slice(0, dot) : name
+        const ext = dot > 0 ? name.slice(dot) : ''
+        let n = 1
+        while (usedNames.has(`${stem} (${n})${ext}`)) n++
+        name = `${stem} (${n})${ext}`
+      }
+      usedNames.add(name)
+      copyFileSync(localPath, join(dir, name))
+      saved++
+    }
+    return saved
   })
 
   ipcMain.handle('preferences:get', () => getAppState())

@@ -105,7 +105,9 @@ const api: OrbitMailAPI = {
   },
   attachments: {
     download: (attachmentId) => ipcRenderer.invoke('attachments:download', attachmentId),
-    open: (attachmentId) => ipcRenderer.invoke('attachments:open', attachmentId)
+    open: (attachmentId) => ipcRenderer.invoke('attachments:open', attachmentId),
+    saveAs: (attachmentId) => ipcRenderer.invoke('attachments:saveAs', attachmentId),
+    saveAll: (messageId) => ipcRenderer.invoke('attachments:saveAll', messageId)
   },
   preferences: {
     get: () => ipcRenderer.invoke('preferences:get'),

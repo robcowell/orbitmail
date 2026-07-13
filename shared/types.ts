@@ -337,6 +337,12 @@ export interface OrbitMailAPI {
   attachments: {
     download: (attachmentId: string) => Promise<string>
     open: (attachmentId: string) => Promise<void>
+    // Prompt for a destination and save one attachment. Resolves the saved path,
+    // or null if the user cancelled.
+    saveAs: (attachmentId: string) => Promise<string | null>
+    // Prompt for a folder and save all of a message's attachments into it.
+    // Resolves the number of files saved, or null if the user cancelled.
+    saveAll: (messageId: string) => Promise<number | null>
   }
   preferences: {
     get: () => Promise<PersistedAppState>

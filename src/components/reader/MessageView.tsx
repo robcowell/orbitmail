@@ -10,6 +10,7 @@ import {
 } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
+import { ContextMenu, type ContextMenuItem } from '../ui/ContextMenu'
 import {
   Paperclip,
   EnvelopeSimpleOpen,
@@ -410,6 +411,11 @@ function AttachmentList({
   const setToast = useMailStore((s) => s.setToast)
   const [busy, setBusy] = useState<{ id: string; kind: 'open' | 'save' } | null>(null)
   const [savingAll, setSavingAll] = useState(false)
+  const [menu, setMenu] = useState<{
+    x: number
+    y: number
+    att: MessageDetail['attachments'][number]
+  } | null>(null)
   const anyBusy = busy !== null || savingAll
 
   if (attachments.length === 0) return null
@@ -452,10 +458,46 @@ function AttachmentList({
     }
   }
 
+  const menuItems: ContextMenuItem[] = menu
+    ? [
+        {
+          id: 'open',
+          label: 'Open attachment',
+          icon: <Paperclip size={14} weight="duotone" />,
+          onClick: () => void handleOpen(menu.att.id)
+        },
+        {
+          id: 'save',
+          label: 'Save attachment…',
+          icon: <TrayArrowDown size={14} weight="duotone" />,
+          onClick: () => void handleSave(menu.att.id, menu.att.filename)
+        },
+        ...(attachments.length > 1
+          ? [
+              { id: 'sep', label: '', separator: true },
+              {
+                id: 'save-all',
+                label: 'Save all attachments…',
+                icon: <TrayArrowDown size={14} weight="duotone" />,
+                onClick: () => void handleSaveAll()
+              }
+            ]
+          : [])
+      ]
+    : []
+
   return (
     <div className="reader-attachments">
       {attachments.map((att) => (
-        <div key={att.id} className="attachment-item">
+        <div
+          key={att.id}
+          className="attachment-item"
+          onContextMenu={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setMenu({ x: event.clientX, y: event.clientY, att })
+          }}
+        >
           <button
             type="button"
             className="attachment-chip"
@@ -489,6 +531,14 @@ function AttachmentList({
           <TrayArrowDown size={14} weight="duotone" />
           {savingAll ? 'Saving…' : 'Save all'}
         </button>
+      )}
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   )

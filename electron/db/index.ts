@@ -43,7 +43,8 @@ function initTables(db: Database.Database): void {
       email TEXT NOT NULL,
       display_name TEXT NOT NULL,
       token_blob TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      sync_days INTEGER NOT NULL DEFAULT 90
     );
 
     CREATE TABLE IF NOT EXISTS folders (
@@ -74,6 +75,7 @@ function initTables(db: Database.Database): void {
       date INTEGER NOT NULL,
       is_read INTEGER NOT NULL DEFAULT 0,
       is_starred INTEGER NOT NULL DEFAULT 0,
+      flag_color TEXT,
       has_attachments INTEGER NOT NULL DEFAULT 0,
       body_html TEXT,
       body_text TEXT,

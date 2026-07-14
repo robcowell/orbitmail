@@ -16,6 +16,7 @@ import {
   iconProps,
   PencilLine,
   ArrowBendUpLeft,
+  ArrowBendDoubleUpLeft,
   ArrowBendUpRight,
   Trash,
   Archive,
@@ -155,6 +156,15 @@ export function Toolbar() {
     })
   }
 
+  const handleReplyAll = () => {
+    if (!selectedMessage) return
+    window.orbitMail.compose.open({
+      accountId: selectedMessage.accountId,
+      mode: 'reply-all',
+      originalMessageId: selectedMessage.id
+    })
+  }
+
   const handleForward = () => {
     if (!selectedMessage) return
     window.orbitMail.compose.open({
@@ -278,6 +288,14 @@ export function Toolbar() {
           disabled={!selectedMessage}
         >
           <ArrowBendUpLeft {...iconProps} />
+        </button>
+        <button
+          className="toolbar-btn"
+          title="Reply All"
+          onClick={handleReplyAll}
+          disabled={!selectedMessage}
+        >
+          <ArrowBendDoubleUpLeft {...iconProps} />
         </button>
         <button
           className="toolbar-btn"

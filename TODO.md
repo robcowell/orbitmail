@@ -17,6 +17,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Quality-of-life fixes** — dark-mode attachment-chip contrast, search clear button, and an attachment paperclip on message-list rows.
 - **Attachment save-as** — per-attachment **Save** and **Save all** actions, plus a right-click *Save attachment* context menu, with a download path picker.
 - **Manual reply** — a primary, non-AI **Reply** action in the reader (opens the composer with quoted text); the AI reply-draft is demoted to a secondary action.
+- **Reply All** — replies to the sender plus all other To/Cc recipients (self and the original sender de-duplicated), exposed as a visible button in the single-message and thread reader headers and the toolbar, alongside the existing right-click context-menu entry.
 
 ## Critical
 
@@ -52,7 +53,6 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - Thread-level context menu (archive/move whole conversation) and multi-thread select — currently threads support open, per-message actions, and whole-thread delete (Delete key)
 - Compose signatures and inline/pasted images (rich HTML editor now shipped)
 - Editable / trimmable quoted text (currently the collapsed quote is read-only and always included on send)
-- Reply-all
 - Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
 - Auto-update, code signing, CI, integration tests
 - Cross-platform builds (Windows/macOS)

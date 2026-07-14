@@ -18,6 +18,7 @@ import {
   Sparkle,
   CaretRight,
   ArrowBendUpLeft,
+  ArrowBendDoubleUpLeft,
   Printer,
   TrayArrowDown
 } from '../icons'
@@ -274,6 +275,14 @@ export function MessageView() {
     })
   }
 
+  const handleReplyAll = () => {
+    void window.orbitMail.compose.open({
+      accountId: selectedMessage.accountId,
+      mode: 'reply-all',
+      originalMessageId: selectedMessage.id
+    })
+  }
+
   return (
     <div
       onContextMenu={(event) => {
@@ -293,6 +302,15 @@ export function MessageView() {
             >
               <ArrowBendUpLeft size={16} weight="duotone" />
               Reply
+            </button>
+            <button
+              type="button"
+              className="reader-ai-btn"
+              title="Reply to everyone"
+              onClick={handleReplyAll}
+            >
+              <ArrowBendDoubleUpLeft size={16} weight="duotone" />
+              Reply All
             </button>
             <DraftReplyButton messageId={selectedMessage.id} />
             <AnalyzeButton message={selectedMessage} />
@@ -575,6 +593,14 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
     })
   }
 
+  const handleReplyAll = () => {
+    void window.orbitMail.compose.open({
+      accountId: latest.accountId,
+      mode: 'reply-all',
+      originalMessageId: latest.id
+    })
+  }
+
   const handlePrint = async () => {
     try {
       await printThreadDetails(messages)
@@ -602,6 +628,15 @@ function ThreadView({ messages }: { messages: MessageDetail[] }) {
             >
               <ArrowBendUpLeft size={16} weight="duotone" />
               Reply
+            </button>
+            <button
+              type="button"
+              className="reader-ai-btn"
+              title="Reply to everyone"
+              onClick={handleReplyAll}
+            >
+              <ArrowBendDoubleUpLeft size={16} weight="duotone" />
+              Reply All
             </button>
             <button
               type="button"

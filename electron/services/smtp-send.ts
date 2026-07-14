@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import nodemailer from 'nodemailer'
 import type Mail from 'nodemailer/lib/mailer'
 import { readFileSync } from 'fs'
@@ -65,6 +66,19 @@ function createPasswordTransport(
   )
 }
 
+// A descriptive mailer identity for the outgoing User-Agent / X-Mailer
+// headers, e.g. "Orbit Mail 0.1.0 (Linux x64; Electron 39.8.10)". Reflects
+// the app version and the runtime environment (OS, arch, Electron).
+function mailerIdentity(): string {
+  const osNames: Record<string, string> = {
+    linux: 'Linux',
+    darwin: 'macOS',
+    win32: 'Windows'
+  }
+  const os = osNames[process.platform] ?? process.platform
+  return `Orbit Mail ${app.getVersion()} (${os} ${process.arch}; Electron ${process.versions.electron})`
+}
+
 export async function sendMail(
   payload: ComposePayload,
   provider: Provider
@@ -91,6 +105,7 @@ export async function sendMail(
     )
   }
 
+  const mailer = mailerIdentity()
   const mailOptions: Mail.Options = {
     from: fromAddress,
     to: payload.to,
@@ -100,7 +115,11 @@ export async function sendMail(
     text: payload.bodyText,
     html: payload.bodyHtml,
     inReplyTo: payload.inReplyTo,
-    references: payload.references
+    references: payload.references,
+    headers: {
+      'User-Agent': mailer,
+      'X-Mailer': mailer
+    }
   }
 
   if (payload.attachmentPaths?.length) {

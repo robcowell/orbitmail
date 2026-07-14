@@ -15,6 +15,8 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Sync reconciliation** — server-side deletions (EXPUNGE) are reconciled into the local cache, and flag/expunge changes are pushed over IMAP IDLE.
 - **AI attachments in Analyze** — per-message **Analyze** can optionally include a message's attachments for extra context (opt-in prompt, since it costs more tokens).
 - **Quality-of-life fixes** — dark-mode attachment-chip contrast, search clear button, and an attachment paperclip on message-list rows.
+- **Attachment save-as** — per-attachment **Save** and **Save all** actions, plus a right-click *Save attachment* context menu, with a download path picker.
+- **Manual reply** — a primary, non-AI **Reply** action in the reader (opens the composer with quoted text); the AI reply-draft is demoted to a secondary action.
 
 ## Critical
 
@@ -51,7 +53,6 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - Compose signatures and inline/pasted images (rich HTML editor now shipped)
 - Editable / trimmable quoted text (currently the collapsed quote is read-only and always included on send)
 - Reply-all
-- Attachment save-as (download path picker)
 - Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
 - Auto-update, code signing, CI, integration tests
 - Cross-platform builds (Windows/macOS)

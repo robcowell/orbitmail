@@ -1,0 +1,104 @@
+# Orbit Mail — Android (native Kotlin port)
+
+A self-contained native Android rewrite of the Electron desktop client (audit:
+[`../android-native-audit.md`](../android-native-audit.md)). Built as a
+multi-module Gradle project: the risk-bearing logic in each module is verified on
+the JVM in this repo; the Android/Compose/Room/OAuth layers build on a dev
+machine with the Android SDK + Google Maven.
+
+## Module graph
+
+`:app` composes seven deliverable modules. Arrows are Gradle dependencies.
+
+```
+:app  (com.android.application)
+ ├── :data:room          Room entities + DAOs                 (Step 2)
+ ├── :sync:engine        headless IMAP sync engine            (Step 4)  ── uses Jakarta Mail
+ ├── :auth:core          OAuth logic (PKCE, scopes, tokens)   (Step 3)
+ ├── :auth:appauth       AppAuth integration + Keystore port  (Step 3)  ── uses :auth:core
+ ├── :ui:presentation    UI state/reducers/reply/format       (Step 5)
+ ├── :ui:compose         Compose screens + ViewModels         (Step 5)  ── uses :ui:presentation
+ ├── :background:policy  sync-schedule + notification policy  (Step 6)
+ ├── :background:service FGS IDLE + WorkManager               (Step 6)  ── uses :background:policy, :sync:engine
+ └── :ai                 Anthropic client + features          (Step 7)
+```
+
+Not part of the app (standalone JVM verification harnesses, excluded from
+`settings.gradle.kts`): `data-layer/schema-verify`, `imap-spike`.
+
+## How the modules compose — the port adapters (in `:app`)
+
+Each module depends on an *interface* it doesn't implement; `:app` supplies the
+adapter. Writing these proved the module interfaces line up.
+
+| Port (defined in) | Adapter (`:app`) | Backed by |
+|---|---|---|
+| `MailRepository` (`:sync:engine`) | `RoomMailRepository` | `:data:room` FolderDao/MessageDao |
+| `MailUiRepository` (`:ui:compose`) | `RoomMailUiRepository` | `:data:room` (Flow reads) + `:sync:engine` (refresh) + SMTP |
+| `SecureCredentialStore` (`:auth:appauth`) | `KeystoreCredentialStore` | Android Keystore + EncryptedSharedPreferences |
+| `ApiKeyStore` (`:ai`) | `KeystoreApiKeyStore` | same secure prefs |
+| model-call lambda (`:ai` `AiService`) | `AppGraph.aiService` | `:ai` `AnthropicClient` + the API key |
+
+`AppGraph` is the single composition root (manual DI); `OrbitApplication` owns it;
+`MainActivity` builds the ViewModels over `mailUiRepository` and renders `OrbitApp`.
+
+## Verified in this repo (JVM, `gradle test` per module)
+
+Everything that could be tested without the Android SDK was — against real
+infrastructure wherever reachable (a live IMAP server, a real SQLite engine, the
+Anthropic API shape, RFC test vectors).
+
+| Module | Suite | Result | What it proves |
+|---|---|---|---|
+| `imap-spike` | GreenMail + compile | **8 pass, 1 skip** | Jakarta Mail: IDLE push, partial BODY.PEEK fetch, SORT, XOAUTH2 format, CONDSTORE API |
+| `data-layer/schema-verify` | sqlite-jdbc | **9 pass** | schema DDL, cascade, unique(folder,uid), partial-index recount, thread window-fn, unified inbox, scoped search |
+| `auth/core` | JUnit | **9 pass** | PKCE vs RFC 7636, exact scopes, auth-URL, refresh skew, state, token parse |
+| `sync/engine` | GreenMail + SQLite | **11 pass** | initial/incremental sync, window, threading, flag reconcile, expunge, idempotency |
+| `ui/presentation` | JUnit | **9 pass** | optimistic update + rollback, reply-all dedup, References chain, formatting, search |
+| `background/policy` | JUnit | **8 pass** | IDLE/poll resolution, FGS decision, 15-min clamp, anchored poll, backoff, notification |
+| `ai` | JUnit (+gated live) | **9 pass, 1 skip** | request shape, structured-output parse, refusal handling, incremental sweep (0-token) |
+
+**63 passing JVM tests**, plus 2 gated (real-Gmail / real-Anthropic) handoffs.
+
+## Build the app (dev machine)
+
+Requires Android SDK (compileSdk 35), JDK 17, and Google Maven access.
+
+```bash
+cd android
+# provide OAuth client ids (see auth/OAUTH_SETUP.md) via gradle properties or CI:
+#   -PGOOGLE_CLIENT_ID=... -PMICROSOFT_CLIENT_ID=... -PAPPAUTH_REDIRECT_SCHEME=com.googleusercontent.apps.<id>
+./gradlew :app:assembleDebug
+```
+
+Versions are centralized in `gradle/libs.versions.toml`. Note: when assembling,
+the existing per-module build files use inline plugin versions (`kotlin("jvm")
+version "2.1.20"`) so they build standalone in the sandbox; switching them to the
+catalog aliases (`alias(libs.plugins.kotlin.jvm)`) is a mechanical step so every
+module shares one Kotlin/AGP version. The per-module `settings.gradle.kts` files
+are for standalone `gradle test` and are ignored by the root build.
+
+## Remaining integration work (explicit TODOs)
+
+The port is feature-complete in logic; these are the wiring tasks that need the
+device/app context, each flagged in code:
+
+- **SMTP send module** — the one desktop service (`smtp-send.ts`) not yet ported
+  to its own module; `RoomMailUiRepository.send` / `AppGraph.sendMail` await it.
+- **Server-side mutation propagation** — mark `\Seen`/`\Flagged`, MOVE, DELETE on
+  the server (desktop `imap-sync` ops) belong on `:sync:engine`, wired through
+  `RoomMailUiRepository`; local writes are already optimistic.
+- **Refresh wiring** — `AppGraph.mailUiRepository.refresh` should build a
+  `SyncAccount` per stored account (host/port + `Auth.XOAuth2(freshAccessToken)`)
+  and run `syncEngine.syncAccount` on `Dispatchers.IO`.
+- **SyncManager controllers** — implement `ForegroundServiceController` /
+  `WorkScheduler` and call `SyncManager.reconcile` on lifecycle transitions.
+- **Thread participants** aggregation (`:data:room` deferred it).
+- **OAuth client registration** (manual console task — `auth/OAUTH_SETUP.md`) and
+  the live real-account runs (`imap-spike` Layer 3, `ai` LiveSmokeTest).
+
+## Step docs
+
+Per-step design + verified/deferred notes: `data-layer/STEP2.md`,
+`auth/STEP3.md`, `sync/engine/STEP4.md`, `ui/STEP5.md`, `background/STEP6.md`,
+`ai/STEP7.md`, and the spike report `imap-spike/SPIKE.md`.

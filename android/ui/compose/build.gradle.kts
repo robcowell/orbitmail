@@ -6,18 +6,17 @@
 // search) is the ../presentation module, verified off-device (gradle test).
 
 plugins {
-    id("com.android.application")
+    // A library module in the unified build — :app is the only application module.
+    id("com.android.library")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
-    namespace = "orbit.mail"
+    namespace = "orbit.ui.compose"
     compileSdk = 35
     defaultConfig {
-        applicationId = "com.orbitmail.app"
         minSdk = 26
-        targetSdk = 35
     }
     buildFeatures { compose = true }
     compileOptions {

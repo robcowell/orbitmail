@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OAuth redirect handling is provided by AppAuth itself: its AAR manifest declares
+  net.openid.appauth.RedirectUriReceiverActivity with an intent-filter whose
+  scheme is `${appAuthRedirectScheme}`. You only supply that placeholder in
+  build.gradle.kts (manifestPlaceholders["appAuthRedirectScheme"]), set to:
+    • Google:    the reversed OAuth client id  (com.googleusercontent.apps.<id>)
+    • Microsoft: the custom scheme registered under the app's Entra
+                 "Mobile and desktop applications" platform.
+  If the two providers use different schemes, declare a provider-specific
+  <activity-alias> for RedirectUriReceiverActivity per scheme in the app module.
+
+  This whole mechanism replaces the desktop's loopback HTTP server +
+  shell.openExternal, which have no Android equivalent (audit §5).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application />
+</manifest>

@@ -234,21 +234,36 @@ second (web) credential type. Budget doc changes there.
 
 ---
 
-## 9. Open questions that gate Step 1 (need Rob's call before building)
+## 9. Gating decisions — RESOLVED
 
-1. **Relay deployment story.** Existing box Rob controls (home server / Pi / VPS),
-   or does this need its own deployment/packaging story? The plan assumes
-   self-hosted, one relay per user/household — consistent with the BYO-OAuth
-   philosophy — but the *where it runs* is unresolved and shapes everything
-   (TLS/cert story, how the PWA discovers/pairs with it, always-on for IDLE/push).
-2. **Web Push in v1?** (§8) — decides whether Step 5.6 is in or deferred.
-3. **Anthropic key location.** Relay-side (like refresh tokens) or client-side
-   (encrypted per §6)? Leaning relay-side for consistency, but it's Rob's key and
-   his call. Gates the AI port (Step 5.7).
+These three were genuine product/ops calls. Answered by Rob 2026-07-15:
 
-These are genuine product/ops decisions, not things to default. Recommend
-resolving 1–3 before writing relay code, per the plan's own "architecture
-decision in Step 1 gates everything" framing.
+1. **Relay deployment story → build host-agnostic, decide later.** The relay
+   makes no assumptions about its host: everything host-specific (bind address,
+   external URL, TLS, data dir) comes from env/config. Deployment packaging is
+   deferred until the relay works. *Implication:* config abstraction up front, no
+   hardcoded hosts/paths, and the PWA↔relay pairing must be configurable (user
+   enters their relay URL), not discovered.
+
+2. **Web Push → in scope for v1.** The relay owns VAPID keys and a push
+   subscription store, and sends a Web Push on new mail detected via IMAP IDLE.
+   Foreground live updates go over WebSocket; background notifications go over Web
+   Push. *Implication:* Step 5.6 is in, not deferred — the relay is stateful for
+   push subscriptions even though it stays near-stateless for mail.
+
+3. **Secrets → PWA holds them, encrypted (overrides the plan's recommendation).**
+   OAuth refresh tokens and the Anthropic API key live on-device, encrypted via
+   Web Crypto behind a PIN/passkey (§6). The relay does **not** persist long-lived
+   mail secrets. *Implication:* the client performs (or drives) OAuth token
+   refresh and hands the relay a usable access token per session/request; the
+   relay holds credentials only transiently in memory for the life of a
+   connection. This keeps the relay simpler and portable (decision 1) but does
+   expose long-lived secrets to the weaker on-device store — the §6 downgrade must
+   be documented prominently in the user-facing security notes. The one piece of
+   durable server state is the Web Push subscription table (decision 2), which
+   holds no mail secrets.
+
+See `relay/DESIGN.md` for how these fold into the Step 1 architecture.
 
 ---
 

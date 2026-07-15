@@ -1,0 +1,31 @@
+{
+  "name": "orbit-mail-relay",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Server half of the Orbit Mail Android PWA — bridges the browser to IMAP/SMTP/OAuth.",
+  "type": "module",
+  "scripts": {
+    "start": "node --experimental-strip-types src/server.ts",
+    "harness": "node --experimental-strip-types src/harness.ts"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "dependencies": {
+    "imapflow": "^1.0.184",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^9.0.3",
+    "node-pop3": "^0.11.0",
+    "google-auth-library": "^9.15.1",
+    "@azure/msal-node": "^5.3.1",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^6.4.17",
+    "@types/mailparser": "^3.4.5",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.3"
+  }
+}

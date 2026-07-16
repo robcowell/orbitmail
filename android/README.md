@@ -93,9 +93,12 @@ device/app context, each flagged in code:
 - **Server-side mutation propagation** — mark `\Seen`/`\Flagged`, MOVE, DELETE on
   the server (desktop `imap-sync` ops) belong on `:sync:engine`, wired through
   `RoomMailUiRepository`; local writes are already optimistic.
-- **Refresh wiring** — `AppGraph.mailUiRepository.refresh` should build a
-  `SyncAccount` per stored account (host/port + `Auth.XOAuth2(freshAccessToken)`)
-  and run `syncEngine.syncAccount` on `Dispatchers.IO`.
+- **Refresh wiring** — ✅ `AppGraph.mailUiRepository.refresh` now builds a
+  `SyncAccount` per stored account (provider IMAP endpoint + `Auth.XOAuth2(
+  freshAccessToken(id))`) and runs `syncEngine.syncAccount` on `Dispatchers.IO`
+  (`null` = all accounts). Still open: OAuth-only for now (manual IMAP/POP3 are
+  skipped pending credential storage), and per-account error isolation so one
+  failing account doesn't abort a full refresh.
 - **SyncManager controllers** — implement `ForegroundServiceController` /
   `WorkScheduler` and call `SyncManager.reconcile` on lifecycle transitions.
 - **Thread participants** aggregation (`:data:room` deferred it).

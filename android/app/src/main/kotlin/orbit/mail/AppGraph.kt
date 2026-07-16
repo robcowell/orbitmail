@@ -20,7 +20,10 @@ import orbit.smtp.OutgoingMessage
 import orbit.smtp.SmtpAccount
 import orbit.smtp.SmtpAuth
 import orbit.smtp.SmtpSender
+import orbit.sync.Auth
+import orbit.sync.SyncAccount
 import orbit.sync.SyncEngine
+import orbit.sync.Provider as SyncProvider
 import orbit.ui.ComposeDraft
 
 /**
@@ -68,6 +71,23 @@ class AppGraph(context: Context) {
         Provider.IMAP, Provider.POP3 -> error("Manual SMTP credentials are not stored on Android yet")
     }
 
+    // Sync refresh (:sync:engine) — provider IMAP endpoints (mirror desktop
+    // PROVIDER_CONFIG.imap) and the data→sync provider mapping.
+    private data class ImapEndpoint(val host: String, val port: Int)
+
+    private fun imapEndpointFor(provider: Provider): ImapEndpoint = when (provider) {
+        Provider.GMAIL -> ImapEndpoint("imap.gmail.com", 993)
+        Provider.O365 -> ImapEndpoint("outlook.office365.com", 993)
+        Provider.IMAP, Provider.POP3 -> error("Manual IMAP credentials are not stored on Android yet")
+    }
+
+    private fun toSyncProvider(provider: Provider): SyncProvider = when (provider) {
+        Provider.GMAIL -> SyncProvider.GMAIL
+        Provider.O365 -> SyncProvider.O365
+        Provider.IMAP -> SyncProvider.IMAP
+        Provider.POP3 -> SyncProvider.POP3
+    }
+
     // Final wire body = the user's text/html followed by the collapsed reply quote
     // (the composer keeps them separate; see :ui:presentation ReplyComposer).
     private fun mergedText(d: ComposeDraft): String =
@@ -79,10 +99,27 @@ class AppGraph(context: Context) {
     // Step 5 — the UI repository the ViewModels depend on.
     val mailUiRepository = RoomMailUiRepository(
         messageDao = database.messageDao(),
-        refresh = { _ ->
-            // TODO: for each stored account, build a SyncAccount (host/port +
-            // Auth.XOAuth2(authenticator.freshAccessToken(id))) and run
-            // syncEngine.syncAccount(...) on Dispatchers.IO.
+        refresh = { accountId ->
+            // null = refresh every account; otherwise just the one requested.
+            val accounts =
+                if (accountId != null) listOfNotNull(database.accountDao().getById(accountId))
+                else database.accountDao().getAll()
+            for (account in accounts) {
+                // Only OAuth accounts can sync yet — manual (IMAP/POP3) credentials
+                // aren't stored on Android. Skip them rather than fail the refresh.
+                if (account.provider != Provider.GMAIL && account.provider != Provider.O365) continue
+                val endpoint = imapEndpointFor(account.provider)
+                val syncAccount = SyncAccount(
+                    id = account.id,
+                    provider = toSyncProvider(account.provider),
+                    host = endpoint.host,
+                    port = endpoint.port,
+                    auth = Auth.XOAuth2(account.email, authenticator.freshAccessToken(account.id)),
+                    syncDays = account.syncDays,
+                    useTls = true
+                )
+                withContext(Dispatchers.IO) { syncEngine.syncAccount(syncAccount) }
+            }
         },
         sendMail = { draft, accountId ->
             withContext(Dispatchers.IO) {

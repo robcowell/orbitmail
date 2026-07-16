@@ -954,11 +954,15 @@ export function replaceOpenSweepTasks(
 ): void {
   const db = getRawSqlite()
   const tx = db.transaction(() => {
-    db.prepare(`DELETE FROM sweep_tasks WHERE folder_id = ? AND status = 'open'`).run(folderId)
+    // Only clear swept tasks — manually flagged tasks (source = 'manual') persist
+    // across sweeps until the user completes them.
+    db.prepare(
+      `DELETE FROM sweep_tasks WHERE folder_id = ? AND status = 'open' AND source = 'sweep'`
+    ).run(folderId)
     const insert = db.prepare(
       `INSERT INTO sweep_tasks
-         (folder_id, id, task, priority, source_message_id, source_subject, source_from, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+         (folder_id, id, task, priority, source_message_id, source_subject, source_from, status, source, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 'sweep', ?)
        ON CONFLICT(folder_id, id) DO NOTHING`
     )
     for (const t of tasks) {
@@ -975,6 +979,34 @@ export function replaceOpenSweepTasks(
     }
   })
   tx()
+}
+
+// Insert a user-forced task from a specific email. Marked source = 'manual' so
+// sweeps never delete it. If the same task id already exists (e.g. the user
+// re-flags a completed one), reopen it rather than silently no-op.
+export function insertManualSweepTask(
+  folderId: string | 'unified',
+  task: SweepTask,
+  at: number
+): void {
+  getRawSqlite()
+    .prepare(
+      `INSERT INTO sweep_tasks
+         (folder_id, id, task, priority, source_message_id, source_subject, source_from, status, source, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', 'manual', ?)
+       ON CONFLICT(folder_id, id) DO UPDATE SET
+         status = 'open', completed_at = NULL, source = 'manual'`
+    )
+    .run(
+      folderId,
+      task.id,
+      task.task,
+      task.priority,
+      task.sourceMessageId,
+      task.sourceSubject,
+      task.sourceFrom,
+      at
+    )
 }
 
 export function completeSweepTask(

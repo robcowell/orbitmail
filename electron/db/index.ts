@@ -111,6 +111,7 @@ function initTables(db: Database.Database): void {
       source_subject TEXT NOT NULL,
       source_from TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'open',
+      source TEXT NOT NULL DEFAULT 'sweep',
       created_at INTEGER NOT NULL,
       completed_at INTEGER,
       PRIMARY KEY (folder_id, id)
@@ -221,6 +222,12 @@ function migrateSchema(db: Database.Database): void {
   const accountNames = new Set(accountCols.map((c) => c.name))
   if (!accountNames.has('sync_days')) {
     db.exec('ALTER TABLE accounts ADD COLUMN sync_days INTEGER NOT NULL DEFAULT 90')
+  }
+
+  const sweepTaskCols = db.prepare('PRAGMA table_info(sweep_tasks)').all() as Array<{ name: string }>
+  const sweepTaskNames = new Set(sweepTaskCols.map((c) => c.name))
+  if (!sweepTaskNames.has('source')) {
+    db.exec("ALTER TABLE sweep_tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'sweep'")
   }
 }
 

@@ -365,6 +365,11 @@ export interface OrbitMailAPI {
     ) => Promise<AiDraftResult>
     sweep: (folderId: string | 'unified', scope: SweepScope) => Promise<AiSweepResult>
     getTasks: (folderId: string | 'unified') => Promise<SweepResult>
+    // Force one email into the current task list, using the model to identify
+    // the action. Persists as a manual task that sweeps won't remove.
+    flagAsTask: (folderId: string | 'unified', messageId: string) => Promise<AiSweepResult>
+    // Cached-only AI analysis (never calls the API); null when none is stored.
+    getCachedAnalysis: (messageId: string) => Promise<AiAnalysis | null>
     exportTasks: (markdown: string, defaultName: string) => Promise<string | null>
     completeTask: (folderId: string | 'unified', taskId: string) => Promise<void>
     reopenTask: (folderId: string | 'unified', taskId: string) => Promise<void>

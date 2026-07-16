@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { MessageSummary } from '../../../shared/types'
 import { ContextMenu } from '../ui/ContextMenu'
-import { useMailStore } from '../../stores/mailStore'
+import { useMailStore, flagMessageAsTask } from '../../stores/mailStore'
 import {
   archiveMessageById,
   blockSender,
@@ -63,7 +63,8 @@ export function MessageContextMenu({ message, x, y, onClose }: MessageContextMen
           archive: () => archiveMessageById(message.id),
           move: (folderId) => moveToFolder(message.id, folderId),
           copy: (folderId) => copyToFolder(message.id, folderId),
-          print: () => printMessageById(message.id)
+          print: () => printMessageById(message.id),
+          flagTask: () => flagMessageAsTask(message.id)
         },
         run
       ),

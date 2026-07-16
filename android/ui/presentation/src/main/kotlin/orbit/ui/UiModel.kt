@@ -14,6 +14,9 @@ enum class ComposeMode { NEW, REPLY, REPLY_ALL, FORWARD }
 data class MessageRow(
     val id: String,
     val threadId: String?,
+    // Owning account — lets the list open a thread scoped to the right account
+    // in the unified (multi-account) inbox. Defaulted for test construction.
+    val accountId: String = "",
     val from: String,
     val subject: String,
     val snippet: String,

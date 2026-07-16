@@ -54,7 +54,7 @@ fun OrbitApp(
                 InboxListScreen(
                     vm = inboxVm,
                     nowMs = nowMs,
-                    onOpen = { row -> row.threadId?.let { readerVm.openThread(accountId, it); nav.navigate(Route.READER) } },
+                    onOpen = { row -> row.threadId?.let { readerVm.openThread(row.accountId, it); nav.navigate(Route.READER) } },
                     modifier = Modifier.padding(pad),
                 )
             }

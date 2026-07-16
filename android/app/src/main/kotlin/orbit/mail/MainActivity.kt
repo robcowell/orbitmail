@@ -4,6 +4,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -28,6 +30,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             OrbitTheme {
+                // Primary account (send-from default) + self-addresses (reply-all
+                // dedup), resolved reactively from the stored accounts.
+                val accounts by graph.accountsSnapshot.collectAsState(
+                    initial = AccountsSnapshot(primaryAccountId = "", selfAddresses = emptySet())
+                )
                 val inboxVm: InboxViewModel = viewModel(
                     factory = viewModelFactory { initializer { InboxViewModel(repo).also { it.observe("unified") } } }
                 )
@@ -41,10 +48,8 @@ class MainActivity : ComponentActivity() {
                     inboxVm = inboxVm,
                     readerVm = readerVm,
                     composeVm = composeVm,
-                    // TODO: resolve the selected account + its addresses from stored
-                    // accounts (Room accounts table + credential store).
-                    accountId = "",
-                    selfAddresses = emptySet(),
+                    accountId = accounts.primaryAccountId,
+                    selfAddresses = accounts.selfAddresses,
                     nowMs = System.currentTimeMillis(),
                 )
             }

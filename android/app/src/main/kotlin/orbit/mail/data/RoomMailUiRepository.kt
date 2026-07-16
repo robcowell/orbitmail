@@ -118,7 +118,7 @@ class RoomMailUiRepository(
     private fun DataFlagColor?.toUi(): UiFlagColor? = this?.let { UiFlagColor.valueOf(it.name) }
 
     private fun DataMessageSummary.toUi() = MessageRow(
-        id = id, threadId = threadId, from = from, subject = subject, snippet = snippet,
+        id = id, threadId = threadId, accountId = accountId, from = from, subject = subject, snippet = snippet,
         date = date, isRead = isRead, isStarred = isStarred, flagColor = flagColor.toUi(), hasAttachments = hasAttachments
     )
 

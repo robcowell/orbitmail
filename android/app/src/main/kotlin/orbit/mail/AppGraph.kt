@@ -8,6 +8,8 @@ import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import orbit.ai.AiResult
@@ -47,6 +49,9 @@ import orbit.ui.ComposeDraft
  */
 private const val POLL_INTERVAL_MINUTES = 15
 
+/** What the UI shell needs about the signed-in accounts. */
+data class AccountsSnapshot(val primaryAccountId: String, val selfAddresses: Set<String>)
+
 class AppGraph(context: Context) {
 
     // Step 2 — Room database (credential-free).
@@ -66,6 +71,16 @@ class AppGraph(context: Context) {
 
     // Step 3 — OAuth (AppAuth), tokens persisted via the credential store.
     val authenticator = AppAuthAuthenticator(context, credentialStore)
+
+    // Reactive account snapshot for the UI shell: the primary account (the
+    // send-from default until an account switcher exists) and every self-address
+    // (for reply-all dedup). Updates as accounts are added/removed.
+    val accountsSnapshot: Flow<AccountsSnapshot> = database.accountDao().observeAll().map { list ->
+        AccountsSnapshot(
+            primaryAccountId = list.firstOrNull()?.id ?: "",
+            selfAddresses = list.mapNotNull { it.email.lowercase().ifBlank { null } }.toSet()
+        )
+    }
 
     // Step 4 — sync engine over the Room-backed MailRepository adapter.
     private val mailRepository = RoomMailRepository(database.folderDao(), database.messageDao())

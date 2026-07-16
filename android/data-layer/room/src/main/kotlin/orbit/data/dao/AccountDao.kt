@@ -15,6 +15,11 @@ interface AccountDao {
     @Query("SELECT * FROM accounts ORDER BY created_at ASC")
     suspend fun getAll(): List<AccountEntity>
 
+    // Non-suspend snapshot for SyncManager.prefsProvider (called off the main
+    // thread from the background-sync reconcile).
+    @Query("SELECT * FROM accounts ORDER BY created_at ASC")
+    fun getAllSync(): List<AccountEntity>
+
     @Query("SELECT * FROM accounts WHERE id = :id")
     suspend fun getById(id: String): AccountEntity?
 

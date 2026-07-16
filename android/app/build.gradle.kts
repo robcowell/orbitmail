@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.security.crypto)     // Keystore-backed prefs (Steps 3, 7)
     implementation(libs.androidx.work.runtime.ktx)    // Step 6
+    implementation(libs.androidx.lifecycle.process)   // Step 6 — app fg/bg reconcile
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.android.mail)                 // Step 1/4 IMAP/SMTP
     implementation(libs.android.activation)

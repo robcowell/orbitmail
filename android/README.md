@@ -104,8 +104,16 @@ device/app context, each flagged in code:
   (`null` = all accounts). Still open: OAuth-only for now (manual IMAP/POP3 are
   skipped pending credential storage), and per-account error isolation so one
   failing account doesn't abort a full refresh.
-- **SyncManager controllers** — implement `ForegroundServiceController` /
-  `WorkScheduler` and call `SyncManager.reconcile` on lifecycle transitions.
+- **SyncManager controllers** — ✅ `AndroidForegroundServiceController` (start/stop
+  the IDLE FGS) and `WorkManagerScheduler` (unique periodic `SyncWorker`) implement
+  `SyncManager`'s ports; `OrbitApplication` reconciles on startup and every app
+  foreground/background transition (`ProcessLifecycleOwner`). The worker runs a
+  real sync via a `BackgroundSyncHost` the app implements (keeps `:background:service`
+  app-agnostic) and posts a new-mail notification. Default per-account mode is a
+  15-minute poll (battery-friendly). Still open: the FGS **IDLE loop body** (real
+  `folder.idle()` push — needs IDLE support in the connection layer), a sync-prefs
+  UI to opt accounts into IDLE, a dedicated notification icon, and the
+  `POST_NOTIFICATIONS` runtime request.
 - **Thread participants** aggregation (`:data:room` deferred it).
 - **OAuth client registration** (manual console task — `auth/OAUTH_SETUP.md`) and
   the live real-account runs (`imap-spike` Layer 3, `ai` LiveSmokeTest).

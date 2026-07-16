@@ -23,6 +23,7 @@ class ImapIdleForegroundService : Service() {
     private val runtimes = mutableMapOf<String, IdleRuntime>()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        SyncNotifications.ensureChannels(this)
         startForeground(NOTIF_ID, buildOngoingNotification())
         val accountIds = intent?.getStringArrayExtra(EXTRA_IDLE_ACCOUNTS)?.toList().orEmpty()
         syncRuntimes(accountIds)
@@ -88,11 +89,8 @@ class ImapIdleForegroundService : Service() {
         }
     }
 
-    private fun buildOngoingNotification(): android.app.Notification {
-        // Minimal ongoing "Syncing mail" notification on a low-importance channel.
-        // Built in the app with NotificationCompat; omitted here.
-        error("provided by the app's NotificationFactory")
-    }
+    private fun buildOngoingNotification(): android.app.Notification =
+        SyncNotifications.ongoing(this)
 
     companion object {
         const val NOTIF_ID = 1001

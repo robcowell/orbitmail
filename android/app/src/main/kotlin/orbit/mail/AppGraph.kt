@@ -5,12 +5,19 @@ import android.os.Build
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import orbit.ai.AiResult
 import orbit.ai.AiService
 import orbit.ai.AnthropicClient
 import orbit.auth.appauth.AppAuthAuthenticator
+import orbit.bg.AccountSyncPref
+import orbit.bg.SyncMode
+import orbit.bg.service.BackgroundSyncOutcome
+import orbit.bg.service.SyncManager
 import orbit.data.Provider
 import orbit.data.db.OrbitDatabase
 import orbit.data.entity.AccountEntity
@@ -38,6 +45,8 @@ import orbit.ui.ComposeDraft
  * Build-only on a dev machine (Android SDK + Google Maven). The interface fit is
  * the point: this file compiling proves the modules line up.
  */
+private const val POLL_INTERVAL_MINUTES = 15
+
 class AppGraph(context: Context) {
 
     // Step 2 — Room database (credential-free).
@@ -196,7 +205,42 @@ class AppGraph(context: Context) {
         else anthropic.call(key, system, content, schema, maxTokens)
     }
 
-    // Step 6 — background sync is executed from OrbitApplication / a SyncManager
-    // wired to the ForegroundServiceController + WorkScheduler controllers.
-    // (SyncSchedulePolicy decisions are already unit-tested in :background:policy.)
+    // ── Step 6 — background sync ─────────────────────────────────────────────
+    // SyncSchedulePolicy makes the decisions (unit-tested in :background:policy);
+    // these controllers are the execution layer. reconcile runs off the main
+    // thread (prefsProvider reads accounts synchronously).
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Default per-account mode until a sync-prefs UI exists: a 15-minute poll —
+    // battery-friendly, no persistent notification. IDLE push is opt-in later.
+    private fun defaultSyncPrefs(): List<AccountSyncPref> =
+        database.accountDao().getAllSync().map { AccountSyncPref(it.id, SyncMode.Poll(POLL_INTERVAL_MINUTES)) }
+
+    val syncManager = SyncManager(
+        prefsProvider = ::defaultSyncPrefs,
+        service = AndroidForegroundServiceController(context),
+        work = WorkManagerScheduler(context)
+    )
+
+    /** Enqueue/refresh background sync per the policy. Safe to call on lifecycle. */
+    fun reconcileBackgroundSync(appInForeground: Boolean) {
+        appScope.launch { syncManager.reconcile(appInForeground) }
+    }
+
+    /** Sync every OAuth account, tallying new mail — used by the SyncWorker. */
+    suspend fun runBackgroundSync(): BackgroundSyncOutcome {
+        var newCount = 0
+        var failed = false
+        for (account in database.accountDao().getAll()) {
+            val syncAccount = buildSyncAccount(account) ?: continue
+            try {
+                val results = withContext(Dispatchers.IO) { syncEngine.syncAccount(syncAccount) }
+                newCount += results.sumOf { it.newMessages }
+            } catch (e: Exception) {
+                failed = true
+                Log.w("OrbitMail", "background sync failed for ${account.id}", e)
+            }
+        }
+        return BackgroundSyncOutcome(newCount, failed)
+    }
 }

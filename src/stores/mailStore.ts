@@ -73,6 +73,7 @@ interface MailState {
   aiAnalysisById: Record<string, AiAnalysis>
   aiAnalyzingId: string | null
   draftingReplyId: string | null
+  flaggingTaskId: string | null
   showAiSettings: boolean
   showTasks: boolean
   sweeping: boolean
@@ -122,6 +123,7 @@ interface MailState {
   setAiAnalysis: (messageId: string, analysis: AiAnalysis) => void
   setAiAnalyzingId: (id: string | null) => void
   setDraftingReplyId: (id: string | null) => void
+  setFlaggingTaskId: (id: string | null) => void
   setShowAiSettings: (show: boolean) => void
   setShowTasks: (show: boolean) => void
   setSweeping: (sweeping: boolean) => void
@@ -172,6 +174,7 @@ export const useMailStore = create<MailState>((set) => ({
   aiAnalysisById: {},
   aiAnalyzingId: null,
   draftingReplyId: null,
+  flaggingTaskId: null,
   showAiSettings: false,
   showTasks: false,
   sweeping: false,
@@ -219,6 +222,7 @@ export const useMailStore = create<MailState>((set) => ({
     set((state) => ({ aiAnalysisById: { ...state.aiAnalysisById, [messageId]: analysis } })),
   setAiAnalyzingId: (id) => set({ aiAnalyzingId: id }),
   setDraftingReplyId: (id) => set({ draftingReplyId: id }),
+  setFlaggingTaskId: (id) => set({ flaggingTaskId: id }),
   setShowAiSettings: (show) => set({ showAiSettings: show }),
   setShowTasks: (show) => set({ showTasks: show }),
   setSweeping: (sweeping) => set({ sweeping }),
@@ -1166,6 +1170,21 @@ export async function selectMessage(messageId: string): Promise<void> {
     afterGet.setReaderLoading(false)
   }
 
+  // Surface any persisted AI summary (cached-only — no API call) so the reader
+  // shows it on open and "Print with AI summary" is offered. Fire-and-forget;
+  // only applies if this is still the selection and nothing is already loaded.
+  if (msg && !afterGet.aiAnalysisById[messageId]) {
+    void window.orbitMail.ai
+      .getCachedAnalysis(messageId)
+      .then((analysis) => {
+        const s = useMailStore.getState()
+        if (analysis && s.selectedMessageId === messageId && !s.aiAnalysisById[messageId]) {
+          s.setAiAnalysis(messageId, analysis)
+        }
+      })
+      .catch(() => {})
+  }
+
   if (msg && wasUnread) {
     try {
       await window.orbitMail.messages.markRead(messageId, true)
@@ -1782,6 +1801,30 @@ export async function runSweep(scope?: SweepScope): Promise<void> {
     store.setToast(err instanceof Error ? err.message : 'Sweep failed')
   } finally {
     store.setSweeping(false)
+  }
+}
+
+// Force one email into the current folder's task list. The model identifies the
+// action; the task persists as a manual entry that future sweeps won't remove.
+// Errors surface via toast (and open AI settings if no key is configured).
+export async function flagMessageAsTask(messageId: string): Promise<void> {
+  const store = useMailStore.getState()
+  if (store.flaggingTaskId) return
+  store.setFlaggingTaskId(messageId)
+  try {
+    const result = await window.orbitMail.ai.flagAsTask(store.selectedFolderId, messageId)
+    if ('error' in result) {
+      store.setToast(result.error)
+      const status = await window.orbitMail.ai.getStatus()
+      if (!status.configured) store.setShowAiSettings(true)
+      return
+    }
+    store.setSweepResult(result.tasks, result.completed, result.analyzedCount, result.sweptAt)
+    store.setToast('Added to AI tasks.')
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not flag this email')
+  } finally {
+    store.setFlaggingTaskId(null)
   }
 }
 

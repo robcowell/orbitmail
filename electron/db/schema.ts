@@ -121,6 +121,12 @@ export const sweepTasks = sqliteTable(
     status: text('status', { enum: ['open', 'completed'] })
       .notNull()
       .default('open'),
+    // 'sweep' = extracted by an automatic sweep (replaced wholesale each run);
+    // 'manual' = the user force-flagged the source email, so it must survive
+    // re-sweeps (replaceOpenSweepTasks only clears 'sweep' rows).
+    source: text('source', { enum: ['sweep', 'manual'] })
+      .notNull()
+      .default('sweep'),
     createdAt: integer('created_at').notNull(),
     completedAt: integer('completed_at')
   },

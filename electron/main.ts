@@ -92,6 +92,8 @@ import {
   analyzeMessage,
   draftReply,
   sweepTasks,
+  flagMessageAsTask,
+  getCachedAnalysis,
   getPersistedTasks,
   completeTask as completeAiTask,
   reopenTask as reopenAiTask,
@@ -899,6 +901,12 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('ai:getTasks', (_, folderId: string) => getPersistedTasks(folderId))
+
+  ipcMain.handle('ai:flagAsTask', (_, folderId: string, messageId: string) =>
+    flagMessageAsTask(folderId, messageId)
+  )
+
+  ipcMain.handle('ai:getCachedAnalysis', (_, messageId: string) => getCachedAnalysis(messageId))
 
   ipcMain.handle('ai:exportTasks', async (_, markdown: string, defaultName: string) => {
     const result = await dialog.showSaveDialog(composeWindow ?? mainWindow ?? undefined, {

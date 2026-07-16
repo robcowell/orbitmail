@@ -1,12 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
-import type { DraftTone, MessageDetail } from '../../../shared/types'
+import type { AiAnalysis, DraftTone, MessageDetail } from '../../../shared/types'
 import {
   useMailStore,
   toggleMessageStar,
   toggleThreadMessageStar,
   analyzeMessage,
-  draftReply
+  draftReply,
+  flagMessageAsTask
 } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
@@ -20,6 +21,7 @@ import {
   ArrowBendUpLeft,
   ArrowBendDoubleUpLeft,
   Printer,
+  ListChecks,
   TrayArrowDown
 } from '../icons'
 import { flagColorHex } from '../../constants/flags'
@@ -181,6 +183,108 @@ function AnalyzeButton({ message, iconSize = 16 }: { message: MessageDetail; ico
   )
 }
 
+// Print button. Plain when there's no AI summary; a split-button with a
+// "Print with AI summary" option when a cached analysis exists for the message.
+function PrintButton({
+  message,
+  aiAnalysis
+}: {
+  message: MessageDetail
+  aiAnalysis?: AiAnalysis
+}) {
+  const setToast = useMailStore((s) => s.setToast)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  const print = async (withAi: boolean) => {
+    setOpen(false)
+    try {
+      await printMessageDetail(message, withAi ? aiAnalysis : undefined)
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Print failed')
+    }
+  }
+
+  if (!aiAnalysis) {
+    return (
+      <button
+        type="button"
+        className="reader-ai-btn"
+        title="Print this message"
+        onClick={() => void print(false)}
+      >
+        <Printer size={16} weight="duotone" />
+        Print
+      </button>
+    )
+  }
+
+  return (
+    <div className="draft-reply" ref={ref}>
+      <button
+        type="button"
+        className="reader-ai-btn"
+        title="Print this message"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Printer size={16} weight="duotone" />
+        Print
+        <CaretRight size={12} weight="bold" style={{ transform: 'rotate(90deg)', opacity: 0.7 }} />
+      </button>
+      {open && (
+        <div className="draft-reply-menu" role="menu">
+          <button
+            type="button"
+            className="draft-reply-option"
+            role="menuitem"
+            onClick={() => void print(false)}
+          >
+            <span className="draft-reply-option-label">Print</span>
+            <span className="draft-reply-option-hint">Message only</span>
+          </button>
+          <button
+            type="button"
+            className="draft-reply-option"
+            role="menuitem"
+            onClick={() => void print(true)}
+          >
+            <span className="draft-reply-option-label">Print with AI summary</span>
+            <span className="draft-reply-option-hint">Includes summary + actions</span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// "Add to tasks" — force this email into the current task list; the model picks
+// the action. A manual task that automatic sweeps won't remove.
+function FlagTaskButton({ messageId }: { messageId: string }) {
+  const flaggingTaskId = useMailStore((s) => s.flaggingTaskId)
+  const isFlagging = flaggingTaskId === messageId
+  return (
+    <button
+      type="button"
+      className="reader-ai-btn"
+      title="Use AI to add an action from this email to your tasks"
+      disabled={isFlagging}
+      onClick={() => void flagMessageAsTask(messageId)}
+    >
+      <ListChecks size={16} weight="duotone" />
+      {isFlagging ? 'Adding…' : 'Add to tasks'}
+    </button>
+  )
+}
+
 export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
@@ -259,14 +363,6 @@ export function MessageView() {
     }
   }
 
-  const handlePrint = async () => {
-    try {
-      await printMessageDetail(selectedMessage)
-    } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Print failed')
-    }
-  }
-
   const handleReply = () => {
     void window.orbitMail.compose.open({
       accountId: selectedMessage.accountId,
@@ -314,15 +410,9 @@ export function MessageView() {
             </button>
             <DraftReplyButton messageId={selectedMessage.id} />
             <AnalyzeButton message={selectedMessage} />
-            <button
-              type="button"
-              className="reader-ai-btn"
-              title="Print this message"
-              onClick={handlePrint}
-            >
-              <Printer size={16} weight="duotone" />
-              Print
-            </button>
+            <FlagTaskButton messageId={selectedMessage.id} />
+            <PrintButton message={selectedMessage} aiAnalysis={aiAnalysis} />
+
             <button
               type="button"
               className={`reader-star-btn${selectedMessage.isStarred ? ' active' : ''}`}

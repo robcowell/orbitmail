@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify'
-import type { MessageDetail } from '../../shared/types'
+import type { AiAnalysis, MessageDetail } from '../../shared/types'
 
 // Printing renders a clean, self-contained HTML document (headers + body) and
 // hands it to the main process, which loads it into an offscreen window and
@@ -37,7 +37,22 @@ function attachmentsSection(message: MessageDetail): string {
   return `<div class="attachments"><span class="att-label">${label}:</span><ul>${items}</ul></div>`
 }
 
-function messageSection(message: MessageDetail): string {
+// The AI summary block (summary + action items). Rendered only when the caller
+// opts in and an analysis exists for the message.
+function aiSummarySection(analysis: AiAnalysis): string {
+  const actionItems = analysis.actionItems.length
+    ? `<div class="ai-subhead">Action Items</div><ul class="ai-actions">${analysis.actionItems
+        .map((item) => `<li>${escapeHtml(item)}</li>`)
+        .join('')}</ul>`
+    : ''
+  return `<section class="ai-summary">
+    <div class="ai-head">AI Summary</div>
+    <p class="ai-body">${escapeHtml(analysis.summary)}</p>
+    ${actionItems}
+  </section>`
+}
+
+function messageSection(message: MessageDetail, aiAnalysis?: AiAnalysis): string {
   const body = message.bodyHtml
     ? DOMPurify.sanitize(message.bodyHtml, {
         ADD_ATTR: ['target', 'href'],
@@ -53,6 +68,7 @@ function messageSection(message: MessageDetail): string {
       ${headerRow('Date', new Date(message.date).toLocaleString())}
     </table>
     ${attachmentsSection(message)}
+    ${aiAnalysis ? aiSummarySection(aiAnalysis) : ''}
     <div class="body">${body}</div>
   </section>`
 }
@@ -104,6 +120,31 @@ const PRINT_STYLES = `
   .attachments ul { margin: 4px 0 0; padding-left: 20px; }
   .attachments li { margin: 1px 0; }
   .attachments .att-size { color: #888; }
+  .ai-summary {
+    font-size: 13px;
+    margin-bottom: 16px;
+    padding: 10px 14px;
+    background: #f0f4ff;
+    border: 1px solid #c7d4f5;
+    border-radius: 4px;
+    page-break-inside: avoid;
+  }
+  .ai-summary .ai-head {
+    font-weight: 700;
+    color: #3355bb;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-size: 11px;
+  }
+  .ai-summary .ai-body { margin: 0; }
+  .ai-summary .ai-subhead {
+    font-weight: 600;
+    color: #555;
+    margin: 8px 0 2px;
+  }
+  .ai-summary ul.ai-actions { margin: 2px 0 0; padding-left: 20px; }
+  .ai-summary ul.ai-actions li { margin: 1px 0; }
   .body { font-size: 14px; }
   .body img { max-width: 100%; height: auto; }
   .body table { max-width: 100%; }
@@ -132,9 +173,12 @@ ${sections}
 </html>`
 }
 
-/** Print a single message. */
-export async function printMessageDetail(message: MessageDetail): Promise<void> {
-  const html = buildDocument(message.subject, messageSection(message))
+/** Print a single message, optionally including its AI summary. */
+export async function printMessageDetail(
+  message: MessageDetail,
+  aiAnalysis?: AiAnalysis
+): Promise<void> {
+  const html = buildDocument(message.subject, messageSection(message, aiAnalysis))
   await window.orbitMail.print.document(html)
 }
 
@@ -142,7 +186,7 @@ export async function printMessageDetail(message: MessageDetail): Promise<void> 
 export async function printThreadDetails(messages: MessageDetail[]): Promise<void> {
   if (messages.length === 0) return
   const subject = messages[messages.length - 1].subject
-  const sections = messages.map(messageSection).join('\n')
+  const sections = messages.map((m) => messageSection(m)).join('\n')
   const html = buildDocument(subject, sections)
   await window.orbitMail.print.document(html)
 }

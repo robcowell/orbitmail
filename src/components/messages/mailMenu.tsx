@@ -55,6 +55,8 @@ export interface MailMenuActions {
   move: (folderId: string) => void | Promise<void>
   copy: (folderId: string) => void | Promise<void>
   print: () => void | Promise<void>
+  // Optional — single-message menus only. Forces the email into the AI task list.
+  flagTask?: () => void | Promise<void>
 }
 
 type RunFn = (action: () => void | Promise<void>, successMessage?: string) => void
@@ -112,6 +114,16 @@ export function buildMailMenuItems(
       icon: <Printer size={16} weight="duotone" />,
       onClick: () => run(actions.print)
     },
+    ...(actions.flagTask
+      ? [
+          {
+            id: 'flag-task',
+            label: 'Add to AI Tasks',
+            icon: <ListChecks size={16} weight="duotone" />,
+            onClick: () => run(actions.flagTask!)
+          }
+        ]
+      : []),
     { id: 'sep-1', label: '', separator: true, onClick: () => {} },
     {
       id: 'send-again',

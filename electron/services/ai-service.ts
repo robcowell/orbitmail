@@ -25,6 +25,7 @@ import {
   listOpenSweepTasks,
   listCompletedSweepTasks,
   replaceOpenSweepTasks,
+  insertManualSweepTask,
   completeSweepTask,
   reopenSweepTask,
   pruneCompletedSweepTasks,
@@ -502,6 +503,39 @@ const SWEEP_SCHEMA = {
   additionalProperties: false
 } as const
 
+// Single-message extraction for a user-forced "flag for action". Unlike the
+// sweep, the user has already decided this email matters, so we ask for the one
+// most important task and fall back to a generic follow-up if the model finds none.
+const FLAG_TASK_SCHEMA = {
+  type: 'object',
+  properties: {
+    actionable: {
+      type: 'boolean',
+      description: 'Whether the email contains a concrete action the user must take.'
+    },
+    task: {
+      type: 'string',
+      description:
+        'The single most important outstanding action the user needs to take from this email, as a short imperative. Empty string if there is genuinely none.'
+    },
+    priority: {
+      type: 'string',
+      enum: ['urgent', 'high', 'medium', 'low'],
+      description: 'How urgently this needs attention.'
+    }
+  },
+  required: ['actionable', 'task', 'priority'],
+  additionalProperties: false
+} as const
+
+const FLAG_TASK_SYSTEM_PROMPT = `The user has explicitly flagged one email as needing action. Identify the single most important, specific task they must do about it.
+
+Rules:
+- Return one concrete action the user should take, phrased as a short imperative.
+- Set priority by real urgency: "urgent" for explicit deadlines/time-sensitive asks, down to "low" for optional follow-ups.
+- If the email is FROM the user, the task is still framed as what the user should now do (e.g. await/chase a reply).
+- Only if the email genuinely contains nothing to act on, set actionable=false and leave task empty.`
+
 const SWEEP_SYSTEM_PROMPT = `You review a batch of the user's emails and produce a single prioritized list of the outstanding tasks the USER needs to act on.
 
 Rules:
@@ -698,6 +732,96 @@ export function getPersistedTasks(folderId: string | 'unified'): SweepResult {
     freshCount: 0,
     scope: meta?.scope ?? 'unread',
     sweptAt: meta?.sweptAt ?? null
+  }
+}
+
+// Force one email into the task list, using the model to identify the action.
+// The task is stored as source='manual' so future sweeps never remove it.
+export async function flagMessageAsTask(
+  folderId: string | 'unified',
+  messageId: string
+): Promise<SweepResult | { error: string }> {
+  const apiKey = getApiKey()
+  if (!apiKey) {
+    return { error: 'No Anthropic API key configured. Open AI settings to add one.' }
+  }
+
+  const message = getMessage(messageId)
+  if (!message) return { error: 'Message not found.' }
+
+  const userEmails = listAccounts().map((a) => a.email.toLowerCase())
+  const isFromUser = userEmails.some(
+    (email) => email.length > 0 && message.from.toLowerCase().includes(email)
+  )
+  const block = messageBlock(
+    {
+      id: message.id,
+      from: message.from,
+      subject: message.subject,
+      date: message.date,
+      bodyText: message.bodyText,
+      bodyHtml: message.bodyHtml,
+      sweepCache: null
+    },
+    isFromUser
+  )
+
+  let taskText = ''
+  let priority: AiPriority = 'medium'
+  try {
+    const client = new Anthropic({ apiKey })
+    const response = await client.messages.parse({
+      model: MODEL,
+      max_tokens: 1024,
+      output_config: { effort: 'low', format: jsonSchemaOutputFormat(FLAG_TASK_SCHEMA) },
+      system: FLAG_TASK_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: `Identify the task from this email.\n\n${block}` }]
+    })
+    if (response.stop_reason === 'refusal') {
+      return { error: 'The model declined to analyze this message.' }
+    }
+    const parsed = response.parsed_output
+    if (parsed && parsed.actionable && parsed.task.trim()) {
+      taskText = parsed.task.trim()
+      priority = parsed.priority
+    }
+  } catch (err) {
+    return { error: friendlyError(err) }
+  }
+
+  // The user forced this — always produce a task. Generic follow-up when the
+  // model found nothing concrete.
+  if (!taskText) {
+    taskText = `Follow up: ${message.subject || '(no subject)'}`
+    priority = 'medium'
+  }
+
+  insertManualSweepTask(
+    folderId,
+    {
+      id: taskDedupeKey(message.id, taskText),
+      task: taskText,
+      priority,
+      sourceMessageId: message.id,
+      sourceSubject: message.subject,
+      sourceFrom: message.from
+    },
+    Date.now()
+  )
+
+  return getPersistedTasks(folderId)
+}
+
+// Cached-only analysis fetch — never calls the API. Used to include an existing
+// AI summary when printing and to surface a stored summary when a message opens.
+export function getCachedAnalysis(messageId: string): AiAnalysis | null {
+  const cached = getMessageAiAnalysis(messageId)
+  if (!cached) return null
+  try {
+    const parsed = JSON.parse(cached.json) as Omit<AiAnalysis, 'generatedAt' | 'cached'>
+    return { ...parsed, generatedAt: cached.at, cached: true }
+  } catch {
+    return null
   }
 }
 

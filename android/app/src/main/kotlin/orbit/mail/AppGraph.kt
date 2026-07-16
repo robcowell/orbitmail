@@ -2,6 +2,7 @@ package orbit.mail
 
 import android.content.Context
 import android.os.Build
+import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.Dispatchers
@@ -12,10 +13,12 @@ import orbit.ai.AnthropicClient
 import orbit.auth.appauth.AppAuthAuthenticator
 import orbit.data.Provider
 import orbit.data.db.OrbitDatabase
+import orbit.data.entity.AccountEntity
 import orbit.mail.data.KeystoreApiKeyStore
 import orbit.mail.data.KeystoreCredentialStore
 import orbit.mail.data.RoomMailRepository
 import orbit.mail.data.RoomMailUiRepository
+import orbit.mail.data.ServerMutations
 import orbit.smtp.OutgoingMessage
 import orbit.smtp.SmtpAccount
 import orbit.smtp.SmtpAuth
@@ -24,6 +27,7 @@ import orbit.sync.Auth
 import orbit.sync.SyncAccount
 import orbit.sync.SyncEngine
 import orbit.sync.Provider as SyncProvider
+import orbit.sync.imap.ImapMutations
 import orbit.ui.ComposeDraft
 
 /**
@@ -88,6 +92,54 @@ class AppGraph(context: Context) {
         Provider.POP3 -> SyncProvider.POP3
     }
 
+    // Build a fresh-token SyncAccount for an OAuth account, or null for manual
+    // (IMAP/POP3) accounts whose credentials aren't stored on Android yet.
+    private suspend fun buildSyncAccount(account: AccountEntity): SyncAccount? {
+        if (account.provider != Provider.GMAIL && account.provider != Provider.O365) return null
+        val endpoint = imapEndpointFor(account.provider)
+        return SyncAccount(
+            id = account.id,
+            provider = toSyncProvider(account.provider),
+            host = endpoint.host,
+            port = endpoint.port,
+            auth = Auth.XOAuth2(account.email, authenticator.freshAccessToken(account.id)),
+            syncDays = account.syncDays,
+            useTls = true
+        )
+    }
+
+    // Server write-path (:sync:engine ImapMutations) — the outbound counterpart to
+    // syncEngine. Best-effort: failures are logged and left to self-heal on the
+    // next sync (flag reconcile / re-import), never surfaced as UI errors.
+    private val imapMutations = ImapMutations()
+
+    private suspend fun runServerOp(accountId: String, folderId: String, op: (SyncAccount, String) -> Unit) {
+        try {
+            val account = database.accountDao().getById(accountId) ?: return
+            val syncAccount = buildSyncAccount(account) ?: return
+            val path = database.folderDao().getById(folderId)?.imapPath ?: return
+            withContext(Dispatchers.IO) { op(syncAccount, path) }
+        } catch (e: Exception) {
+            Log.w("OrbitMail", "server mutation failed (self-heals on next sync)", e)
+        }
+    }
+
+    private val serverMutations = object : ServerMutations {
+        override suspend fun setSeen(accountId: String, folderId: String, uid: Long, isRead: Boolean) =
+            runServerOp(accountId, folderId) { acc, path -> imapMutations.setSeen(acc, path, uid, isRead) }
+
+        override suspend fun setFlagged(accountId: String, folderId: String, uid: Long, isFlagged: Boolean) =
+            runServerOp(accountId, folderId) { acc, path -> imapMutations.setFlagged(acc, path, uid, isFlagged) }
+
+        override suspend fun delete(accountId: String, folderId: String, uid: Long) =
+            runServerOp(accountId, folderId) { acc, path -> imapMutations.delete(acc, path, uid) }
+
+        override suspend fun move(accountId: String, folderId: String, uid: Long, targetFolderId: String) {
+            val targetPath = database.folderDao().getById(targetFolderId)?.imapPath ?: return
+            runServerOp(accountId, folderId) { acc, path -> imapMutations.move(acc, path, uid, targetPath) }
+        }
+    }
+
     // Final wire body = the user's text/html followed by the collapsed reply quote
     // (the composer keeps them separate; see :ui:presentation ReplyComposer).
     private fun mergedText(d: ComposeDraft): String =
@@ -101,23 +153,12 @@ class AppGraph(context: Context) {
         messageDao = database.messageDao(),
         refresh = { accountId ->
             // null = refresh every account; otherwise just the one requested.
+            // Manual (IMAP/POP3) accounts yield null and are skipped.
             val accounts =
                 if (accountId != null) listOfNotNull(database.accountDao().getById(accountId))
                 else database.accountDao().getAll()
             for (account in accounts) {
-                // Only OAuth accounts can sync yet — manual (IMAP/POP3) credentials
-                // aren't stored on Android. Skip them rather than fail the refresh.
-                if (account.provider != Provider.GMAIL && account.provider != Provider.O365) continue
-                val endpoint = imapEndpointFor(account.provider)
-                val syncAccount = SyncAccount(
-                    id = account.id,
-                    provider = toSyncProvider(account.provider),
-                    host = endpoint.host,
-                    port = endpoint.port,
-                    auth = Auth.XOAuth2(account.email, authenticator.freshAccessToken(account.id)),
-                    syncDays = account.syncDays,
-                    useTls = true
-                )
+                val syncAccount = buildSyncAccount(account) ?: continue
                 withContext(Dispatchers.IO) { syncEngine.syncAccount(syncAccount) }
             }
         },
@@ -143,7 +184,8 @@ class AppGraph(context: Context) {
                 )
                 Unit
             }
-        }
+        },
+        server = serverMutations
     )
 
     // Step 7 — AI, keyed off the Keystore API key.

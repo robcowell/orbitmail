@@ -54,13 +54,13 @@ Anthropic API shape, RFC test vectors).
 | `imap-spike` | GreenMail + compile | **8 pass, 1 skip** | Jakarta Mail: IDLE push, partial BODY.PEEK fetch, SORT, XOAUTH2 format, CONDSTORE API |
 | `data-layer/schema-verify` | sqlite-jdbc | **9 pass** | schema DDL, cascade, unique(folder,uid), partial-index recount, thread window-fn, unified inbox, scoped search |
 | `auth/core` | JUnit | **9 pass** | PKCE vs RFC 7636, exact scopes, auth-URL, refresh skew, state, token parse |
-| `sync/engine` | GreenMail + SQLite | **11 pass** | initial/incremental sync, window, threading, flag reconcile, expunge, idempotency |
+| `sync/engine` | GreenMail + SQLite | **14 pass** | initial/incremental sync, window, threading, flag reconcile, expunge, idempotency; + write-path: \Seen/\Flagged, delete (expunge), move (copy+expunge) |
 | `ui/presentation` | JUnit | **9 pass** | optimistic update + rollback, reply-all dedup, References chain, formatting, search |
 | `background/policy` | JUnit | **8 pass** | IDLE/poll resolution, FGS decision, 15-min clamp, anchored poll, backoff, notification |
 | `ai` | JUnit (+gated live) | **9 pass, 1 skip** | request shape, structured-output parse, refusal handling, incremental sweep (0-token) |
 | `smtp:send` | GreenMail SMTP | **5 pass** | delivery, RFC 5322 threading + mailer headers, multipart/alternative, to/cc/bcc fan-out, raw-bytes return |
 
-**68 passing JVM tests**, plus 2 gated (real-Gmail / real-Anthropic) handoffs.
+**71 passing JVM tests**, plus 2 gated (real-Gmail / real-Anthropic) handoffs.
 
 ## Build the app (dev machine)
 
@@ -90,9 +90,14 @@ device/app context, each flagged in code:
   OAuth (Gmail/O365) accounts. Still open: appending the sent message to the
   server Sent folder (`SmtpSender.send` already returns the raw bytes for it),
   and manual (IMAP/POP3) SMTP — blocked on Android manual-credential storage.
-- **Server-side mutation propagation** — mark `\Seen`/`\Flagged`, MOVE, DELETE on
-  the server (desktop `imap-sync` ops) belong on `:sync:engine`, wired through
-  `RoomMailUiRepository`; local writes are already optimistic.
+- **Server-side mutation propagation** — ✅ `:sync:engine` `ImapMutations`
+  (`setSeen`/`setFlagged`/`delete`/`move`, GreenMail-verified) is wired through
+  `RoomMailUiRepository` via a `ServerMutations` port that `AppGraph` implements
+  (resolve message→uid + folder→IMAP path + account→`SyncAccount`, run on
+  `Dispatchers.IO`). Each optimistic local write mirrors to IMAP best-effort;
+  failures self-heal on the next sync (flag reconcile / re-import). Flag *colour*
+  stays local-only (IMAP has just the boolean `\Flagged`, owned by the star), as
+  on desktop. OAuth accounts only (manual creds not yet stored).
 - **Refresh wiring** — ✅ `AppGraph.mailUiRepository.refresh` now builds a
   `SyncAccount` per stored account (provider IMAP endpoint + `Auth.XOAuth2(
   freshAccessToken(id))`) and runs `syncEngine.syncAccount` on `Dispatchers.IO`

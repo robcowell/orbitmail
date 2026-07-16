@@ -114,6 +114,31 @@ class ImapConnection(private val store: com.sun.mail.imap.IMAPStore) : Closeable
             folder.setFlags(arrayOf(msg), Flags(flag), value)
         }
 
+        /**
+         * Permanently remove one message from this folder — mark it \Deleted and
+         * expunge. Mirrors the desktop `deleteMessageOnServer` (ImapFlow
+         * `messageDelete`). The folder is opened per-op and only this message was
+         * just flagged \Deleted, so the plain expunge removes exactly it.
+         */
+        fun deleteByUid(uid: Long) {
+            val msg = folder.getMessageByUID(uid) ?: return
+            folder.setFlags(arrayOf(msg), Flags(Flags.Flag.DELETED), true)
+            folder.expunge()
+        }
+
+        /**
+         * Move one message to [targetPath]. Jakarta Mail has no UID MOVE, so this
+         * copies to the target then \Deleted-expunges the source — the same net
+         * effect as the desktop `moveMessageOnServer` (ImapFlow `messageMove`).
+         */
+        fun moveByUid(uid: Long, targetPath: String) {
+            val msg = folder.getMessageByUID(uid) ?: return
+            val target = folder.store.getFolder(targetPath)
+            folder.copyMessages(arrayOf(msg), target)
+            folder.setFlags(arrayOf(msg), Flags(Flags.Flag.DELETED), true)
+            folder.expunge()
+        }
+
         private fun prefetch(msgs: Array<Message>, envelope: Boolean) {
             val fp = FetchProfile().apply {
                 add(UIDFolder.FetchProfileItem.UID)

@@ -19,15 +19,30 @@ import orbit.ui.SearchField as UiSearchField
 private const val PAGE = 500
 
 /**
+ * Propagates a local mutation to the server (audit §4 write-path). Implemented in
+ * the app (AppGraph) over `:sync:engine` ImapMutations. Best-effort: a failure
+ * leaves the optimistic local state to self-heal on the next sync (flag reconcile
+ * pulls the true server flags; a failed delete/move re-imports on re-sync).
+ */
+interface ServerMutations {
+    suspend fun setSeen(accountId: String, folderId: String, uid: Long, isRead: Boolean)
+    suspend fun setFlagged(accountId: String, folderId: String, uid: Long, isFlagged: Boolean)
+    suspend fun delete(accountId: String, folderId: String, uid: Long)
+    suspend fun move(accountId: String, folderId: String, uid: Long, targetFolderId: String)
+}
+
+/**
  * Implements the Step 5 UI port [MailUiRepository] over the Step 2 Room DAOs
  * (reactive Flow reads + mutations), plus injected hooks for the pieces that
  * live in other layers: [refresh] runs the Step 4 sync engine, [sendMail] does
- * SMTP. Maps the DAO projections to the UI models.
+ * SMTP, [server] propagates read/flag/move/delete to IMAP. Maps the DAO
+ * projections to the UI models.
  */
 class RoomMailUiRepository(
     private val messageDao: MessageDao,
     private val refresh: suspend (accountId: String?) -> Unit,
     private val sendMail: suspend (draft: ComposeDraft, accountId: String) -> Unit,
+    private val server: ServerMutations,
 ) : MailUiRepository {
 
     override fun observeThreadRows(folderId: String, unreadOnly: Boolean): Flow<List<ThreadRow>> {
@@ -47,28 +62,39 @@ class RoomMailUiRepository(
 
     override suspend fun getMessage(id: String): MessageContent? = messageDao.getById(id)?.toContent()
 
-    // Local write is immediate (drives the Room Flow → UI). Server propagation
-    // (mark \Seen/\Flagged, MOVE, DELETE via ImapConnection) is a follow-on:
-    // the desktop's markMessageReadOnServer/moveMessageOnServer belong on the
-    // Step 4 engine, wired through here.
+    // Local write is immediate (drives the Room Flow → UI); [server] then mirrors
+    // it to IMAP. For delete/move the local row is removed, so the message's
+    // (accountId, folderId, uid) is captured first. server ops are best-effort
+    // (AppGraph swallows + logs) so a transient IMAP failure never breaks the UI.
     override suspend fun setRead(id: String, isRead: Boolean) {
-        messageDao.setRead(id, isRead) /* TODO: propagate \Seen to server */
+        val m = messageDao.getById(id) ?: return
+        messageDao.setRead(id, isRead)
+        server.setSeen(m.accountId, m.folderId, m.uid, isRead)
     }
 
     override suspend fun setStarred(id: String, isStarred: Boolean) {
-        messageDao.setStarred(id, isStarred) /* TODO: propagate \Flagged to server */
+        val m = messageDao.getById(id) ?: return
+        messageDao.setStarred(id, isStarred)
+        server.setFlagged(m.accountId, m.folderId, m.uid, isStarred)
     }
 
     override suspend fun setFlag(id: String, flag: UiFlagColor?) {
-        messageDao.setFlag(id, flag?.let { DataFlagColor.valueOf(it.name) }) /* TODO: server \Flagged */
+        // Flag colour is local-only (IMAP has no colour, only a boolean \Flagged
+        // owned by the star). Mirrors the desktop, which never sends colour.
+        messageDao.setFlag(id, flag?.let { DataFlagColor.valueOf(it.name) })
     }
 
     override suspend fun delete(id: String) {
-        messageDao.deleteById(id) /* TODO: server DELETE/MOVE-to-trash */
+        val m = messageDao.getById(id) ?: return
+        messageDao.deleteById(id)
+        server.delete(m.accountId, m.folderId, m.uid)
     }
 
     override suspend fun move(id: String, targetFolderId: String) {
-        messageDao.deleteById(id) /* TODO: server MOVE, then let sync re-import into target */
+        val m = messageDao.getById(id) ?: return
+        messageDao.deleteById(id)
+        // Server MOVE; the message re-imports into the target on the next sync.
+        server.move(m.accountId, m.folderId, m.uid, targetFolderId)
     }
 
     override suspend fun send(draft: ComposeDraft, accountId: String) = sendMail(draft, accountId)

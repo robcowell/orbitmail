@@ -21,9 +21,9 @@ android {
 }
 
 dependencies {
-    // implementation(project(":background:policy")) // verified decision logic
-    // implementation(project(":sync:engine"))        // Step 4: SyncEngine + ImapConnectionFactory
-    // implementation(project(":auth:appauth"))       // Step 3: freshAccessToken
+    implementation(project(":background:policy")) // verified decision logic
+    implementation(project(":sync:engine"))        // Step 4: SyncEngine + ImapConnectionFactory
+    implementation(project(":auth:appauth"))       // Step 3: freshAccessToken
     implementation("androidx.work:work-runtime-ktx:2.10.0")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.sun.mail:android-mail:1.6.7") // blocking IDLE (spike Finding 2)

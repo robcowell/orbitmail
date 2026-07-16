@@ -34,5 +34,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
 
     // The verified pure-Kotlin OAuth core (config, token model, refresh logic).
-    // In the app build this is a project dependency: implementation(project(":auth:core"))
+    implementation(project(":auth:core"))
 }

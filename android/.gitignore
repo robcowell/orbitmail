@@ -1,0 +1,7 @@
+# Machine-local — never commit
+local.properties
+.gradle/
+build/
+**/build/
+captures/
+.cxx/

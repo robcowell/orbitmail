@@ -6,8 +6,12 @@ repositories { mavenCentral() }
 
 dependencies {
     // Same Jakarta Mail line proven Android-compatible by the IMAP spike. On
-    // Android, swap to com.sun.mail:android-mail:1.6.7 — identical javax.mail API.
-    implementation("com.sun.mail:jakarta.mail:1.6.7")
+    // Android, the app provides com.sun.mail:android-mail:1.6.7 (identical
+    // javax.mail API). Compile against the API but DON'T export it — exporting
+    // jakarta.mail to the app would collide with android-mail (duplicate classes).
+    // The engine's own JVM tests still run against jakarta.mail below.
+    compileOnly("com.sun.mail:jakarta.mail:1.6.7")
+    testImplementation("com.sun.mail:jakarta.mail:1.6.7")
 
     // End-to-end tests: real in-process IMAP/SMTP server + a SQLite-backed
     // MailRepository so the engine's algorithms run against real infrastructure.

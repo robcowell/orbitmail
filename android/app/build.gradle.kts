@@ -33,6 +33,22 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions { jvmTarget = "17" }
+
+    packaging {
+        resources {
+            // Multiple jars (Jakarta Mail, okhttp, etc.) ship informational
+            // license/notice files at the same paths — drop the duplicates.
+            excludes += setOf(
+                "META-INF/NOTICE.md",
+                "META-INF/NOTICE.txt",
+                "META-INF/NOTICE",
+                "META-INF/LICENSE.md",
+                "META-INF/LICENSE.txt",
+                "META-INF/LICENSE",
+                "META-INF/DEPENDENCIES",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -54,9 +70,12 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.android.mail)                 // Step 1/4 IMAP/SMTP
     implementation(libs.android.activation)
+    implementation(libs.room.runtime)                 // AppGraph builds OrbitDatabase (RoomDatabase API)
+    implementation(libs.okhttp)                        // AppGraph constructs AnthropicClient(OkHttpClient)
 
     // Compose
     implementation(platform(libs.compose.bom))
+    implementation(libs.material)                     // XML app theme (Theme.Material3.*)
     implementation(libs.compose.material3)
     implementation(libs.compose.ui)
     implementation(libs.androidx.activity.compose)

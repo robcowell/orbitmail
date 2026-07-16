@@ -28,14 +28,15 @@ android {
 }
 
 dependencies {
-    // implementation(project(":ui:presentation")) // the verified UI logic
-    // implementation(project(":data:room"))       // Step 2
-    // implementation(project(":sync:engine"))      // Step 4
-    // implementation(project(":auth:appauth"))     // Step 3
+    implementation(project(":ui:presentation")) // the verified UI logic
+    implementation(project(":data:room"))       // Step 2
+    implementation(project(":sync:engine"))      // Step 4
+    implementation(project(":auth:appauth"))     // Step 3
 
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended") // StarBorder etc. (R8 strips unused)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.activity:activity-compose:1.9.3")

@@ -61,6 +61,7 @@ dependencies {
     implementation(project(":ui:compose"))       // Step 5 (screens)
     implementation(project(":background:policy")) // Step 6
     implementation(project(":background:service")) // Step 6
+    implementation(project(":smtp:send"))        // SMTP send
     implementation(project(":ai"))               // Step 7
 
     // ── Android platform ─────────────────────────────────────────────────────

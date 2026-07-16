@@ -34,6 +34,7 @@ include(
     ":ui:compose",
     ":background:policy",
     ":background:service",
+    ":smtp:send",
     ":ai",
 )
 
@@ -46,4 +47,5 @@ project(":ui:presentation").projectDir = file("ui/presentation")
 project(":ui:compose").projectDir = file("ui/compose")
 project(":background:policy").projectDir = file("background/policy")
 project(":background:service").projectDir = file("background/service")
+project(":smtp:send").projectDir = file("smtp/send")
 project(":ai").projectDir = file("ai")

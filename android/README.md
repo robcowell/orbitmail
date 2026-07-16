@@ -20,6 +20,7 @@ machine with the Android SDK + Google Maven.
  ├── :ui:compose         Compose screens + ViewModels         (Step 5)  ── uses :ui:presentation
  ├── :background:policy  sync-schedule + notification policy  (Step 6)
  ├── :background:service FGS IDLE + WorkManager               (Step 6)  ── uses :background:policy, :sync:engine
+ ├── :smtp:send          SMTP submission (XOAUTH2/password)   (SMTP)    ── uses Jakarta Mail
  └── :ai                 Anthropic client + features          (Step 7)
 ```
 
@@ -34,7 +35,7 @@ adapter. Writing these proved the module interfaces line up.
 | Port (defined in) | Adapter (`:app`) | Backed by |
 |---|---|---|
 | `MailRepository` (`:sync:engine`) | `RoomMailRepository` | `:data:room` FolderDao/MessageDao |
-| `MailUiRepository` (`:ui:compose`) | `RoomMailUiRepository` | `:data:room` (Flow reads) + `:sync:engine` (refresh) + SMTP |
+| `MailUiRepository` (`:ui:compose`) | `RoomMailUiRepository` | `:data:room` (Flow reads) + `:sync:engine` (refresh) + `:smtp:send` (send) |
 | `SecureCredentialStore` (`:auth:appauth`) | `KeystoreCredentialStore` | Android Keystore + EncryptedSharedPreferences |
 | `ApiKeyStore` (`:ai`) | `KeystoreApiKeyStore` | same secure prefs |
 | model-call lambda (`:ai` `AiService`) | `AppGraph.aiService` | `:ai` `AnthropicClient` + the API key |
@@ -57,8 +58,9 @@ Anthropic API shape, RFC test vectors).
 | `ui/presentation` | JUnit | **9 pass** | optimistic update + rollback, reply-all dedup, References chain, formatting, search |
 | `background/policy` | JUnit | **8 pass** | IDLE/poll resolution, FGS decision, 15-min clamp, anchored poll, backoff, notification |
 | `ai` | JUnit (+gated live) | **9 pass, 1 skip** | request shape, structured-output parse, refusal handling, incremental sweep (0-token) |
+| `smtp:send` | GreenMail SMTP | **5 pass** | delivery, RFC 5322 threading + mailer headers, multipart/alternative, to/cc/bcc fan-out, raw-bytes return |
 
-**63 passing JVM tests**, plus 2 gated (real-Gmail / real-Anthropic) handoffs.
+**68 passing JVM tests**, plus 2 gated (real-Gmail / real-Anthropic) handoffs.
 
 ## Build the app (dev machine)
 
@@ -83,8 +85,11 @@ are for standalone `gradle test` and are ignored by the root build.
 The port is feature-complete in logic; these are the wiring tasks that need the
 device/app context, each flagged in code:
 
-- **SMTP send module** — the one desktop service (`smtp-send.ts`) not yet ported
-  to its own module; `RoomMailUiRepository.send` / `AppGraph.sendMail` await it.
+- **SMTP send** — ✅ ported to `:smtp:send` (Jakarta Mail Transport, XOAUTH2 +
+  password, MIME + RFC 5322 threading), wired through `AppGraph.sendMail` for
+  OAuth (Gmail/O365) accounts. Still open: appending the sent message to the
+  server Sent folder (`SmtpSender.send` already returns the raw bytes for it),
+  and manual (IMAP/POP3) SMTP — blocked on Android manual-credential storage.
 - **Server-side mutation propagation** — mark `\Seen`/`\Flagged`, MOVE, DELETE on
   the server (desktop `imap-sync` ops) belong on `:sync:engine`, wired through
   `RoomMailUiRepository`; local writes are already optimistic.
@@ -101,4 +106,4 @@ device/app context, each flagged in code:
 
 Per-step design + verified/deferred notes: `data-layer/STEP2.md`,
 `auth/STEP3.md`, `sync/engine/STEP4.md`, `ui/STEP5.md`, `background/STEP6.md`,
-`ai/STEP7.md`, and the spike report `imap-spike/SPIKE.md`.
+`ai/STEP7.md`, `smtp/send/SMTP.md`, and the spike report `imap-spike/SPIKE.md`.

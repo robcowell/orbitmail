@@ -12,6 +12,7 @@ import net.openid.appauth.AuthorizationResponse
 import net.openid.appauth.AuthorizationService
 import net.openid.appauth.AuthorizationServiceConfiguration
 import net.openid.appauth.ResponseTypeValues
+import orbit.auth.IdToken
 import orbit.auth.OAuthProviderConfig
 import orbit.auth.TokenData
 import kotlin.coroutines.resume
@@ -75,12 +76,15 @@ class AppAuthAuthenticator(
         authState.update(tokenResponse, null)
         store.saveAuthState(accountId, authState.jsonSerializeString())
 
+        // Display identity from the OIDC id_token (unverified — trusted for
+        // labelling only, since it arrived over TLS from the token endpoint).
+        val claims = IdToken.claims(tokenResponse.idToken)
         val tokens = TokenData(
             accessToken = tokenResponse.accessToken ?: error("No access token"),
             refreshToken = tokenResponse.refreshToken,
             expiryDate = tokenResponse.accessTokenExpirationTime,
-            email = null,       // resolve via userinfo/id_token if a display email is needed
-            displayName = null
+            email = claims.email,
+            displayName = claims.name
         )
         store.saveTokens(accountId, tokens)
         return tokens

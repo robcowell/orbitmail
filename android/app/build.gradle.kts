@@ -20,6 +20,9 @@ android {
         buildConfigField("String", "GOOGLE_CLIENT_ID", "\"${providers.gradleProperty("GOOGLE_CLIENT_ID").getOrElse("")}\"")
         buildConfigField("String", "MICROSOFT_CLIENT_ID", "\"${providers.gradleProperty("MICROSOFT_CLIENT_ID").getOrElse("")}\"")
         buildConfigField("String", "MICROSOFT_TENANT_ID", "\"${providers.gradleProperty("MICROSOFT_TENANT_ID").getOrElse("common")}\"")
+        // Also exposed to code (not just the manifest placeholder) so the sign-in
+        // flow can build each provider's redirectUri.
+        buildConfigField("String", "APPAUTH_REDIRECT_SCHEME", "\"${providers.gradleProperty("APPAUTH_REDIRECT_SCHEME").getOrElse("com.orbitmail.app")}\"")
         manifestPlaceholders["appAuthRedirectScheme"] = providers.gradleProperty("APPAUTH_REDIRECT_SCHEME").getOrElse("com.orbitmail.app")
     }
 

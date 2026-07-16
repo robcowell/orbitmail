@@ -53,14 +53,14 @@ Anthropic API shape, RFC test vectors).
 |---|---|---|---|
 | `imap-spike` | GreenMail + compile | **8 pass, 1 skip** | Jakarta Mail: IDLE push, partial BODY.PEEK fetch, SORT, XOAUTH2 format, CONDSTORE API |
 | `data-layer/schema-verify` | sqlite-jdbc | **9 pass** | schema DDL, cascade, unique(folder,uid), partial-index recount, thread window-fn, unified inbox, scoped search |
-| `auth/core` | JUnit | **9 pass** | PKCE vs RFC 7636, exact scopes, auth-URL, refresh skew, state, token parse |
+| `auth/core` | JUnit | **12 pass** | PKCE vs RFC 7636, exact scopes, auth-URL, refresh skew, state, token parse, id_token email/name claims |
 | `sync/engine` | GreenMail + SQLite | **14 pass** | initial/incremental sync, window, threading, flag reconcile, expunge, idempotency; + write-path: \Seen/\Flagged, delete (expunge), move (copy+expunge) |
 | `ui/presentation` | JUnit | **9 pass** | optimistic update + rollback, reply-all dedup, References chain, formatting, search |
 | `background/policy` | JUnit | **8 pass** | IDLE/poll resolution, FGS decision, 15-min clamp, anchored poll, backoff, notification |
 | `ai` | JUnit (+gated live) | **9 pass, 1 skip** | request shape, structured-output parse, refusal handling, incremental sweep (0-token) |
 | `smtp:send` | GreenMail SMTP | **5 pass** | delivery, RFC 5322 threading + mailer headers, multipart/alternative, to/cc/bcc fan-out, raw-bytes return |
 
-**71 passing JVM tests**, plus 2 gated (real-Gmail / real-Anthropic) handoffs.
+**74 passing JVM tests**, plus 2 gated (real-Gmail / real-Anthropic) handoffs.
 
 ## Build the app (dev machine)
 
@@ -115,8 +115,17 @@ device/app context, each flagged in code:
   UI to opt accounts into IDLE, a dedicated notification icon, and the
   `POST_NOTIFICATIONS` runtime request.
 - **Thread participants** aggregation (`:data:room` deferred it).
-- **OAuth client registration** (manual console task — `auth/OAUTH_SETUP.md`) and
-  the live real-account runs (`imap-spike` Layer 3, `ai` LiveSmokeTest).
+- **Account sign-in / onboarding** — ✅ `AddAccountScreen` (shown until an account
+  exists) launches AppAuth's consent via an ActivityResult contract; on return
+  `AppGraph.completeSignIn` exchanges the code, reads the account's email/name from
+  the id_token (`:auth:core` `IdToken`), creates the account row, and runs the
+  first sync. Providers appear only when their client id is configured at build
+  time. Still needs: **OAuth client registration** (manual console task —
+  `auth/OAUTH_SETUP.md`) to supply real `GOOGLE_CLIENT_ID` / `MICROSOFT_CLIENT_ID`
+  + redirect scheme; a single redirect scheme is wired per build (multi-provider
+  needs a per-scheme `activity-alias`), and an in-app "add another account" entry
+  (onboarding currently triggers only when zero accounts exist). Then the live
+  real-account runs (`imap-spike` Layer 3, `ai` LiveSmokeTest).
 
 ## Step docs
 

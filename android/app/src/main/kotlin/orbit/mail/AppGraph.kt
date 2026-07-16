@@ -1,6 +1,7 @@
 package orbit.mail
 
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
@@ -15,6 +16,8 @@ import kotlinx.coroutines.withContext
 import orbit.ai.AiResult
 import orbit.ai.AiService
 import orbit.ai.AnthropicClient
+import orbit.auth.OAuthConfigs
+import orbit.auth.OAuthProviderConfig
 import orbit.auth.appauth.AppAuthAuthenticator
 import orbit.bg.AccountSyncPref
 import orbit.bg.SyncMode
@@ -80,6 +83,42 @@ class AppGraph(context: Context) {
             primaryAccountId = list.firstOrNull()?.id ?: "",
             selfAddresses = list.mapNotNull { it.email.lowercase().ifBlank { null } }.toSet()
         )
+    }
+
+    // ── Account sign-in (OAuth onboarding) ───────────────────────────────────
+    // A provider config exists only when its client id was configured at build
+    // time (see auth/OAUTH_SETUP.md); null hides that provider in the UI.
+    fun googleConfig(): OAuthProviderConfig? =
+        BuildConfig.GOOGLE_CLIENT_ID.ifBlank { null }?.let {
+            OAuthConfigs.google(it, BuildConfig.APPAUTH_REDIRECT_SCHEME)
+        }
+
+    fun microsoftConfig(): OAuthProviderConfig? =
+        BuildConfig.MICROSOFT_CLIENT_ID.ifBlank { null }?.let {
+            OAuthConfigs.microsoft(it, BuildConfig.APPAUTH_REDIRECT_SCHEME, BuildConfig.MICROSOFT_TENANT_ID)
+        }
+
+    /** The Custom-Tab consent intent to launch via an ActivityResult contract. */
+    fun authorizationIntent(config: OAuthProviderConfig): Intent = authenticator.authorizationIntent(config)
+
+    /**
+     * Finish sign-in: exchange the code for tokens (persisting the AuthState),
+     * create the account row, and run the first sync so its mail appears.
+     * [accountId] must be the id generated when the flow was started.
+     */
+    suspend fun completeSignIn(config: OAuthProviderConfig, accountId: String, provider: Provider, data: Intent) {
+        val tokens = authenticator.onAuthorizationResult(config, accountId, data)
+        val email = tokens.email.orEmpty()
+        database.accountDao().upsert(
+            AccountEntity(
+                id = accountId,
+                provider = provider,
+                email = email,
+                displayName = tokens.displayName ?: email,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        mailUiRepository.refresh(accountId)
     }
 
     // Step 4 — sync engine over the Room-backed MailRepository adapter.

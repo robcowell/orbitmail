@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type {
   AutodetectResult,
   ConnectionSecurity,
@@ -253,16 +253,37 @@ export function AddAccountWizard() {
   const accounts = useMailStore((s) => s.accounts)
   const [view, setView] = useState<WizardView>('choose')
 
-  if (!show) return null
+  // With no accounts there is nothing to go back to, which is why the Cancel
+  // button is hidden in that case — so Escape must not dismiss it either.
+  const cancellable = accounts.length > 0
 
-  const close = () => {
+  const close = useCallback(() => {
     setView('choose')
     setShowAddAccount(false)
-  }
+  }, [setShowAddAccount])
+
+  // Escape does what Cancel does. Declared before the early return below so the
+  // hook order stays stable.
+  useEffect(() => {
+    if (!show || !cancellable) return
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      close()
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [show, cancellable, close])
+
+  if (!show) return null
 
   return (
-    <div className="modal-overlay" onClick={close}>
-      <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+    // Deliberately modal: no overlay click handler, so clicking the app behind
+    // the dialog leaves it in place. Adding an account is a multi-step flow that
+    // opens a browser for OAuth, and dismissing it with a stray click — losing
+    // half-typed IMAP settings — was too easy.
+    <div className="modal-overlay">
+      <div className="modal modal-wide">
         <AppBrand />
         <h2 style={{ marginTop: 16 }}>Add Email Account</h2>
 

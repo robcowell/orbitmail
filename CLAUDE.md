@@ -73,6 +73,11 @@ Specific triggers — if the change does any of these, the docs move too:
   describing a thing that no longer exists (see: the FTS index, documented in
   four places for hours after it was deleted).
 
+`npm run test:imap` enforces the mechanically checkable part: every `npm run`
+script and every file path the docs cite must exist, the Electron version they
+claim must match `package.json`, and no document may describe credentials as
+built into a package. It cannot check prose — that part is on you.
+
 Two habits that prevent the worst of it:
 
 - **Grep before claiming.** Before writing "X works like Y", grep the docs for

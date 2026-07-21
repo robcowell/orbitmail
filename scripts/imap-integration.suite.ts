@@ -131,6 +131,70 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('Docs: claims must match the code (CLAUDE.md rule 6)')
+  // -------------------------------------------------------------------------
+  {
+    // Rule 6 says docs ship with the change. It was written because they did
+    // not: README and DEVELOPERS.md both described credentials as "baked in at
+    // build time" after that became prohibited, and the FTS index stayed
+    // documented in four places for hours after being deleted.
+    //
+    // This cannot check prose. It checks the claims that are mechanically
+    // verifiable — the ones that go stale silently.
+    const { existsSync, readFileSync } = await import('fs')
+    const docs = ['README.md', 'DEVELOPERS.md', 'CLAUDE.md'].filter((f) =>
+      existsSync(join(process.cwd(), f))
+    )
+    const text = docs.map((f) => readFileSync(join(process.cwd(), f), 'utf8')).join('\n')
+    const inlineCode = [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1].trim())
+
+    // 1. Every `npm run x` the docs mention actually exists.
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+    const cited = [...new Set(
+      inlineCode.filter((v) => /^npm run [a-z][\w:-]*$/.test(v)).map((v) => v.replace('npm run ', ''))
+    )]
+    const missingScripts = cited.filter((name) => !pkg.scripts?.[name])
+    ok('every documented npm script exists', missingScripts.length === 0,
+      missingScripts.length ? `missing: ${missingScripts.join(', ')}` : `${cited.length} scripts`)
+
+    // 2. Every source path the docs point at still exists. Build output is
+    //    skipped: it is absent until `npm run build`, which is not this suite's
+    //    job to require.
+    const citedPaths = [...new Set(
+      inlineCode.filter(
+        (v) =>
+          /^[\w.@/-]+\.(ts|tsx|js|mjs|cjs|json|yml|md|css|html)$/.test(v) &&
+          v.includes('/') &&
+          !v.startsWith('out/') &&
+          !v.startsWith('release/')
+      )
+    )]
+    const missingPaths = citedPaths.filter((rel) => !existsSync(join(process.cwd(), rel)))
+    ok('every documented file path exists', missingPaths.length === 0,
+      missingPaths.length ? `missing: ${missingPaths.join(', ')}` : `${citedPaths.length} paths`)
+
+    // 3. The Electron major version the docs claim matches package.json.
+    const claimed = /Electron (\d+)/.exec(text)?.[1]
+    const actual = /(\d+)/.exec(pkg.devDependencies?.electron ?? '')?.[1]
+    ok('the documented Electron version matches package.json',
+      !claimed || !actual || claimed === actual, `docs=${claimed} package.json=${actual}`)
+
+    // 4. Rule 5's counterpart in prose: no document may describe credentials as
+    //    compiled into a build, because that is the behaviour rule 5 forbids.
+    const forbidden = [
+      /credentials[^.\n]{0,40}(baked|embedded|inlined)[^.\n]{0,30}build/i,
+      /(baked|embedded)[^.\n]{0,20}in at build time/i,
+      /OAuth[^.\n]{0,30}embedded at build time/i
+    ]
+    const offenders = docs.filter((f) => {
+      const body = readFileSync(join(process.cwd(), f), 'utf8')
+      return forbidden.some((re) => re.test(body))
+    })
+    ok('no document claims credentials are built into a package',
+      offenders.length === 0, offenders.join(', ') || `${docs.length} docs checked`)
+  }
+
+  // -------------------------------------------------------------------------
   section('IPC contract: every channel the renderer invokes has a handler')
   // -------------------------------------------------------------------------
   {

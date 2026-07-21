@@ -1183,18 +1183,23 @@ export async function reconcileAccountFlags(
 ): Promise<void> {
   if (provider === 'pop3') return // POP3 has no server-side flags / CONDSTORE
 
-  const changed = await withImapClient(accountId, provider, async (client) => {
-    const condstore = client.capabilities.has('CONDSTORE')
-    let total = 0
-    for (const folder of listFolders(accountId)) {
-      try {
-        total += await reconcileFolderFlags(client, folder, condstore)
-      } catch {
-        // One folder failing shouldn't abort the rest.
-      }
+  // Borrow the pooled client once per folder rather than once for the whole
+  // pass. imap-pool serializes every operation for an account, so holding it
+  // across the loop put user actions — mark read, star, move, delete — behind a
+  // reconcile of every folder in the account. On a Gmail account with 20+
+  // labels that is seconds of dead time on a click. Re-borrowing hands the lane
+  // back between folders, so an interactive op waits for at most one folder.
+  // The client itself is pooled, so this costs no extra connections.
+  let changed = 0
+  for (const folder of listFolders(accountId)) {
+    try {
+      changed += await withImapClient(accountId, provider, (client) =>
+        reconcileFolderFlags(client, folder, client.capabilities.has('CONDSTORE'))
+      )
+    } catch {
+      // One folder failing shouldn't abort the rest.
     }
-    return total
-  })
+  }
 
   if (changed > 0) {
     console.log(`[orbit-mail] flag reconcile: ${changed} message(s) updated for ${accountId}`)

@@ -40,7 +40,7 @@ If the launcher icon is missing, run `npm run icons` before `npm run install:des
 
 ## OAuth setup
 
-OAuth client IDs are loaded from a `.env` file at dev/build time. End users of packaged builds need registered app credentials until in-app OAuth configuration is added (see [Known limitations](#known-limitations)).
+Everyone running Orbit Mail supplies their own OAuth app credentials — this is the design, not a gap (see [Known limitations](#known-limitations)). They can be entered in the Add Account dialog, placed in `~/.config/orbit-mail/.env`, or exported in the environment.
 
 **Credentials are never built into a package.** This is a hard rule (CLAUDE.md, rule 5). A build must be safe to hand to someone else, and anything compiled into the bundle ships with it — the builder would be distributing their own Google client secret and Microsoft app identity, with abuse landing on their Cloud project, and a package cannot be recalled. Inlining `.env` at build time via a Vite `define` is the obvious way to make packaged sign-in "just work"; it is prohibited here. `npm run test:imap` fails if any credential value appears in `out/main/index.js`, or if the build config gains OAuth constants.
 
@@ -376,9 +376,9 @@ Folder unread counts are updated after messages are persisted during sync. If yo
 
 ## Known limitations
 
-See [`TODO.md`](TODO.md) for the full backlog. Critical item for distribution:
+See [`TODO.md`](TODO.md) for the full backlog.
 
-- **End-user OAuth** — packaged users cannot sign in without developer-supplied client IDs in `.env` at build time; no in-app OAuth settings yet
+- **Bring-your-own OAuth credentials** — Orbit Mail ships none, and will not: that would mean either embedding the builder's own client secret in every package (prohibited — CLAUDE.md rule 5) or funding Google verification and a CASA assessment for the restricted Gmail scope, which has been declined. Each user registers an OAuth app once and enters the credentials in the app, and clicks through Google's "unverified app" warning per account. Nothing about a packaged build requires editing a file.
 
 ## License
 

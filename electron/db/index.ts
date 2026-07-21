@@ -4,7 +4,6 @@ import { existsSync, mkdirSync } from 'fs'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
-import { indexMessageInFts, migrateFtsIndex } from '../services/search-index'
 import { normalizeSubject } from '../services/thread-util'
 
 let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null
@@ -20,19 +19,6 @@ export function getAttachmentsDir(): string {
   const dir = join(getDataDir(), 'attachments')
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
-}
-
-function initFts(db: Database.Database): void {
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-      message_id UNINDEXED,
-      subject,
-      snippet,
-      body_text,
-      content='',
-      contentless_delete=1
-    );
-  `)
 }
 
 function initTables(db: Database.Database): void {
@@ -256,6 +242,16 @@ function migrateSchema(db: Database.Database): void {
   db.exec(
     'CREATE INDEX IF NOT EXISTS messages_folder_thread_key_idx ON messages(folder_id, account_id, COALESCE(thread_id, id), is_read)'
   )
+
+  // Drop the old full-text index. It was written on every synced message and
+  // never read — the search path has always used LIKE — and its deletes could
+  // not work, because a contentless FTS5 table reads every column back as NULL
+  // and so can never match `WHERE message_id = ?`. It therefore accumulated a
+  // duplicate row per re-index, forever. Dropping it removes ~0.5ms per message
+  // from sync and frees its pages (7.7MB on a 3.3k-message profile); the file
+  // itself only shrinks on a VACUUM, which this app does not run.
+  db.exec('DROP TABLE IF EXISTS messages_fts')
+  db.prepare("DELETE FROM app_preferences WHERE key = 'fts_index_v2'").run()
 }
 
 // One-time: give already-synced messages a thread_id. They predate the stored
@@ -302,8 +298,6 @@ export function getDb() {
     sqliteInstance.pragma('mmap_size = 268435456') // 256 MB
     sqliteInstance.pragma('busy_timeout = 5000')
     initTables(sqliteInstance)
-    initFts(sqliteInstance)
-    migrateFtsIndex(sqliteInstance)
     dbInstance = drizzle(sqliteInstance, { schema })
   }
   return dbInstance
@@ -314,16 +308,3 @@ export function getRawSqlite(): Database.Database {
   return sqliteInstance!
 }
 
-export function upsertFts(
-  messageId: string,
-  subject: string,
-  snippet: string,
-  bodyText?: string | null,
-  bodyHtml?: string | null
-): void {
-  indexMessageInFts(getRawSqlite(), messageId, subject, snippet, bodyText, bodyHtml)
-}
-
-export function deleteFts(messageId: string): void {
-  getRawSqlite().prepare('DELETE FROM messages_fts WHERE message_id = ?').run(messageId)
-}

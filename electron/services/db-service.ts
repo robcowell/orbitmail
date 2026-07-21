@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { existsSync, statSync, unlinkSync } from 'fs'
 import { eq, desc, and, inArray, max, count, lt, sql } from 'drizzle-orm'
-import { getDb, getRawSqlite, upsertFts, deleteFts } from '../db'
+import { getDb, getRawSqlite } from '../db'
 import { accounts, folders, messages, attachments, sweepTasks } from '../db/schema'
 import type {
   Account,
@@ -1322,7 +1322,6 @@ export function clearFolderMessages(folderId: string): void {
 
   for (const row of messageRows) {
     deleteAttachmentFilesForMessage(row.id)
-    deleteFts(row.id)
   }
 
   db.delete(messages).where(eq(messages.folderId, folderId)).run()
@@ -1431,7 +1430,6 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
     }).run()
   }
 
-  upsertFts(id, data.subject, data.snippet, data.bodyText, data.bodyHtml)
   return { id, isNew }
 }
 
@@ -1552,7 +1550,6 @@ export function deleteMessage(messageId: string): void {
     .where(eq(messages.id, messageId))
     .get()
   deleteAttachmentFilesForMessage(messageId)
-  deleteFts(messageId)
   db.delete(messages).where(eq(messages.id, messageId)).run()
   if (existing) {
     recalculateFolderUnread(existing.folderId)
@@ -1722,9 +1719,9 @@ const SEARCH_SELECT = `SELECT m.id, m.folder_id, m.account_id, m.uid, m.message_
               m.is_read, m.is_starred, m.flag_color, m.has_attachments, m.thread_id`
 
 // Columns each search scope matches against. 'all' spans sender, recipient,
-// subject and body. Note: the messages_fts index only covers subject/snippet/
-// body_text (not From/To), so scoped search uses substring LIKE over the
-// messages table directly — correct for every scope and fast at cache sizes.
+// subject and body. Search is a substring LIKE over the messages table — no
+// full-text index is involved (see search-index.ts) — which is correct for
+// every scope, matches mid-word, and is fast at cache sizes.
 const SEARCH_FIELD_COLUMNS: Record<SearchField, string[]> = {
   all: ['m.from_addr', 'm.to_addr', 'm.subject', 'm.snippet', 'm.body_text', 'm.body_html'],
   from: ['m.from_addr'],

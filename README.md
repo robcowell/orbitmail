@@ -76,7 +76,7 @@ chmod +x Orbit\ Mail-*.AppImage
 
 Packaged builds install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops. They can handle `mailto:` links when you opt in via system default applications or `window.orbitMail.preferences.setHandleMailtoLinks(true)`.
 
-> **Note:** Gmail and Microsoft sign-in require OAuth credentials to be configured at build time. Pre-built packages from the project maintainer include these; to run your own copy with your own credentials, see [Run your own copy](#run-your-own-copy) below.
+> **Note:** Gmail and Microsoft sign-in need OAuth credentials, and Orbit Mail never ships any — a build must be safe to hand to someone else, so no package contains its builder's credentials. You register an OAuth app once and give Orbit Mail the details **when you add an account**, or put them in `~/.config/orbit-mail/.env`. Plain IMAP/POP3 accounts need none of this. See [Run your own copy](#run-your-own-copy).
 
 ## Run your own copy
 
@@ -124,9 +124,14 @@ npm run dist
 sudo dpkg -i "release/Orbit Mail-"*.deb
 ```
 
-**6. Add your account:** click **Add Account**, choose your provider, and sign in. For Gmail (or any unverified app), you'll hit a **"Google hasn't verified this app"** screen — click **Advanced → Go to Orbit Mail (unsafe)** and continue. That's expected for a self-run copy, and it appears only once per account.
+**6. Add your account:** click **Add Account**, choose your provider, and sign in. If Orbit Mail has no credentials for that provider yet, it asks for them first and stores them encrypted on this machine.
 
-> Rebuild after editing `.env` — OAuth credentials are baked in at build time.
+For Gmail you will meet two screens that are easy to get wrong:
+
+- **"Google hasn't verified this app"** — click **Advanced → Go to Orbit Mail (unsafe)**. Expected for a self-run copy; once per account.
+- **The permissions screen** — tick **"Read, compose, send and permanently delete all your email from Gmail"**. Google leaves this box **unticked by default**, and without it sign-in completes but Orbit Mail cannot read your mail, so it will refuse the account and tell you to try again.
+
+> No rebuild is needed after changing credentials. They are read at runtime, so editing `.env` (or `~/.config/orbit-mail/.env`) and restarting is enough — and you can skip the file entirely by entering them in the Add Account dialog.
 
 ## Getting started
 
@@ -197,9 +202,12 @@ All local data is stored under the Electron user data directory:
 | `~/.config/orbit-mail/data/attachments/` | Downloaded attachment files |
 
 - Mail is synced over IMAP/POP3 and cached locally for performance and search
-- OAuth tokens and passwords are stored in an encrypted blob per account
+- OAuth tokens and passwords are stored in an encrypted blob per account (Electron `safeStorage`; without a system keyring this degrades to obfuscation)
+- **No build ever contains OAuth credentials** — yours or anyone's. They are supplied on the machine that runs the app, so a package is safe to pass on
 - **AI is opt-in.** Nothing is sent to any AI provider unless you add an Anthropic API key. When you run **Analyze** or **Tasks**, the relevant message text is sent to Anthropic's API to produce the result. Analyze results and per-message task extractions are cached locally so the same message is not re-sent on a later run. Your API key is stored encrypted (Electron `safeStorage`) in the local database and never leaves your device except to authenticate with Anthropic.
 - No telemetry or third-party analytics are included
+
+**How mail is rendered.** Message HTML comes from whoever sent it, so it is sanitized before display: scripts, forms, frames and embedded objects are removed, and CSS that would let a message paint over the app is stripped. The window itself cannot be navigated away from the app, and a Content-Security-Policy backs both. Links open in your browser, not in Orbit Mail. Attachments whose type can execute — `.desktop`, `.sh`, `.exe` and similar — ask for confirmation before opening, naming the real file extension.
 
 Removing an account from the sidebar deletes its local cached mail for that account.
 
@@ -207,7 +215,9 @@ Removing an account from the sidebar deletes its local cached mail for that acco
 
 See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 
-- **Gmail / Microsoft sign-in on self-built copies** — you must configure OAuth credentials when building from source; see [DEVELOPERS.md](DEVELOPERS.md)
+- **Gmail / Microsoft sign-in needs your own OAuth app** — no build of Orbit Mail contains credentials, by design. Register once and enter the details when adding an account (about 15 minutes); see [DEVELOPERS.md](DEVELOPERS.md#oauth-setup)
+- **Remote images load automatically** — opening a message confirms the read and reveals your IP to the sender; there is no block-remote-content option yet
+- **Credential encryption needs a keyring** — without one (`safeStorage` unavailable), stored passwords, tokens and API keys fall back to obfuscation rather than encryption
 - **POP3** — inbox sync only; move/archive are not supported on the server
 - **Initial sync depth** — first sync fetches up to 200 messages per folder; use **Load more** for older mail, or **Search whole mailbox** to pull in older matches on demand (IMAP accounts)
 - **Compose** — rich text (HTML) editor; no signatures or inline images yet

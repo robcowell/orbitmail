@@ -307,7 +307,8 @@ async function main(): Promise<void> {
       sendMail(
         {
           accountId: account.id,
-          to: 'someone@example.com',
+          to: EMAIL,
+          bcc: 'hidden@example.com',
           subject: 'Integration send',
           bodyText: 'hello from the integration suite',
           bodyHtml: '<p>hello from the integration suite</p>'
@@ -318,12 +319,62 @@ async function main(): Promise<void> {
     ok('SMTP submission succeeds', sendErr === null, sendErr?.message ?? '')
 
     await sync.syncFolder(client, account.id, sent.id, 'Sent')
-    const filed = db.listMessages(sent.id, 20, 0).some((m) => m.subject === 'Integration send')
-    // Open finding: appendToSentFolder is guarded on `info.message`, which the
-    // SMTP transport never sets, so nothing is ever appended. Providers that
-    // auto-file (Gmail/O365) hide this; a plain IMAP+SMTP account does not.
-    todo('sent message is filed in the Sent folder', filed,
-      filed ? '' : 'not filed — see TODO.md "Sent mail never filed for manual IMAP accounts"')
+    const inSent = db.listMessages(sent.id, 20, 0).filter((m) => m.subject === 'Integration send')
+    ok('sent message is filed in the Sent folder', inSent.length === 1,
+      `copies=${inSent.length}`)
+
+    // The recipient's copy and the filed copy must be the same message, or
+    // threading breaks: a reply's In-Reply-To would not match what is in Sent.
+    // The message is addressed to the test user, so GreenMail delivers it back
+    // into the same account's INBOX and both copies are visible here.
+    const lock = await client.getMailboxLock('Sent')
+    let sentMessageId: string | null = null
+    try {
+      for await (const msg of client.fetch({ all: true }, { envelope: true })) {
+        if (msg.envelope?.subject === 'Integration send') {
+          sentMessageId = msg.envelope.messageId ?? null
+        }
+      }
+    } finally {
+      lock.release()
+    }
+    ok('the filed copy carries a Message-ID', !!sentMessageId, sentMessageId ?? 'none')
+
+    // GreenMail delivers to the local recipient too, so the same Message-ID
+    // should be visible on the delivered side.
+    const inboxLock = await client.getMailboxLock('INBOX')
+    let deliveredMessageId: string | null = null
+    try {
+      for await (const msg of client.fetch({ all: true }, { envelope: true })) {
+        if (msg.envelope?.subject === 'Integration send') {
+          deliveredMessageId = msg.envelope.messageId ?? null
+        }
+      }
+    } finally {
+      inboxLock.release()
+    }
+    ok('filed copy and delivered copy share one Message-ID',
+      !!sentMessageId && sentMessageId === deliveredMessageId,
+      `sent=${sentMessageId} delivered=${deliveredMessageId}`)
+
+    // The message is built by hand now, so guard the privacy property that
+    // nodemailer normally owns: Bcc belongs in the SMTP envelope, never in the
+    // headers, or every recipient learns who was blind-copied.
+    const sentLock = await client.getMailboxLock('Sent')
+    let sentSource = ''
+    try {
+      for await (const msg of client.fetch({ all: true }, { source: true, envelope: true })) {
+        if (msg.envelope?.subject === 'Integration send') {
+          sentSource = msg.source?.toString('utf8') ?? ''
+        }
+      }
+    } finally {
+      sentLock.release()
+    }
+    const headerBlock = sentSource.split('\r\n\r\n')[0] ?? ''
+    ok('Bcc is not written into the message headers',
+      headerBlock.length > 0 && !/^bcc:/im.test(headerBlock),
+      /^bcc:/im.test(headerBlock) ? 'LEAKED' : 'absent, as it should be')
 
     await client.logout()
   }

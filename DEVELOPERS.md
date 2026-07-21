@@ -289,7 +289,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
-| Send | SMTP submission succeeds. |
+| Send | SMTP submission succeeds; the message is filed in `Sent` exactly once, shares its Message-ID with the delivered copy, and does not carry `Bcc` in its headers. |
 
 Notes for anyone extending it:
 
@@ -301,8 +301,9 @@ Notes for anyone extending it:
   GreenMail allocates validity numbers.
 - GreenMail is in-memory: a restart empties every mailbox but keeps the user.
 - A check reported as `todo` documents a known-open bug and does not fail the
-  run. There is currently one, for sent mail not being filed in `Sent` — see
-  `TODO.md`. Turn it into `ok` when that is fixed.
+  run, so the suite can describe reality without going red. There are none at
+  present; use `todo()` rather than deleting a check when you find a bug you are
+  not fixing yet.
 - The suite exits non-zero on any failure, so it is CI-ready, but nothing runs
   it automatically yet.
 

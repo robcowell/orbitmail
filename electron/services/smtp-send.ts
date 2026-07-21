@@ -1,5 +1,6 @@
 import { app } from 'electron'
 import nodemailer from 'nodemailer'
+import MailComposer from 'nodemailer/lib/mail-composer'
 import type Mail from 'nodemailer/lib/mailer'
 import { readFileSync } from 'fs'
 import type { Provider, ComposePayload } from '../../shared/types'
@@ -134,15 +135,34 @@ export async function sendMail(
     }))
   }
 
-  const info = await transport.sendMail(mailOptions)
-  transport.close()
+  // Build the MIME message up front rather than letting sendMail do it, so the
+  // copy filed in Sent is byte-identical to what went out — same Message-ID,
+  // same boundaries. `info.message` used to be read for this, but the SMTP
+  // transport never sets it (only the stream/JSON transports do), so the append
+  // below was unreachable and manual IMAP accounts kept no record of sent mail.
+  const composed = new MailComposer(mailOptions).compile()
+  const envelope = composed.getEnvelope()
+  const raw: Buffer = await new Promise((resolve, reject) => {
+    composed.build((err, message) => (err ? reject(err) : resolve(message)))
+  })
 
-  if (info.message) {
-    const raw =
-      typeof info.message === 'string'
-        ? Buffer.from(info.message)
-        : Buffer.from(info.message.toString())
-    await appendToSentFolder(payload.accountId, provider, raw)
+  try {
+    await transport.sendMail({ raw, envelope })
+  } finally {
+    transport.close()
+  }
+
+  // Only manual IMAP accounts need this. Gmail files SMTP-submitted mail into
+  // Sent Mail itself, so appending would leave the user with two copies.
+  // (O365 is not as consistent here — tracked in TODO.md rather than guessed at.)
+  if (provider === 'imap') {
+    try {
+      await appendToSentFolder(payload.accountId, provider, raw)
+    } catch (err) {
+      // The message is already delivered; failing the send now would be a lie,
+      // and would tempt the user into sending it a second time.
+      console.warn('[orbit-mail] Sent copy could not be filed:', err)
+    }
   }
 }
 

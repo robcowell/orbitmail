@@ -131,6 +131,29 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('IPC contract: every channel the renderer invokes has a handler')
+  // -------------------------------------------------------------------------
+  {
+    // preload.ts and main.ts must stay in lockstep — CLAUDE.md calls this the
+    // spine. Nothing checked it, and an oauth: handler was once added to the
+    // preload but silently not to main: the renderer got "No handler registered
+    // for 'oauth:getStatus'" at runtime, with a clean build and a green suite.
+    const { readFileSync } = await import('fs')
+    const preload = readFileSync(join(process.cwd(), 'electron', 'preload.ts'), 'utf8')
+    const mainSource = readFileSync(join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+
+    const invoked = [...preload.matchAll(/ipcRenderer\.invoke\(\s*'([^']+)'/g)].map((m) => m[1])
+    const handled = new Set(
+      [...mainSource.matchAll(/ipcMain\.handle\(\s*\n?\s*'([^']+)'/g)].map((m) => m[1])
+    )
+    const orphans = [...new Set(invoked)].filter((channel) => !handled.has(channel))
+
+    ok('preload declares invoke channels', invoked.length > 20, `${invoked.length} channels`)
+    ok('every invoked channel has a main-process handler', orphans.length === 0,
+      orphans.length ? `missing: ${orphans.join(', ')}` : `${handled.size} handlers`)
+  }
+
+  // -------------------------------------------------------------------------
   section('OAuth config: credentials must never be built into the app')
   // -------------------------------------------------------------------------
   {

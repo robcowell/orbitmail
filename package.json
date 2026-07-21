@@ -103,5 +103,10 @@
       "packageName": "orbit-mail",
       "maintainer": "Orbit Mail <orbit-mail@localhost>"
     }
+  },
+  "overrides": {
+    "brace-expansion@1": "^1.1.16",
+    "brace-expansion@2": "^2.1.2",
+    "uuid": "^11.1.1"
   }
 }

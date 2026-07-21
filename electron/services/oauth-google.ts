@@ -26,8 +26,13 @@ async function validateGoogleMailScope(accessToken: string): Promise<void> {
   }
 
   if (!info.scope?.includes('mail.google.com')) {
+    // Google's consent screen lists restricted scopes as checkboxes that are
+    // *unticked by default*, and the sign-in otherwise looks successful — so
+    // name the exact box rather than saying "approve all permissions".
     throw new Error(
-      'Gmail access was not granted. Add the account again and approve all requested permissions.'
+      'Gmail access was not granted. On the Google consent screen, tick ' +
+        '"Read, compose, send and permanently delete all your email from Gmail" — ' +
+        'it is off by default — then add the account again.'
     )
   }
 }
@@ -181,7 +186,7 @@ export function formatGmailAuthError(err: unknown, email: string): Error {
       `• The OAuth app is "In production" (to allow any Gmail account), or this address is on the test-user allowlist\n` +
       `• You clicked through any "Google hasn't verified this app" warning (Advanced → Go to Orbit Mail)\n` +
       `• IMAP is enabled in Gmail settings\n` +
-      `• You approved all permissions including full Gmail access\n` +
+      `• You ticked "Read, compose, send and permanently delete all your email from Gmail" on the consent screen — it is off by default\n` +
       `Then remove the account in Orbit Mail and add it again.`
   )
 }

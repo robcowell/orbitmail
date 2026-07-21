@@ -82,7 +82,11 @@ function Toast() {
 
   useEffect(() => {
     if (!toast) return
-    const t = setTimeout(() => setToast(null), 4000)
+    // Scale with length: "Deleted" needs a moment, but an error explaining
+    // which checkbox to tick is ~190 characters and takes about 13 seconds to
+    // read — it used to vanish after 4.
+    const readMs = 4000 + toast.length * 45
+    const t = setTimeout(() => setToast(null), Math.min(readMs, 14000))
     return () => clearTimeout(t)
   }, [toast, setToast])
 

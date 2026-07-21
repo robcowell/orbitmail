@@ -1,7 +1,7 @@
 {
   "name": "orbit-mail",
   "version": "0.1.0",
-  "description": "Orbit Mail — a polished desktop email client for Linux",
+  "description": "Orbit Mail \u2014 a polished desktop email client for Linux",
   "main": "out/main/index.js",
   "homepage": "https://github.com/orbit-mail/orbit-mail",
   "author": {
@@ -18,7 +18,8 @@
     "dist": "npm run icons && npm run build && electron-builder",
     "dist:deb": "npm run icons && npm run build && electron-builder --linux deb",
     "dist:appimage": "npm run icons && npm run build && electron-builder --linux AppImage",
-    "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh"
+    "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh",
+    "test:imap": "node scripts/imap-integration.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
@@ -49,6 +50,7 @@
     "electron": "^39.8.10",
     "electron-builder": "^26.15.3",
     "electron-vite": "^3.0.0",
+    "esbuild": "^0.25.12",
     "sharp": "^0.34.5",
     "typescript": "^5.7.3",
     "vite": "^6.0.11"

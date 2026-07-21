@@ -17,15 +17,17 @@
 //
 //   1. the process environment — a developer's .env, loaded by dotenv in main.ts
 //   2. ~/.config/orbit-mail/.env — for someone running a packaged build
-//
-// Entering them in the app when adding an account is the next step; it will
-// slot in below the environment, stored encrypted via safeStorage (the same
-// mechanism the Anthropic API key already uses).
+//   3. entered in the app when adding an account, stored encrypted via
+//      safeStorage (the same mechanism the Anthropic API key uses)
 //
 // Client IDs are not secrets — they appear in the browser URL during sign-in.
 // The Google *secret* for an installed app is not confidential either
 // (RFC 8252 §8.5), which is why the flow also uses PKCE. That is a reason not
 // to panic if one leaks; it is not a reason to ship one.
+
+import { safeStorage } from 'electron'
+import { getRawSqlite } from '../db'
+import type { OAuthConfigStatus } from '../../shared/types'
 
 export type OAuthCredentialKey =
   | 'GOOGLE_CLIENT_ID'
@@ -33,9 +35,9 @@ export type OAuthCredentialKey =
   | 'MICROSOFT_CLIENT_ID'
   | 'MICROSOFT_TENANT_ID'
 
-/** Runtime environment only — never a compiled-in value. */
+/** Environment first, then anything entered in the app. Never compiled in. */
 function resolve(key: OAuthCredentialKey): string {
-  return process.env[key]?.trim() ?? ''
+  return process.env[key]?.trim() || readStored(key)
 }
 
 function missing(names: string[]): Error {
@@ -43,6 +45,7 @@ function missing(names: string[]): Error {
   return new Error(
     `${names.join(' and ')} ${plural ? 'are' : 'is'} not configured.\n\n` +
       `Supply ${plural ? 'them' : 'it'} in one of:\n` +
+      `  • this dialog — stored encrypted on this machine\n` +
       `  • ~/.config/orbit-mail/.env\n` +
       `  • the environment before launching\n\n` +
       `Registering an OAuth app takes a few minutes: see DEVELOPERS.md → OAuth setup.`
@@ -73,4 +76,80 @@ export function hasGoogleOAuthConfig(): boolean {
 
 export function hasMicrosoftOAuthConfig(): boolean {
   return !!resolve('MICROSOFT_CLIENT_ID')
+}
+
+// ---------------------------------------------------------------------------
+// Credentials entered in the app.
+//
+// Stored encrypted via safeStorage in app_preferences, the same mechanism the
+// Anthropic API key uses. They sit *below* the environment so a developer's
+// .env — or ~/.config/orbit-mail/.env — always wins and the app never silently
+// disagrees with the file someone just edited.
+//
+// Values are never handed back to the renderer. The UI is told only whether a
+// provider is configured and which keys came from the environment; it collects
+// new values and writes them.
+// ---------------------------------------------------------------------------
+
+const PREF_PREFIX = 'oauth_cred_'
+
+function encryptValue(plaintext: string): string {
+  if (safeStorage.isEncryptionAvailable()) {
+    return safeStorage.encryptString(plaintext).toString('base64')
+  }
+  return Buffer.from(plaintext).toString('base64')
+}
+
+function decryptValue(blob: string): string {
+  const raw = Buffer.from(blob, 'base64')
+  return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8')
+}
+
+function readStored(key: OAuthCredentialKey): string {
+  try {
+    const row = getRawSqlite()
+      .prepare('SELECT value FROM app_preferences WHERE key = ?')
+      .get(PREF_PREFIX + key) as { value: string } | undefined
+    return row?.value ? decryptValue(row.value).trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+/** Persist credentials entered in the app. An empty value clears that key. */
+export function setStoredOAuthCredentials(
+  values: Partial<Record<OAuthCredentialKey, string>>
+): void {
+  const db = getRawSqlite()
+  for (const [key, value] of Object.entries(values) as [OAuthCredentialKey, string][]) {
+    const trimmed = (value ?? '').trim()
+    if (!trimmed) {
+      db.prepare('DELETE FROM app_preferences WHERE key = ?').run(PREF_PREFIX + key)
+      continue
+    }
+    db.prepare(
+      'INSERT INTO app_preferences (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    ).run(PREF_PREFIX + key, encryptValue(trimmed))
+  }
+}
+
+/**
+ * What the UI needs in order to decide whether to ask. Deliberately returns no
+ * credential values — only whether each provider is usable, which keys the
+ * environment already supplies (so the UI can explain why editing them here
+ * would have no effect), and whether storage will actually be encrypted.
+ */
+export function getOAuthConfigStatus(): OAuthConfigStatus {
+  const keys: OAuthCredentialKey[] = [
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'MICROSOFT_CLIENT_ID',
+    'MICROSOFT_TENANT_ID'
+  ]
+  return {
+    google: hasGoogleOAuthConfig(),
+    microsoft: hasMicrosoftOAuthConfig(),
+    fromEnvironment: keys.filter((key) => !!process.env[key]?.trim()),
+    encryptionAvailable: safeStorage.isEncryptionAvailable()
+  }
 }

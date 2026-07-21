@@ -3,12 +3,14 @@ import type {
   AutodetectResult,
   ConnectionSecurity,
   ManualAccountInput,
+  OAuthConfigStatus,
+  OAuthCredentialKey,
   ServerConfig
 } from '../../../shared/types'
 import { useMailStore, addAccount, addManualAccount } from '../../stores/mailStore'
 import { AppBrand } from '../brand/AppBrand'
 
-type WizardView = 'choose' | 'manual'
+type WizardView = 'choose' | 'manual' | 'oauth-credentials'
 
 const DEFAULT_INCOMING: ServerConfig = {
   host: '',
@@ -247,11 +249,131 @@ function ManualAccountForm({ onBack }: { onBack: () => void }) {
   )
 }
 
+
+// Asks for the OAuth app credentials for one provider. Shown when the provider
+// is picked but nothing has supplied its credentials yet — the alternative
+// being an error telling the user to go and edit a file.
+//
+// Fields start empty and are never pre-filled: stored values are not readable
+// by the renderer by design. A key already supplied by the environment is shown
+// as such and disabled, because writing it here would have no effect.
+function OAuthCredentialsForm({
+  provider,
+  status,
+  onSaved,
+  onBack
+}: {
+  provider: 'gmail' | 'o365'
+  status: OAuthConfigStatus
+  onSaved: () => void
+  onBack: () => void
+}) {
+  const isGoogle = provider === 'gmail'
+  const [values, setValues] = useState<Partial<Record<OAuthCredentialKey, string>>>({})
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const fields: { key: OAuthCredentialKey; label: string; hint?: string; secret?: boolean }[] =
+    isGoogle
+      ? [
+          { key: 'GOOGLE_CLIENT_ID', label: 'Client ID', hint: 'Ends in .apps.googleusercontent.com' },
+          { key: 'GOOGLE_CLIENT_SECRET', label: 'Client secret', secret: true }
+        ]
+      : [
+          { key: 'MICROSOFT_CLIENT_ID', label: 'Application (client) ID' },
+          {
+            key: 'MICROSOFT_TENANT_ID',
+            label: 'Directory (tenant) ID',
+            hint: 'Optional — defaults to "common" for personal and work accounts'
+          }
+        ]
+
+  const required = fields.filter((f) => f.key !== 'MICROSOFT_TENANT_ID')
+  const satisfied = (key: OAuthCredentialKey) =>
+    status.fromEnvironment.includes(key) || !!values[key]?.trim()
+  const canSave = required.every((f) => satisfied(f.key))
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      // Only send what was typed; untouched fields must not clear stored values.
+      const entered = Object.fromEntries(
+        Object.entries(values).filter(([, v]) => (v ?? '').trim().length > 0)
+      )
+      await window.orbitMail.oauth.saveCredentials(entered)
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save credentials')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <p>
+        {isGoogle ? 'Gmail' : 'Microsoft 365'} sign-in uses an OAuth app that you register
+        once. Orbit Mail ships without credentials, so builds are safe to share — paste
+        yours below and they are stored encrypted on this machine.
+      </p>
+      <p className="account-hint">
+        See DEVELOPERS.md → OAuth setup for the registration steps. You can also set them
+        in <code>~/.config/orbit-mail/.env</code> instead.
+      </p>
+
+      {!status.encryptionAvailable && (
+        <p className="account-hint">
+          No system keyring is available, so these will be stored obfuscated rather than
+          encrypted. Consider using <code>~/.config/orbit-mail/.env</code> instead.
+        </p>
+      )}
+
+      {fields.map((field) => {
+        const fromEnv = status.fromEnvironment.includes(field.key)
+        return (
+          <label className="account-field" key={field.key}>
+            <span>{field.label}</span>
+            <input
+              type={field.secret ? 'password' : 'text'}
+              value={fromEnv ? '' : values[field.key] ?? ''}
+              disabled={fromEnv}
+              placeholder={fromEnv ? 'Set by the environment' : ''}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => setValues((v) => ({ ...v, [field.key]: e.target.value }))}
+            />
+            {field.hint && !fromEnv && <span className="account-hint">{field.hint}</span>}
+          </label>
+        )
+      })}
+
+      {error && <p className="account-hint">{error}</p>}
+
+      <div className="modal-actions">
+        <button type="button" className="btn btn-secondary" onClick={onBack}>
+          Back
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={save}
+          disabled={!canSave || saving}
+        >
+          {saving ? 'Saving…' : 'Save and continue'}
+        </button>
+      </div>
+    </>
+  )
+}
+
 export function AddAccountWizard() {
   const show = useMailStore((s) => s.showAddAccount)
   const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
   const accounts = useMailStore((s) => s.accounts)
   const [view, setView] = useState<WizardView>('choose')
+  const [oauthProvider, setOauthProvider] = useState<'gmail' | 'o365'>('gmail')
+  const [oauthStatus, setOauthStatus] = useState<OAuthConfigStatus | null>(null)
 
   // With no accounts there is nothing to go back to, which is why the Cancel
   // button is hidden in that case — so Escape must not dismiss it either.
@@ -275,6 +397,25 @@ export function AddAccountWizard() {
     return () => window.removeEventListener('keydown', handleKey)
   }, [show, cancellable, close])
 
+  // Ask for credentials only when the provider cannot start a sign-in without
+  // them. Anyone with a .env or environment variables set never sees this.
+  const startOAuth = async (provider: 'gmail' | 'o365') => {
+    let status: OAuthConfigStatus | null = null
+    try {
+      status = await window.orbitMail.oauth.getStatus()
+    } catch {
+      // Status is an optimisation; if it fails, let the sign-in report the problem.
+    }
+    const configured = provider === 'gmail' ? status?.google : status?.microsoft
+    if (status && !configured) {
+      setOauthProvider(provider)
+      setOauthStatus(status)
+      setView('oauth-credentials')
+      return
+    }
+    void addAccount(provider)
+  }
+
   if (!show) return null
 
   return (
@@ -294,13 +435,13 @@ export function AddAccountWizard() {
               standard IMAP/POP3 and SMTP with your username and password.
             </p>
             <div className="modal-actions modal-actions-stack">
-              <button className="btn btn-secondary" onClick={() => addAccount('gmail')}>
+              <button className="btn btn-secondary" onClick={() => void startOAuth('gmail')}>
                 Gmail (OAuth)
               </button>
               {/* All three are equal choices — none is a primary action, so none
                   gets the brand gradient. Microsoft 365 used to, which read as a
                   recommendation the app has no basis for making. */}
-              <button className="btn btn-secondary" onClick={() => addAccount('o365')}>
+              <button className="btn btn-secondary" onClick={() => void startOAuth('o365')}>
                 Microsoft 365 (OAuth)
               </button>
               <button className="btn btn-secondary" onClick={() => setView('manual')}>
@@ -317,6 +458,16 @@ export function AddAccountWizard() {
               </button>
             )}
           </>
+        ) : view === 'oauth-credentials' && oauthStatus ? (
+          <OAuthCredentialsForm
+            provider={oauthProvider}
+            status={oauthStatus}
+            onBack={() => setView('choose')}
+            onSaved={() => {
+              setView('choose')
+              void addAccount(oauthProvider)
+            }}
+          />
         ) : (
           <ManualAccountForm onBack={() => setView('choose')} />
         )}

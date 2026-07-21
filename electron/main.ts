@@ -11,7 +11,8 @@ import type {
   SweepScope,
   DraftTone,
   SearchField,
-  AttachmentDraft
+  AttachmentDraft,
+  OAuthCredentialKey
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
 import { updateAppBadge } from './app-badge'
@@ -76,6 +77,7 @@ import {
   isExecutableAttachment,
   executableAttachmentWarning
 } from './services/attachment-safety'
+import { getOAuthConfigStatus, setStoredOAuthCredentials } from './services/oauth-config'
 import {
   getAccountInfo,
   createMailbox,

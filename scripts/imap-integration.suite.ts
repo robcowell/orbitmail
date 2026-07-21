@@ -294,6 +294,42 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Responsiveness: a click must not queue behind a full reconcile')
+  // -------------------------------------------------------------------------
+  {
+    // imap-pool serializes operations per account, so a reconcile that holds
+    // the lane across every folder blocks user actions for its whole duration.
+    // Give the account enough folders for that to be measurable, then time a
+    // mark-read issued while a reconcile is in flight.
+    const client = rawClient()
+    await client.connect()
+    for (let i = 0; i < 12; i++) {
+      const path = `Bulk${i}`
+      await client.mailboxCreate(path).catch(() => {})
+      await seed(client, path, [`Bulk ${i} message`])
+      const f = db.upsertFolder(account.id, path, path, 'custom')
+      await sync.syncFolder(client, account.id, f.id, path)
+    }
+    await client.logout()
+
+    const target = db.listMessages(inbox.id, 1, 0)[0]
+    const reconcile = sync.reconcileAccountFlags(account.id, 'imap')
+    // Let the reconcile take the lane first.
+    await sleep(50)
+
+    const started = Date.now()
+    await sync.markMessageReadOnServer(account.id, 'imap', 'INBOX', target.uid, true)
+    const waited = Date.now() - started
+    await reconcile
+
+    // Local server, so a folder's reconcile is milliseconds; the point is that
+    // the wait tracks one folder rather than all of them. Generous bound so the
+    // check fails on the pathology, not on a slow machine.
+    ok('mark-read is not blocked by the whole reconcile pass', waited < 2000,
+      `waited=${waited}ms across ${db.listFolders(account.id).length} folders`)
+  }
+
+  // -------------------------------------------------------------------------
   section('Send: a sent message should be filed in Sent')
   // -------------------------------------------------------------------------
   {

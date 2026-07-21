@@ -289,6 +289,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
+| Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once, shares its Message-ID with the delivered copy, and does not carry `Bcc` in its headers. |
 
 Notes for anyone extending it:

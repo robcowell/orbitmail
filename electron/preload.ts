@@ -118,6 +118,10 @@ const api: OrbitMailAPI = {
     muteSender: (email: string) => ipcRenderer.invoke('preferences:muteSender', email),
     blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email)
   },
+  oauth: {
+    getStatus: () => ipcRenderer.invoke('oauth:getStatus'),
+    saveCredentials: (values) => ipcRenderer.invoke('oauth:saveCredentials', values)
+  },
   ai: {
     analyze: (messageId: string, force?: boolean, includeAttachments?: boolean) =>
       ipcRenderer.invoke('ai:analyze', messageId, force, includeAttachments),

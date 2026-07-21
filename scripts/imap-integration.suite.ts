@@ -184,6 +184,54 @@ async function main(): Promise<void> {
       restore('MICROSOFT_TENANT_ID', saved.tenant)
     }
 
+    // Credentials entered in the app: stored encrypted, below the environment,
+    // and never readable by the renderer.
+    {
+      const store = await import('../electron/services/oauth-config')
+      const savedEnv = {
+        id: process.env.MICROSOFT_CLIENT_ID,
+        tenant: process.env.MICROSOFT_TENANT_ID
+      }
+      try {
+        delete process.env.MICROSOFT_CLIENT_ID
+        delete process.env.MICROSOFT_TENANT_ID
+
+        ok('a provider with nothing configured reports unconfigured',
+          store.getOAuthConfigStatus().microsoft === false)
+
+        store.setStoredOAuthCredentials({ MICROSOFT_CLIENT_ID: 'stored-ms-id' })
+        ok('credentials entered in the app make the provider usable',
+          store.getOAuthConfigStatus().microsoft === true)
+        ok('and are what the flow then uses',
+          store.getMicrosoftOAuthConfig().clientId === 'stored-ms-id')
+
+        // The environment must win, or the app would silently disagree with a
+        // .env the user just edited.
+        process.env.MICROSOFT_CLIENT_ID = 'env-ms-id'
+        ok('the environment still overrides a stored value',
+          store.getMicrosoftOAuthConfig().clientId === 'env-ms-id')
+        ok('status reports which keys came from the environment',
+          store.getOAuthConfigStatus().fromEnvironment.includes('MICROSOFT_CLIENT_ID'))
+        delete process.env.MICROSOFT_CLIENT_ID
+
+        // Status is the only thing the renderer receives.
+        const status = store.getOAuthConfigStatus()
+        const serialised = JSON.stringify(status)
+        ok('status never carries credential values back to the renderer',
+          !serialised.includes('stored-ms-id'), serialised.slice(0, 80))
+
+        store.setStoredOAuthCredentials({ MICROSOFT_CLIENT_ID: '' })
+        ok('an empty value clears the stored credential',
+          store.getOAuthConfigStatus().microsoft === false)
+      } finally {
+        store.setStoredOAuthCredentials({ MICROSOFT_CLIENT_ID: '' })
+        if (savedEnv.id === undefined) delete process.env.MICROSOFT_CLIENT_ID
+        else process.env.MICROSOFT_CLIENT_ID = savedEnv.id
+        if (savedEnv.tenant === undefined) delete process.env.MICROSOFT_TENANT_ID
+        else process.env.MICROSOFT_TENANT_ID = savedEnv.tenant
+      }
+    }
+
     // A build must never contain credentials: a package has to be safe to hand
     // to someone else. This is the guard on that promise.
     const { existsSync, readFileSync } = await import('fs')

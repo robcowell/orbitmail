@@ -251,6 +251,22 @@ export interface ReplyDraft {
 
 export type AiDraftResult = ReplyDraft | { error: string }
 
+export type OAuthCredentialKey =
+  | 'GOOGLE_CLIENT_ID'
+  | 'GOOGLE_CLIENT_SECRET'
+  | 'MICROSOFT_CLIENT_ID'
+  | 'MICROSOFT_TENANT_ID'
+
+export interface OAuthConfigStatus {
+  /** Whether the provider has everything it needs to start a sign-in. */
+  google: boolean
+  microsoft: boolean
+  /** Keys supplied by the environment — editing those in the app has no effect. */
+  fromEnvironment: OAuthCredentialKey[]
+  /** False when safeStorage is unavailable, so values are only base64-encoded. */
+  encryptionAvailable: boolean
+}
+
 export interface OrbitMailAPI {
   folders: {
     list: (accountId?: string) => Promise<Folder[]>
@@ -352,6 +368,11 @@ export interface OrbitMailAPI {
     setHandleMailtoLinks: (enabled: boolean) => Promise<boolean>
     muteSender: (email: string) => Promise<void>
     blockSender: (email: string) => Promise<void>
+  }
+  oauth: {
+    /** Never returns credential values — only whether each provider is usable. */
+    getStatus: () => Promise<OAuthConfigStatus>
+    saveCredentials: (values: Partial<Record<OAuthCredentialKey, string>>) => Promise<OAuthConfigStatus>
   }
   ai: {
     analyze: (

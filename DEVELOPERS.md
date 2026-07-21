@@ -48,6 +48,7 @@ OAuth client IDs are loaded from a `.env` file at dev/build time. End users of p
 
 1. **The process environment** — a developer's `.env` (loaded by dotenv in `main.ts`), or an operator export.
 2. **`~/.config/orbit-mail/.env`** — how someone running a packaged build supplies their own. Same `KEY=value` format; environment variables win over it.
+3. **Entered in the app** — picking Gmail or Microsoft 365 in Add Account with nothing configured prompts for that provider's credentials, stored encrypted via `safeStorage` (as the Anthropic key is). Values are never read back out to the renderer: the UI is told only whether a provider is usable, which keys the environment already supplies, and whether encryption is available.
 
 Building without credentials is the normal case for anything you intend to distribute, and is not an error: sign-in then fails with a message naming both locations above.
 

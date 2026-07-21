@@ -1,5 +1,5 @@
 import { resolve } from 'path'
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import { defineConfig, externalizeDepsPlugin, loadEnv } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import type { Plugin } from 'vite'
 
@@ -69,8 +69,45 @@ function cspPlugin(): Plugin {
   }
 }
 
-export default defineConfig({
+// OAuth credentials are read from the project .env at build time and baked into
+// the main bundle. Without this the packaged app has no way to get them: it is
+// launched from a desktop entry, so dotenv's cwd lookup finds nothing, and .env
+// is not in electron-builder's `files`. They stay out of the preload and
+// renderer bundles — main process only.
+//
+// An empty value is not an error here: the app also accepts them from the
+// environment or ~/.config/orbit-mail/.env at runtime (see oauth-config.ts).
+// The build logs which are missing so a credential-less package is not a
+// surprise discovered at sign-in.
+function oauthDefines(mode: string): Record<string, string> {
+  const env = loadEnv(mode, __dirname, ['GOOGLE_', 'MICROSOFT_'])
+  const keys = [
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'MICROSOFT_CLIENT_ID',
+    'MICROSOFT_TENANT_ID'
+  ] as const
+
+  const absent = keys.filter((key) => !(env[key] ?? process.env[key] ?? '').trim())
+  if (absent.length) {
+    console.warn(
+      `[orbit-mail] OAuth credentials missing at build time: ${absent.join(', ')}. ` +
+        'A package built now will need them supplied at runtime ' +
+        '(environment or ~/.config/orbit-mail/.env).'
+    )
+  }
+
+  return Object.fromEntries(
+    keys.map((key) => [
+      `__OAUTH_${key}__`,
+      JSON.stringify(env[key] ?? process.env[key] ?? '')
+    ])
+  )
+}
+
+export default defineConfig(({ mode }) => ({
   main: {
+    define: oauthDefines(mode),
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
@@ -115,4 +152,4 @@ export default defineConfig({
     },
     plugins: [react(), cspPlugin()]
   }
-})
+}))

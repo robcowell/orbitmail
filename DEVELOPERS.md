@@ -42,6 +42,18 @@ If the launcher icon is missing, run `npm run icons` before `npm run install:des
 
 OAuth client IDs are loaded from a `.env` file at dev/build time. End users of packaged builds need registered app credentials until in-app OAuth configuration is added (see [Known limitations](#known-limitations)).
 
+**Where credentials come from at runtime.** `electron/services/oauth-config.ts` resolves them in this order, first hit wins:
+
+1. **The process environment** — a developer's `.env` (loaded by dotenv in `main.ts`), or an operator export.
+2. **`~/.config/orbit-mail/.env`** — lets someone running a packaged build supply their own credentials without rebuilding. Same `KEY=value` format; existing environment variables win over it.
+3. **Values baked in at build time** — `npm run build` reads the project `.env` and substitutes them into the main bundle via the `define` block in `electron.vite.config.ts`.
+
+Tier 3 is why a package works at all: a packaged app is launched from a desktop entry, so dotenv's working-directory lookup finds nothing, and `.env` is not in electron-builder's `files`. Before this existed, `.deb`/AppImage users hit *"must be set in .env"* on every sign-in attempt.
+
+Building without a `.env` is allowed — the build prints which keys are missing, and the package then depends on tiers 1–2 at runtime. If none supply a value, sign-in fails with an error naming all three places.
+
+Credentials land in the **main** bundle only; they are absent from the preload and renderer bundles. Client IDs are not secrets, and an installed app's Google *secret* is not treated as confidential either (RFC 8252 §8.5) — it cannot be hidden in a binary the user runs, which is why the flow also uses PKCE.
+
 **Bring-your-own-credentials.** Orbit Mail does **not** ship with bundled Google/Microsoft credentials. Established open-source clients — Thunderbird (Mozilla), and Evolution/Geary via GNOME Online Accounts — each register one OAuth client, take it through full verification, and embed it so sign-in "just works" for every user. That approach carries a recurring verification and security-assessment burden (see [Full verification & CASA](#full-verification--casa-public-distribution-only)) that only an org can realistically sustain. Instead, each person running Orbit Mail (or building their own copy) registers their **own** OAuth app and drops the client ID into `.env`. The cost of that model is the one-time setup below, plus an "unverified app" click-through per account — in exchange for zero verification cost and no user cap beyond Google's unverified 100.
 
 ```bash

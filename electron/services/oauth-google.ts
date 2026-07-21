@@ -1,15 +1,13 @@
 import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library'
 import { startLoopbackServer, openExternalAuthUrl, generateState } from './oauth-loopback'
 import { updateAccountTokens, type TokenData } from './db-service'
+import { getGoogleOAuthConfig } from './oauth-config'
 
 const GMAIL_SCOPE = 'https://mail.google.com/'
 
 function getGoogleClient(): OAuth2Client {
-  const clientId = process.env.GOOGLE_CLIENT_ID
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-  if (!clientId || !clientSecret) {
-    throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in .env')
-  }
+  // Throws with the configured sources listed if absent — see oauth-config.ts.
+  const { clientId, clientSecret } = getGoogleOAuthConfig()
   return new OAuth2Client(clientId, clientSecret)
 }
 

@@ -131,6 +131,81 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('OAuth config: credentials must survive packaging')
+  // -------------------------------------------------------------------------
+  {
+    // A packaged app is started from a desktop entry, so dotenv's cwd lookup
+    // finds nothing and .env is not in electron-builder's `files`. Credentials
+    // therefore come from the environment, ~/.config/orbit-mail/.env, or values
+    // baked in at build time — in that order.
+    const cfg = await import('../electron/services/oauth-config')
+    const saved = {
+      gid: process.env.GOOGLE_CLIENT_ID,
+      gsecret: process.env.GOOGLE_CLIENT_SECRET,
+      mid: process.env.MICROSOFT_CLIENT_ID,
+      tenant: process.env.MICROSOFT_TENANT_ID
+    }
+    try {
+      process.env.GOOGLE_CLIENT_ID = 'runtime-id'
+      process.env.GOOGLE_CLIENT_SECRET = 'runtime-secret'
+      const google = cfg.getGoogleOAuthConfig()
+      ok('the environment takes precedence over baked values',
+        google.clientId === 'runtime-id' && google.clientSecret === 'runtime-secret')
+
+      process.env.MICROSOFT_CLIENT_ID = 'ms-id'
+      delete process.env.MICROSOFT_TENANT_ID
+      ok('microsoft tenant defaults to common',
+        cfg.getMicrosoftOAuthConfig().tenantId === 'common')
+
+      // This suite is bundled without the app's define block, so with the
+      // environment cleared there is nothing left to fall back to.
+      delete process.env.GOOGLE_CLIENT_ID
+      delete process.env.GOOGLE_CLIENT_SECRET
+      let err: Error | null = null
+      try {
+        cfg.getGoogleOAuthConfig()
+      } catch (e) {
+        err = e as Error
+      }
+      ok('missing credentials throw rather than half-configure', err !== null)
+      ok('the error names every place they can be supplied',
+        !!err && err.message.includes('~/.config/orbit-mail/.env') && err.message.includes('.env'),
+        err?.message.split('\n')[0])
+      ok('hasGoogleOAuthConfig reports absence without throwing',
+        cfg.hasGoogleOAuthConfig() === false)
+    } finally {
+      const restore = (k: string, v: string | undefined) => {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+      restore('GOOGLE_CLIENT_ID', saved.gid)
+      restore('GOOGLE_CLIENT_SECRET', saved.gsecret)
+      restore('MICROSOFT_CLIENT_ID', saved.mid)
+      restore('MICROSOFT_TENANT_ID', saved.tenant)
+    }
+
+    // The build must substitute the placeholders. If the define block is ever
+    // dropped, they survive as identifiers and every packaged build silently
+    // loses its credentials again — which is the bug this fixed.
+    const { existsSync, readFileSync } = await import('fs')
+    // The runner spawns Electron with cwd set to the repo root.
+    const bundle = join(process.cwd(), 'out', 'main', 'index.js')
+    if (!existsSync(bundle)) {
+      todo('build output present to check the define block', false, 'run npm run build first')
+    } else {
+      const source = readFileSync(bundle, 'utf8')
+      const unreplaced = [
+        '__OAUTH_GOOGLE_CLIENT_ID__',
+        '__OAUTH_GOOGLE_CLIENT_SECRET__',
+        '__OAUTH_MICROSOFT_CLIENT_ID__',
+        '__OAUTH_MICROSOFT_TENANT_ID__'
+      ].filter((token) => source.includes(token))
+      ok('build substitutes the OAuth placeholders', unreplaced.length === 0,
+        unreplaced.join(', ') || 'all replaced')
+    }
+  }
+
+  // -------------------------------------------------------------------------
   section('Attachments: opening one must not silently run code')
   // -------------------------------------------------------------------------
   {

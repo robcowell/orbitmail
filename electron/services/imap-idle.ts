@@ -11,6 +11,10 @@ import {
 } from './imap-sync'
 
 const IDLE_RECONNECT_MS = 5000
+// Backoff ceiling. A dropped socket usually comes back on the first retry, but
+// a server that is down (or credentials that stopped working) must not be
+// retried every 5s for the life of the session.
+const IDLE_RECONNECT_MAX_MS = 5 * 60 * 1000
 // Coalesce bursts of flag/expunge events before reconciling.
 const IDLE_RECONCILE_DEBOUNCE_MS = 2000
 
@@ -18,6 +22,9 @@ interface IdleRuntime {
   client: ImapFlow | null
   stopping: boolean
   reconnectTimer: ReturnType<typeof setTimeout> | null
+  // Consecutive failed connection attempts, for reconnect backoff. Reset once a
+  // connection is established.
+  attempts: number
 }
 
 const idleRuntimes = new Map<string, IdleRuntime>()
@@ -74,15 +81,21 @@ export function restartIdleMonitoring(): void {
   startIdleMonitoring()
 }
 
+// The runtime entry must stay in the map until the reconnect timer fires: it is
+// what owns the timer handle (so stopIdleMonitoring can cancel it) and what
+// scheduleIdleReconnect looks up. Deleting the entry first would make this a
+// no-op and IDLE would never come back for the account.
 function scheduleIdleReconnect(accountId: string, provider: Provider): void {
   const runtime = idleRuntimes.get(accountId)
   if (!runtime || runtime.stopping) return
 
   if (runtime.reconnectTimer) clearTimeout(runtime.reconnectTimer)
+  const delay = Math.min(IDLE_RECONNECT_MS * 2 ** runtime.attempts, IDLE_RECONNECT_MAX_MS)
+  runtime.attempts++
   runtime.reconnectTimer = setTimeout(() => {
     idleRuntimes.delete(accountId)
-    void ensureAccountIdle(accountId, provider)
-  }, IDLE_RECONNECT_MS)
+    void ensureAccountIdle(accountId, provider, runtime.attempts)
+  }, delay)
 }
 
 function teardownIdleConnection(
@@ -93,7 +106,6 @@ function teardownIdleConnection(
   if (runtime.stopping) return
   runtime.client = null
   clearIdleReconcileTimer(accountId)
-  idleRuntimes.delete(accountId)
   scheduleIdleReconnect(accountId, provider)
 }
 
@@ -128,19 +140,27 @@ function attachIdleClientHandlers(
   })
 }
 
-async function ensureAccountIdle(accountId: string, provider: Provider): Promise<void> {
+async function ensureAccountIdle(
+  accountId: string,
+  provider: Provider,
+  attempts = 0
+): Promise<void> {
   if (idleRuntimes.has(accountId)) return
 
   const runtime: IdleRuntime = {
     client: null,
     stopping: false,
-    reconnectTimer: null
+    reconnectTimer: null,
+    attempts
   }
   idleRuntimes.set(accountId, runtime)
 
   try {
     const client = await createImapClient(accountId, provider)
     runtime.client = client
+    // Connected: the next drop should retry promptly rather than at the
+    // backoff delay this attempt inherited.
+    runtime.attempts = 0
 
     if (runtime.stopping) {
       await client.logout().catch(() => {})
@@ -160,10 +180,13 @@ async function ensureAccountIdle(accountId: string, provider: Provider): Promise
 
     await client.mailboxOpen(inbox.path)
   } catch {
-    idleRuntimes.delete(accountId)
-    if (!runtime.stopping) {
-      scheduleIdleReconnect(accountId, provider)
+    runtime.client = null
+    if (runtime.stopping) {
+      idleRuntimes.delete(accountId)
+      return
     }
+    // Keep the entry so the retry timer has an owner (see scheduleIdleReconnect).
+    scheduleIdleReconnect(accountId, provider)
   }
 }
 

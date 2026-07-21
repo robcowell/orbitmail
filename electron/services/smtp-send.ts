@@ -47,6 +47,11 @@ function createOAuthTransport(
     host: smtp.host,
     port: smtp.port,
     secure: false,
+    // Gmail/O365 submission is STARTTLS on 587. Without requireTLS nodemailer
+    // treats the upgrade as optional and would send the XOAUTH2 bearer token in
+    // the clear if the server did not advertise STARTTLS. The password path
+    // (smtpTransportOptions) already requires it.
+    requireTLS: true,
     auth: {
       type: 'OAuth2',
       user: email,

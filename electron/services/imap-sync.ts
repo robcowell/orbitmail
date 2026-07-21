@@ -29,6 +29,7 @@ import {
   clearFolderMessages,
   getFolderUidSet,
   recalculateFolderUnread,
+  countMessages,
   type UpsertMessageData,
   getAccountSyncDays,
   regroupThreadsForAccount,
@@ -47,7 +48,7 @@ import { getLastSyncAt, setLastSyncAt } from './preferences-service'
 import { recordAttachmentsMetadata } from './attachment-fetch'
 import { isWithinSyncWindow, syncSinceDate } from './sync-policy'
 import { isVirtualViewFolder } from '../../shared/folders'
-import { imapFlowSecure } from './account-credentials'
+import { imapConnectionSecurity } from './account-credentials'
 import { refreshGoogleToken, resolveGoogleAccessToken, formatGmailAuthError } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
 import {
@@ -156,6 +157,10 @@ function incrementSyncProgress(by = 1): void {
 }
 
 const SYNC_BATCH_SIZE = 200
+// Ceiling on how much history a UIDVALIDITY resync will rebuild. Bounds the
+// work when a very large folder resets; anything beyond this is treated the
+// same way the app treats history it has never cached.
+const UIDVALIDITY_RESYNC_MAX_MESSAGES = 2000
 
 /** ImapFlow exposes UID fields as bigint; normalize before compare/store. */
 function normalizeImapUint(value: unknown): number | null {
@@ -256,7 +261,7 @@ export async function createImapClient(
     const client = new ImapFlow({
       host: manual.incoming.host,
       port: manual.incoming.port,
-      secure: imapFlowSecure(manual.incoming.security),
+      ...imapConnectionSecurity(manual.incoming.security),
       auth: {
         user: manual.username,
         pass: manual.password
@@ -655,6 +660,72 @@ export async function searchServerMessages(
   })
 }
 
+// A UIDVALIDITY change means every cached UID for the folder is meaningless, so
+// the local rows have to go. Two things make the naive "wipe, then fetch one
+// batch" version lossy:
+//
+//  - `resolveUidsToFetch` filters candidates against the *stale* local UID set,
+//    so any new message whose UID collides with an old row is skipped — and
+//    then the old row is deleted, losing the message entirely. Server UIDs
+//    frequently restart low after a validity reset, so collisions are likely.
+//  - One batch is `SYNC_BATCH_SIZE` messages. A folder that had accumulated
+//    thousands of cached messages would keep 200.
+//
+// So: resolve the restore set directly from the server (no stale filtering),
+// sized to what we had, then wipe and refill in batches. The wipe still
+// precedes the refill — upserting new mail while stale rows hold the same
+// (folder_id, uid) would collide — but `clearFolderMessages` resets
+// highestSyncedUid/initialSyncComplete and `uidValidity` is only written after
+// a successful refill, so an interrupted resync is retried from scratch on the
+// next pass rather than leaving the folder permanently empty.
+async function resyncAfterUidValidityChange(
+  client: ImapFlow,
+  accountId: string,
+  folderId: string,
+  imapPath: string,
+  onProgress?: SyncProgressHandler
+): Promise<{ newCount: number; maxUid: number | null } | null> {
+  const previousCount = countMessages(folderId)
+  const restoreTarget = Math.min(
+    Math.max(SYNC_BATCH_SIZE, previousCount),
+    UIDVALIDITY_RESYNC_MAX_MESSAGES
+  )
+
+  const uids = await getRecentMessageUids(client, restoreTarget, getAccountSyncDays(accountId))
+
+  if (uids.length === 0) {
+    console.warn(
+      `[orbit-mail] UIDVALIDITY changed for ${imapPath} but no UIDs to fetch; keeping local cache`
+    )
+    return null
+  }
+
+  console.warn(
+    `[orbit-mail] UIDVALIDITY changed for ${imapPath}; rebuilding ${uids.length} of ${previousCount} cached messages`
+  )
+  clearFolderMessages(folderId)
+
+  let newCount = 0
+  let maxUid: number | null = null
+
+  for (let i = 0; i < uids.length; i += SYNC_BATCH_SIZE) {
+    const batch = await fetchMessagesByUid(
+      client,
+      accountId,
+      folderId,
+      uids.slice(i, i + SYNC_BATCH_SIZE),
+      onProgress
+    )
+    newCount += batch.newCount
+    if (batch.maxUid != null) {
+      maxUid = maxUid == null ? batch.maxUid : Math.max(maxUid, batch.maxUid)
+    }
+  }
+
+  recalculateFolderUnread(folderId)
+  return { newCount, maxUid }
+}
+
 export async function syncFolder(
   client: ImapFlow,
   accountId: string,
@@ -689,17 +760,26 @@ export async function syncFolder(
 
   const lock = await client.getMailboxLock(imapPath)
   try {
-    const uids = await resolveUidsToFetch(client, folderId, accountId, maxLocalUid, uidNext)
-
     if (validityChanged) {
-      if (uids.length === 0) {
-        console.warn(
-          `[orbit-mail] UIDVALIDITY changed for ${imapPath} but no UIDs to fetch; keeping local cache`
-        )
-        return 0
-      }
-      clearFolderMessages(folderId)
+      const resynced = await resyncAfterUidValidityChange(
+        client,
+        accountId,
+        folderId,
+        imapPath,
+        onProgress
+      )
+      if (!resynced) return 0
+
+      updateFolderSyncState(folderId, {
+        uidValidity: serverValidity,
+        highestSyncedUid: resynced.maxUid ?? 0,
+        lastSyncAt: Date.now(),
+        initialSyncComplete: (resynced.maxUid ?? 0) > 0
+      })
+      return resynced.newCount
     }
+
+    const uids = await resolveUidsToFetch(client, folderId, accountId, maxLocalUid, uidNext)
 
     const { newCount, maxUid } = await fetchMessagesByUid(
       client,

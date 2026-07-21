@@ -254,9 +254,57 @@ Local database path: `~/.config/orbit-mail/data/orbit-mail.db`
 | `npm run preview` | Preview production build |
 | `npm run icons` | Regenerate PNG icons from `build/icon.svg` |
 | `npm run install:desktop` | Install a dev `.desktop` launcher |
+| `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
 | `npm run dist:deb` | Debian package only |
 | `npm run dist:appimage` | AppImage only |
+
+## Integration tests (GreenMail)
+
+`npm run build` is still the main verification gate, and there is no unit-test
+framework. The one exception is the sync layer, where the failure modes are
+protocol-level and expensive to get wrong (silent TLS downgrade, push that
+stops arriving, a cache wipe that loses mail). Those are covered by an
+integration suite that runs against a real mail server.
+
+```bash
+npm run test:imap           # start GreenMail, run the suite, tear it down
+npm run test:imap -- --keep # leave the container up for poking at afterwards
+```
+
+**Requires Docker.** The runner (`scripts/imap-integration.mjs`) starts
+[GreenMail](https://greenmail-mail-test.github.io/greenmail/) as
+`orbit-mail-greenmail-test` (IMAP 3143, IMAPS 3993, SMTP 3025), builds the
+suite with esbuild, and runs it inside a **windowless Electron main process** —
+the DB layer needs `app.getPath()`, and `better-sqlite3` is compiled against
+Electron's ABI, so plain `node` cannot host it. `userData` is redirected to a
+temp directory, so the suite never touches your real mail database.
+
+`scripts/imap-integration.suite.ts` imports the app's own services rather than
+reimplementing them, so it exercises the shipping code paths:
+
+| Area | What it asserts |
+|------|-----------------|
+| TLS | `'starttls'` requires the upgrade and *refuses* a server that does not offer it — GreenMail's plain port advertises no STARTTLS, so it is an accurate stand-in. Includes a guard proving the old mapping would have logged in over plaintext. |
+| Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
+| UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
+| IDLE | Push works, survives a full server restart, and resumes afterwards. |
+| Send | SMTP submission succeeds. |
+
+Notes for anyone extending it:
+
+- A first-ever sync of a folder only caches the newest `SYNC_BATCH_SIZE` (200)
+  messages — that is the app's initial-sync depth, not a bug. To build a cache
+  larger than one batch, sync, append newer mail, and sync again.
+- The UIDVALIDITY reset is triggered by writing a bogus stored validity rather
+  than by recreating the mailbox, so the trigger does not depend on how
+  GreenMail allocates validity numbers.
+- GreenMail is in-memory: a restart empties every mailbox but keeps the user.
+- A check reported as `todo` documents a known-open bug and does not fail the
+  run. There is currently one, for sent mail not being filed in `Sent` — see
+  `TODO.md`. Turn it into `ok` when that is fixed.
+- The suite exits non-zero on any failure, so it is CI-ready, but nothing runs
+  it automatically yet.
 
 ## Building & packaging
 

@@ -7,7 +7,7 @@ import {
   type ManualAccountCredentials
 } from './db-service'
 import {
-  imapFlowSecure,
+  imapConnectionSecurity,
   pop3ClientOptions,
   smtpTransportOptions
 } from './account-credentials'
@@ -32,7 +32,7 @@ export async function testManualAccountInput(input: ManualAccountInput): Promise
     const client = new ImapFlow({
       host: creds.incoming.host,
       port: creds.incoming.port,
-      secure: imapFlowSecure(creds.incoming.security),
+      ...imapConnectionSecurity(creds.incoming.security),
       auth: {
         user: creds.username,
         pass: creds.password

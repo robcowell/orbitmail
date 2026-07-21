@@ -65,8 +65,26 @@ export function isPasswordProvider(provider: Provider): boolean {
   return provider === 'imap' || provider === 'pop3'
 }
 
-export function imapFlowSecure(security: ConnectionSecurity): boolean {
-  return security === 'ssl'
+/**
+ * Map our connection-security setting onto ImapFlow's TLS options.
+ *
+ * `doSTARTTLS` must be set explicitly for the STARTTLS case: left undefined,
+ * ImapFlow treats the upgrade as opportunistic and continues in the clear when
+ * the server does not advertise the capability, which is a downgrade path for
+ * the credentials in the following LOGIN. `true` makes the upgrade mandatory —
+ * the connection fails instead. Setting it alongside `secure: true` is a
+ * misconfiguration ImapFlow rejects, so the SSL case leaves it unset.
+ *
+ * `'none'` also leaves it unset: the user asked for no requirement, but an
+ * opportunistic upgrade is still better than guaranteed cleartext.
+ */
+export function imapConnectionSecurity(security: ConnectionSecurity): {
+  secure: boolean
+  doSTARTTLS?: boolean
+} {
+  if (security === 'ssl') return { secure: true }
+  if (security === 'starttls') return { secure: false, doSTARTTLS: true }
+  return { secure: false }
 }
 
 export function smtpTransportOptions(config: ServerConfig, username: string, password: string) {

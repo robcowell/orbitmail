@@ -926,6 +926,14 @@ textarea {
   padding: 20px 24px;
   font-size: 14px;
   line-height: 1.6;
+  /* Message bodies are untrusted HTML rendered in the app document. Layout
+     containment makes this the containing block for positioned descendants, so
+     an escaped `position: fixed` resolves against the reader pane rather than
+     the viewport. The sanitizer strips fixed/sticky/absolute positioning; this
+     backstops it. Deliberately not `contain: paint` — that would clip wide
+     emails instead of letting them overflow. */
+  position: relative;
+  contain: layout;
 }
 
 .reader-body-loading {

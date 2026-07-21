@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import DOMPurify from 'dompurify'
 import type { AiAnalysis, DraftTone, MessageDetail } from '../../../shared/types'
+import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 import {
   useMailStore,
   toggleMessageStar,
@@ -301,13 +301,10 @@ export function MessageView() {
 
   // Sanitizing a large email is expensive; only redo it when the message body
   // actually changes, not on every unrelated store update (star, AI, selection).
-  const sanitizedHtml = useMemo(() => {
-    if (!selectedMessage?.bodyHtml) return null
-    return DOMPurify.sanitize(selectedMessage.bodyHtml, {
-      ADD_ATTR: ['target', 'href'],
-      FORBID_TAGS: ['script', 'style']
-    })
-  }, [selectedMessage?.id, selectedMessage?.bodyHtml])
+  const sanitizedHtml = useMemo(
+    () => sanitizeEmailHtml(selectedMessage?.bodyHtml),
+    [selectedMessage?.id, selectedMessage?.bodyHtml]
+  )
 
   // Conversation mode: a thread is open (takes priority over single-message).
   if (selectedThread && selectedThread.length > 0) {
@@ -768,13 +765,10 @@ const ThreadMessage = memo(function ThreadMessage({
   const [expanded, setExpanded] = useState(defaultExpanded)
   const isAnalyzing = aiAnalyzingId === message.id
 
-  const sanitizedHtml = useMemo(() => {
-    if (!message.bodyHtml) return null
-    return DOMPurify.sanitize(message.bodyHtml, {
-      ADD_ATTR: ['target', 'href'],
-      FORBID_TAGS: ['script', 'style']
-    })
-  }, [message.id, message.bodyHtml])
+  const sanitizedHtml = useMemo(
+    () => sanitizeEmailHtml(message.bodyHtml),
+    [message.id, message.bodyHtml]
+  )
 
   const handleBodyClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const anchor = (event.target as HTMLElement).closest('a')

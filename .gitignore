@@ -11,3 +11,21 @@ CLAUDE.md
 
 # integration test build output
 .integration-build
+
+# Android native port — build output only.
+# The port's source lives on the android branch, which carries its own
+# android/.gitignore (and one per module). These rules exist so the artifacts
+# left behind after building there don't show up as untracked noise on main,
+# or get swept into a `git add -A`. Deliberately scoped to generated paths, so
+# that if the port is merged here its source is still tracked normally.
+android/**/.gradle/
+android/**/build/
+android/**/.cxx/
+android/captures/
+android/local.properties
+# Room's exported schema JSON. Mirrors the decision already made in
+# android/data-layer/room/.gitignore on the port's branch — the SQL contract is
+# verified by the schema-verify module instead. (Android projects more often
+# commit these, since Room uses them to validate migrations; changing that is a
+# call for the port, not something to override from here.)
+android/**/schemas/

@@ -26,6 +26,65 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Impact:** `.deb` / AppImage users cannot sign in without cloning and configuring their own credentials. The bring-your-own path is now documented (README → Run your own copy), but there is still no zero-config option.
 - **Fix:** Ship registered public OAuth app IDs (needs verification + CASA for the restricted Gmail scope — see DEVELOPERS.md), or add an in-app settings screen for OAuth client configuration.
 
+## Security & correctness audit (2026-07-21)
+
+Full-codebase audit of the desktop app (Android port excluded). Findings are ranked by severity; file:line references were current at commit `0967177`. Everything below is **unfixed** unless marked.
+
+> Security-relevant entries are stated as what to change and where, without reproduction detail, since this repo is public and these are open items.
+
+**Fixed in `fix/renderer-isolation-hardening`:** untrusted email HTML could reach navigation sinks and `style`-based overlays that DOMPurify's defaults permit, and the `mailto:` body reached the compose editor's `innerHTML` unescaped. Three layers added: an expanded shared sanitizer (`src/utils/sanitizeEmailHtml.ts`), `will-navigate` blocking on both windows, and a renderer CSP.
+
+### High
+
+- **STARTTLS is not enforced on IMAP or SMTP-OAuth.** `account-credentials.ts:68-70` sets `secure: true` only for `'ssl'`; the `'starttls'` path relies on imapflow's opportunistic default rather than requiring the upgrade. **Fix:** pass `doSTARTTLS: true` when `security === 'starttls'`. `createOAuthTransport` (`smtp-send.ts:49`) has the same gap — it needs `requireTLS: true`, which the password path (`account-credentials.ts:78`) already sets.
+- **IDLE never reconnects — push mail dies silently.** `imap-idle.ts:96-97` deletes the runtime entry and *then* calls `scheduleIdleReconnect`, which returns early when the entry is missing. Same bug at `:162-166`. After any dropped socket the account falls back to the 90s poll for the rest of the session. **Fix:** schedule before deleting, or key the reconnect timer outside the runtime map.
+- **Sent mail never filed for manual IMAP accounts.** `smtp-send.ts:134` guards `appendToSentFolder` on `if (info.message)`, but nodemailer's SMTP transport info object has no `message` property — dead branch. Gmail/O365 mask it by auto-appending server-side; a self-hosted account's sent message exists nowhere.
+- **UIDVALIDITY change destroys the local cache.** `imap-sync.ts:694-710` forces `maxLocalUid = null` (so at most `SYNC_BATCH_SIZE` = 200 UIDs are resolved), then `clearFolderMessages` deletes every row before refetching only those 200. A 5,000-message folder is permanently reduced to 200. Also non-transactional: a dropped connection after the wipe leaves the folder empty.
+- **POP3 has no socket timeout, and one stall wedges all sync.** `pop3ClientOptions` never sets `timeout`, which node-pop3 requires to arm its socket timer. A stalled `RETR` leaves the promise pending forever with `syncStatus.syncing` stuck true, and every later poll and manual refresh short-circuits on `if (syncStatus.syncing) return`.
+- **FTS index deletes are a permanent no-op.** `messages_fts` is contentless, so `DELETE ... WHERE message_id = ?` (`search-index.ts:65`, `db/index.ts:301`) can never match — verified against the bundled SQLite: `changes: 0`, and re-indexing duplicates the row. Every upsert is delete-then-insert, so the index grows without bound. Compounding: **nothing queries it** — `buildFtsQuery` is dead code and `searchMessages` uses `LIKE`. Either delete by `rowid`, or drop the table and reclaim the per-message write cost.
+- **`listThreads`/`countThreads` scan the whole account per render.** `db-service.ts:691-706` groups on `COALESCE(thread_id, id)`, which no index serves, and applies `LIMIT/OFFSET` only after sorting every thread. 72ms at 3.3k messages, synchronous on the main process, twice per folder switch; ~2s at 100k. **Fix:** expression index or a materialized `thread_key` column.
+
+### Medium
+
+- **OAuth flows need PKCE and `state` validation** (`oauth-google.ts:42-51`, `oauth-microsoft.ts:60-73`). `state` is plumbed through `oauth-loopback.ts` but never generated or checked, and neither flow sends a code challenge. Google also skips `loopback.close()` on the failure path and has no timeout, so an abandoned sign-in leaves the listener running.
+- **Credential storage falls back to base64** when `safeStorage.isEncryptionAvailable()` is false (`account-credentials.ts:36`, `ai-service.ts:62`) — a normal state on Linux without a keyring. Surface it in the UI, or refuse to store.
+- **`attachments:open` hands the file straight to the OS opener** (`main.ts:818`) with no type check or confirmation step. Warn on executable types before `shell.openPath`.
+- **`shell:openExternal` does not validate the scheme** (`main.ts:806`). Restrict `new URL(url).protocol` to http/https/mailto in the main handler rather than trusting the renderer.
+- **STARTTLS autoconfig misparsed as implicit SSL.** `mail-autoconfig.ts:38` tests `includes('tls')` first and `'starttls'.includes('tls')` is true, so the `starttls` branch is unreachable for the literal string. Autodetected 143/587 accounts get stored as `ssl` and hang on a TLS handshake against a plaintext port.
+- **No index on `attachments.message_id`** (`db/index.ts:91-98`). Full scan on every email open, and with `ON DELETE CASCADE` on an unindexed child key, one full scan *per deleted parent row* — pruning 5,000 messages does 5,000 scans.
+- **`migrateFtsIndex` loads every body into one array** (`search-index.ts:83-87`). `.all()` over `body_text`+`body_html` is ~320MB of JS strings at startup before any window exists; OOMs on large mailboxes, and the success flag is written afterwards so it crash-loops. Use `.iterate()`.
+- **Unbounded attachment buffering during sync** (`imap-sync.ts:497,539-564`) — 200 parsed messages retain their attachment `Buffer`s until the batch write (~2GB for a folder averaging 10MB attachments). The buffers are never used: only filename/type/size are stored.
+- **Packaged builds can't do OAuth.** `out/main/index.js` still contains a literal `process.env.GOOGLE_CLIENT_ID` — Vite doesn't inline arbitrary env vars into main, and `build.files` ships only `out/**` + `package.json`, so `dotenv/config` finds no `.env`. Sign-in should fail outright in a `.deb`/AppImage. Contradicts the "embedded at build time" claim in CLAUDE.md and DEVELOPERS.md; related to **End-user OAuth distribution** above but a separate, sharper bug.
+- **Unguarded DDL in `migrateSchema`** (`db/index.ts:163`) — the `UNIQUE` index on `(folder_id, uid)` postdates the MVP, which had no such constraint; a pre-existing duplicate throws out of startup with no in-app recovery, on every launch.
+- **POP3 UID is a 32-bit hash** (`pop3-sync.ts:41-48`, duplicated in `attachment-fetch.ts:191`) — ~1% collision chance at 10k messages. A collision silently skips a new message, or makes `DELE` delete the *wrong* message from the server.
+- **Out-of-window POP3 messages re-download forever** (`pop3-sync.ts:91-101`) — the UID-skip check runs before the window check and windowed-out messages are never stored, so up to 200 full `RETR`+parse cycles run every 20s.
+- **mbox export is lossy** (`folder-actions.ts:120-137`) — no `>From ` quoting (silently splits messages in every reader), whole folder materialized twice in memory, `toString('utf8')` corrupts 8-bit content.
+- **DB never reclaims space** — `auto_vacuum=0` and no `VACUUM` anywhere; 148MB of a 331MB test DB was freelist.
+- **Local search full-scans the account with `LIKE` over `body_html`** on the main process, with a renderer-supplied `limit` that is never clamped (`db-service.ts:1736-1759`).
+- **On-disk permissions are left at defaults.** Raw `.eml` exports are written to `/tmp` and never cleaned up (`imap-sync.ts:1372`); the DB file is 0644 and the data/attachments dirs 0775, relying on Electron having created `~/.config/orbit-mail` as 0700. Set explicit modes (`0o700` dirs, `0o600` DB incl. `-wal`/`-shm`) and clean up temp exports.
+- **Remote content loads unconditionally** — no block-remote-images preference anywhere, so opening an email confirms the read and reveals the client's IP to the sender (`img src`, `background`, `style="background:url(…)"`).
+- **AI prompt handling trusts message content** — bodies are interpolated straight into the prompt with no fencing or distrust framing (`ai-service.ts:287-296`, `:437-439`), and drafts derived from them are offered to the user to send. `isFromUser` also matches with `fromLower.includes(email)`, so a display name can flip the analysis polarity.
+
+### Low
+
+- Optimistic star/read/flag never rolls back in threaded view (the default), because `patchMessageInList` returns `null` when the row exists only in `selectedMessage` (`mailStore.ts:287-320`).
+- `selectThread` has no error handling — a failed fetch pins "Loading conversation…" forever and rejects into a `void` call (`mailStore.ts:535-563`); milder in `selectMessage:1165`.
+- Thread mutations (`deleteThread`, `archiveThread`, `moveThreadToFolder`) test a pre-`await` state snapshot, so the reader can keep showing a deleted conversation.
+- Compose sends the original message's **unsanitized** HTML in the quote block (`ComposeWindow.tsx:131-133`), carrying the sender's trackers into replies and the Sent folder.
+- Bulk delete/prune paths are non-transactional and re-count folder unread per row; attachment files are unlinked before their DB rows.
+- Attachments sharing a filename overwrite each other on disk (`attachment-fetch.ts:65` has no per-attachment discriminator).
+- Accounts dedupe by email alone (`db-service.ts:38-41`), so adding a manual account overwrites an existing OAuth one in place.
+- Renderer-supplied `attachmentPaths` are `readFileSync`'d with no allowlist (`smtp-send.ts:125-130`); the main process should track dialog-approved paths instead of trusting the renderer.
+- `buildLikePattern` leaves `_` as a live LIKE wildcard (`search-index.ts:36-40`); `SEARCH_FIELD_COLUMNS[field]` resolves `'constructor'` via the prototype and throws (`db-service.ts:1746`).
+- Pooled IMAP client replaced without closing the old socket when `usable === false` (`imap-pool.ts:95-98`); flag reconciliation holds the account's connection lane across every folder (`imap-sync.ts:1106-1117`).
+- The global `uncaughtException` handler logs and continues in an undefined state (`main.ts:114`); `void reconcileAllAccountsFlags(...)` at `imap-sync.ts:884` is the one `void` call site missing a `.catch()`.
+- `folder-actions.ts:73` annotates a return type `Account` that is never imported (esbuild strips it, so `npm run build` passes).
+- Preferences: every UI change rewrites the whole `app_state` blob including the sender lists (`preferences-service.ts:75-81`), and `getAppState()` returns the cached object by reference; `before-quit` flushes via a fire-and-forget `executeJavaScript`, so the last change can be lost.
+
+### Checked and clean
+
+No `rejectUnauthorized: false` anywhere. No SQL injection (every dynamic fragment is placeholder generation; no dynamic column/table names). No SMTP header injection (nodemailer strips CR/LF — verified directly). No attachment path traversal. No schema drift between `schema.ts`, `CREATE TABLE`, and `migrateSchema`. AI cache columns correctly survive sync upserts. The print path is sound: escaped interpolation, sanitized body, hidden window with `javascript: false`, `sandbox: true`, no preload. Renderer listener/interval cleanup is correct throughout.
+
 ## AI follow-ups
 
 - Thread / conversation-level analysis (currently single-message and folder-level sweep only).

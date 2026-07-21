@@ -4,29 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      Defence in depth for rendered email HTML (the main process also blocks
-      off-app navigation, and the sanitizer strips the tags that reach these
-      sinks). `form-action`/`object-src`/`frame-src`/`base-uri` are the ones
-      that matter here. `script-src` keeps 'unsafe-inline' because Vite's dev
-      server injects the react-refresh preamble inline; `img-src` stays open
-      because remote images in mail are currently allowed to load. `file:` is
-      listed explicitly because a packaged build loads the renderer over
-      file://, where Chromium's `'self'` matching is not dependable.
+      The Content-Security-Policy meta tag is injected at the top of <head> by
+      the `orbit-csp` plugin in electron.vite.config.ts, which serves a stricter
+      policy to production builds than to the dev server. See that file for the
+      policies and why they differ.
     -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self' file:;
-               script-src 'self' file: 'unsafe-inline' 'unsafe-eval';
-               style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com;
-               font-src 'self' file: data: https://fonts.gstatic.com;
-               img-src 'self' file: data: blob: https: http:;
-               media-src 'self' file: data: https: http:;
-               connect-src 'self' ws: wss: https://fonts.googleapis.com https://fonts.gstatic.com;
-               form-action 'none';
-               object-src 'none';
-               frame-src 'none';
-               base-uri 'none'"
-    />
     <title>Orbit Mail</title>
     <link rel="icon" type="image/svg+xml" href="/orbit-mark.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />

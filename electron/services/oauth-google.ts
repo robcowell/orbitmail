@@ -1,5 +1,5 @@
-import { OAuth2Client } from 'google-auth-library'
-import { startLoopbackServer, openExternalAuthUrl } from './oauth-loopback'
+import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library'
+import { startLoopbackServer, openExternalAuthUrl, generateState } from './oauth-loopback'
 import { updateAccountTokens, type TokenData } from './db-service'
 
 const GMAIL_SCOPE = 'https://mail.google.com/'
@@ -36,22 +36,37 @@ async function validateGoogleMailScope(accessToken: string): Promise<void> {
 
 export async function authenticateGoogle(): Promise<TokenData> {
   const client = getGoogleClient()
-  const loopback = await startLoopbackServer()
+  const state = generateState()
+  const loopback = await startLoopbackServer({ expectedState: state })
   const redirectUri = `http://127.0.0.1:${loopback.port}/callback`
 
-  const authUrl = client.generateAuthUrl({
-    access_type: 'offline',
-    prompt: 'select_account consent',
-    include_granted_scopes: true,
-    scope: [GMAIL_SCOPE, 'openid', 'email', 'profile'],
-    redirect_uri: redirectUri
-  })
+  let code: string
+  // PKCE binds the authorization code to this attempt: the code is worthless
+  // without the verifier, which never leaves the process. `state` is checked by
+  // the loopback listener before the code is accepted at all.
+  const { codeVerifier, codeChallenge } = await client.generateCodeVerifierAsync()
 
-  await openExternalAuthUrl(authUrl)
-  const { code } = await loopback.waitForCode()
-  loopback.close()
+  try {
+    const authUrl = client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'select_account consent',
+      include_granted_scopes: true,
+      scope: [GMAIL_SCOPE, 'openid', 'email', 'profile'],
+      redirect_uri: redirectUri,
+      state,
+      code_challenge_method: CodeChallengeMethod.S256,
+      code_challenge: codeChallenge
+    })
 
-  const { tokens } = await client.getToken({ code, redirect_uri: redirectUri })
+    await openExternalAuthUrl(authUrl)
+    code = await loopback.waitForCode()
+  } finally {
+    // Covers the abandoned/failed sign-in too, which previously left the
+    // listener bound for the life of the app.
+    loopback.close()
+  }
+
+  const { tokens } = await client.getToken({ code, codeVerifier, redirect_uri: redirectUri })
   client.setCredentials(tokens)
 
   const accessToken = tokens.access_token

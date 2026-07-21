@@ -1,9 +1,10 @@
 import {
   PublicClientApplication,
+  CryptoProvider,
   type AuthenticationResult,
   type JsonCache
 } from '@azure/msal-node'
-import { startLoopbackServer, openExternalAuthUrl } from './oauth-loopback'
+import { startLoopbackServer, openExternalAuthUrl, generateState } from './oauth-loopback'
 import type { TokenData } from './db-service'
 
 // Delegated scopes for IMAP/SMTP client access to Exchange Online via XOAUTH2.
@@ -49,7 +50,8 @@ function extractRefreshToken(msal: PublicClientApplication): string | undefined 
 }
 
 export async function authenticateMicrosoft(): Promise<TokenData> {
-  const loopback = await startLoopbackServer()
+  const state = generateState()
+  const loopback = await startLoopbackServer({ expectedState: state })
   // RFC 8252 loopback redirect. Entra ignores the port for loopback URIs, so the
   // app registration only needs the redirect URI `http://127.0.0.1/callback` once.
   const redirectUri = `http://127.0.0.1:${loopback.port}/callback`
@@ -57,19 +59,29 @@ export async function authenticateMicrosoft(): Promise<TokenData> {
 
   let result: AuthenticationResult | null
   try {
+    // PKCE binds the authorization code to this attempt; `state` is checked by
+    // the loopback listener before the code is accepted at all. MSAL does not
+    // add either unless asked.
+    const { verifier, challenge } = await new CryptoProvider().generatePkceCodes()
+
     const authUrl = await msal.getAuthCodeUrl({
       scopes: MS_SCOPES,
       redirectUri,
-      prompt: 'select_account'
+      prompt: 'select_account',
+      state,
+      codeChallenge: challenge,
+      codeChallengeMethod: 'S256'
     })
 
     await openExternalAuthUrl(authUrl)
-    const { code } = await loopback.waitForCode()
+    const code = await loopback.waitForCode()
 
     result = await msal.acquireTokenByCode({
       code,
       scopes: MS_SCOPES,
-      redirectUri
+      redirectUri,
+      codeVerifier: verifier,
+      state
     })
   } finally {
     loopback.close()

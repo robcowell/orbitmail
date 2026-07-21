@@ -56,7 +56,7 @@ Remaining items still reference the audit-time line numbers, which have shifted 
 
 ### Medium
 
-- **OAuth flows need PKCE and `state` validation** (`oauth-google.ts:42-51`, `oauth-microsoft.ts:60-73`). `state` is plumbed through `oauth-loopback.ts` but never generated or checked, and neither flow sends a code challenge. Google also skips `loopback.close()` on the failure path and has no timeout, so an abandoned sign-in leaves the listener running.
+- ~~**OAuth flows need PKCE and `state` validation.**~~ **Fixed** (#37) — both flows now send a PKCE challenge (S256) and a per-attempt random `state`, which the loopback listener checks before accepting a code. A mismatched callback is answered and ignored rather than treated as an error, so a hostile page cannot abort a real sign-in by racing it. The listener also has a 5-minute timeout and closes on every path, including an abandoned or failed attempt. Covered by the integration suite.
 - **Credential storage falls back to base64** when `safeStorage.isEncryptionAvailable()` is false (`account-credentials.ts:36`, `ai-service.ts:62`) — a normal state on Linux without a keyring. Surface it in the UI, or refuse to store.
 - **`attachments:open` hands the file straight to the OS opener** (`main.ts:818`) with no type check or confirmation step. Warn on executable types before `shell.openPath`.
 - **`shell:openExternal` does not validate the scheme** (`main.ts:806`). Restrict `new URL(url).protocol` to http/https/mailto in the main handler rather than trusting the renderer.

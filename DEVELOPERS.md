@@ -265,7 +265,8 @@ Local database path: `~/.config/orbit-mail/data/orbit-mail.db`
 framework. The one exception is the sync layer, where the failure modes are
 protocol-level and expensive to get wrong (silent TLS downgrade, push that
 stops arriving, a cache wipe that loses mail). Those are covered by an
-integration suite that runs against a real mail server.
+integration suite that runs against a real mail server. It also covers the
+OAuth loopback listener, which is a security control worth a regression guard.
 
 ```bash
 npm run test:imap           # start GreenMail, run the suite, tear it down
@@ -285,6 +286,7 @@ reimplementing them, so it exercises the shipping code paths:
 
 | Area | What it asserts |
 |------|-----------------|
+| OAuth | The loopback listener accepts a callback only when its `state` matches this attempt's, so an injected authorization code cannot complete a sign-in; a genuine callback still works after rejected ones; an abandoned sign-in times out and releases the port. (Needs no mail server, but rides along here rather than adding a second test command.) |
 | TLS | `'starttls'` requires the upgrade and *refuses* a server that does not offer it — GreenMail's plain port advertises no STARTTLS, so it is an accurate stand-in. Includes a guard proving the old mapping would have logged in over plaintext. |
 | Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |

@@ -131,6 +131,57 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('OAuth: the loopback listener accepts only our own callback')
+  // -------------------------------------------------------------------------
+  {
+    // The listener is reachable by anything that can talk to localhost, which
+    // includes any web page the user has open. Without a state check, such a
+    // page could deliver its own authorization code and the app would exchange
+    // it, binding the attacker's mailbox to this client.
+    const { startLoopbackServer, generateState } = await import(
+      '../electron/services/oauth-loopback'
+    )
+    const status = async (port: number, qs: string) =>
+      (await fetch(`http://127.0.0.1:${port}/callback${qs}`)).status
+
+    const state = generateState()
+    const srv = await startLoopbackServer({ expectedState: state })
+    let resolved: string | null = null
+    void srv.waitForCode().then((c) => {
+      resolved = c
+    })
+
+    const wrong = await status(srv.port, '?code=ATTACKER_CODE&state=wrong')
+    const missing = await status(srv.port, '?code=ATTACKER_CODE')
+    await sleep(100)
+    ok('callback with a wrong state is rejected', wrong === 400, `HTTP ${wrong}`)
+    ok('callback with no state is rejected', missing === 400, `HTTP ${missing}`)
+    ok('an injected code never completes the flow', resolved === null, String(resolved))
+
+    // A hostile page must not be able to abort a real sign-in by racing it.
+    const real = await status(srv.port, `?code=REAL_CODE&state=${encodeURIComponent(state)}`)
+    await sleep(100)
+    ok('the genuine callback still succeeds afterwards',
+      real === 200 && resolved === 'REAL_CODE', `HTTP ${real} code=${resolved}`)
+    srv.close()
+
+    ok('state is high-entropy and per-attempt',
+      generateState() !== generateState() && generateState().length >= 40)
+
+    // An abandoned sign-in must not leave the port bound for the app's lifetime.
+    const abandoned = await startLoopbackServer({ expectedState: generateState(), timeoutMs: 300 })
+    const err = await abandoned.waitForCode().then(() => null, (e: Error) => e)
+    ok('an abandoned sign-in times out', !!err && /timed out/i.test(err.message), err?.message)
+    let stillUp = true
+    try {
+      await fetch(`http://127.0.0.1:${abandoned.port}/callback`)
+    } catch {
+      stillUp = false
+    }
+    ok('the listener is closed after timing out', !stillUp)
+  }
+
+  // -------------------------------------------------------------------------
   section('TLS: STARTTLS must be required, not opportunistic')
   // -------------------------------------------------------------------------
   {

@@ -276,7 +276,10 @@ export function AddAccountWizard() {
               <button className="btn btn-secondary" onClick={() => addAccount('gmail')}>
                 Gmail (OAuth)
               </button>
-              <button className="btn btn-primary" onClick={() => addAccount('o365')}>
+              {/* All three are equal choices — none is a primary action, so none
+                  gets the brand gradient. Microsoft 365 used to, which read as a
+                  recommendation the app has no basis for making. */}
+              <button className="btn btn-secondary" onClick={() => addAccount('o365')}>
                 Microsoft 365 (OAuth)
               </button>
               <button className="btn btn-secondary" onClick={() => setView('manual')}>

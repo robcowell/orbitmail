@@ -15,8 +15,7 @@ Technical documentation for building, configuring, and contributing to Orbit Mai
 git clone <your-repo-url> orbit-mail
 cd orbit-mail
 npm install
-cp .env.example .env
-# Edit .env with your OAuth client IDs (for Gmail/O365)
+cp .env.example .env   # optional — Gmail/O365 only, and can be entered in-app instead
 npm run dev
 ```
 
@@ -150,13 +149,13 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 └───────────────────────────┬─────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────┐
-│  SQLite (better-sqlite3 + Drizzle) + FTS5               │
+│  SQLite (better-sqlite3 + Drizzle)                      │
 └─────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Technology |
 |-------|------------|
-| Shell | Electron 34, electron-vite |
+| Shell | Electron 39, electron-vite |
 | UI | React 18, TypeScript, Zustand, Phosphor Icons |
 | IMAP | imapflow (sync, IDLE, move, flags) |
 | POP3 | node-pop3 (inbox-only sync) |
@@ -164,7 +163,7 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 | Parsing | mailparser |
 | OAuth | google-auth-library, @azure/msal-node |
 | AI (optional) | @anthropic-ai/sdk (Claude Opus 4.8) |
-| Storage | better-sqlite3, Drizzle ORM, FTS5 |
+| Storage | better-sqlite3, Drizzle ORM |
 | HTML sanitization | DOMPurify |
 
 ### Sync model
@@ -205,9 +204,17 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   SEARCH keys over the INBOX for plain IMAP — imports the matches into the DB so they
   open like any cached message, and returns them. This reaches mail outside the local
   sync window. POP3 has no server-side search.
-- The FTS5 index (`messages_fts`) is still built on sync but is **not** currently used
-  by the query path; scoped substring search is used instead because it also covers
-  From/To, which the FTS index does not store.
+- **There is no full-text index.** A contentless FTS5 table (`messages_fts`) used to be
+  maintained on every synced message and was never queried — the search path has always
+  used `LIKE`. It could not have worked either: a contentless FTS5 table reads every
+  column back as NULL, so its delete-by-`message_id` never matched and it accumulated a
+  duplicate row per re-index. It was removed (#36) rather than repaired, taking ~0.5ms
+  per synced message and ~8MB with it.
+- If full-text search is wanted later, build it as an **external-content** FTS5 table
+  over `messages` (`content='messages'`, joined on the implicit `rowid`) maintained by
+  triggers — that stores no duplicate text and makes deletes work. Note it changes
+  matching: FTS matches whole tokens, so `mail` would stop matching `gmail`, which
+  today's substring `LIKE` does. Preserving that needs prefix or trigram tokenisation.
 
 ### Performance notes
 
@@ -220,6 +227,19 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   on background refresh, so memoized rows skip re-render and the list doesn't flicker.
 - **DB** — WAL + tuned pragmas; `COUNT(*)` for counts; list queries project just the
   summary columns (no body blobs); partial index on unread rows.
+- **Thread listing** — threads are keyed by `COALESCE(thread_id, id)`, which no plain
+  column index can serve, so `listThreads`/`countThreads` were scanning the account and
+  building temp b-trees on every folder switch. Two expression indexes fixed that (#35):
+  `(account_id, COALESCE(thread_id, id), date)` for the per-thread `MAX(date)`, and
+  `(folder_id, account_id, COALESCE(thread_id, id), is_read)` as a covering index for
+  "which conversations are in this folder" — `account_id` must precede the expression or
+  the `DISTINCT` cannot use it. Measured on a 3.3k-message profile: list 57.7→35.4ms,
+  count 3.9→1.0ms. **Still linear in account size**: the remaining cost is `MAX(date)`
+  per thread plus a sort of every thread before `LIMIT`. Going sub-linear needs a
+  denormalised thread key and last-activity date.
+- **Connection lane** — `imap-pool` serialises operations per account. Anything holding
+  the lane across many folders blocks user actions behind it; the flag reconcile now
+  re-borrows per folder for that reason (#34).
 
 ### Project layout
 
@@ -228,7 +248,7 @@ orbit-mail/
 ├── electron/           # Main process: sync, OAuth, DB, IPC
 │   ├── main.ts
 │   ├── preload.ts
-│   ├── db/             # Schema, migrations, FTS
+│   ├── db/             # Schema, migrations
 │   └── services/       # imap-sync, smtp-send, oauth-*, etc.
 ├── src/                # Renderer: React UI
 ├── shared/             # Types shared between main and renderer
@@ -253,6 +273,75 @@ orbit-mail/
 
 Local database path: `~/.config/orbit-mail/data/orbit-mail.db`
 
+## Security posture
+
+What the app defends against, and the tests that keep it that way. All of this
+was added or hardened in a July 2026 audit pass; `TODO.md` lists what remains.
+
+### Rendered email is hostile input
+
+A message body is attacker-controlled HTML injected into the app's own document,
+which carries the full-privilege preload. Three independent layers:
+
+1. **Sanitizer** — `src/utils/sanitizeEmailHtml.ts`, one shared helper for every
+   render path. DOMPurify's defaults are tuned for "safe HTML in a web page", not
+   for a document holding an IPC bridge, so it additionally forbids navigation
+   sinks (`form`, `button`, `input`, and `action`/`formaction`/`method`/`target`),
+   embedding sinks (`iframe`, `object`, `embed`), and document-level tags
+   (`base`, `meta`, `link`). An `afterSanitizeAttributes` hook strips
+   `position: fixed|sticky|absolute` and its offsets from `style` attributes —
+   DOMPurify never inspects style *contents*, which otherwise left the reader
+   pane paintable over with a convincing fake UI.
+2. **Navigation** — `blockOffAppNavigation` in `main.ts` cancels `will-navigate`
+   and `will-frame-navigate` to anything outside the app shell, forwarding
+   `http(s)` to the OS browser. Without it, a form submit inside an email could
+   navigate the renderer to an attacker page that inherits `window.orbitMail`.
+3. **CSP** — injected per mode by the `orbit-csp` plugin in
+   `electron.vite.config.ts`. Production gets `script-src 'self' file:`;
+   the dev server additionally needs `'unsafe-inline'` for the react-refresh
+   preamble. Neither uses `'unsafe-eval'`. `form-action`, `object-src`,
+   `frame-src` and `base-uri` are all `'none'`.
+
+**Not defended:** remote content loads unconditionally, so opening a message
+confirms the read and reveals the client's IP to the sender. There is no
+block-remote-images preference yet.
+
+### Transport
+
+`imapConnectionSecurity()` maps `'starttls'` to `{ secure: false, doSTARTTLS: true }`,
+making the upgrade **mandatory** — ImapFlow's default is opportunistic and
+continues in the clear when the server does not advertise STARTTLS. The SMTP
+OAuth transport sets `requireTLS` for the same reason. Consequence worth knowing:
+an account configured as STARTTLS against a server that does not offer it now
+fails to connect rather than silently sending credentials unencrypted.
+
+### OAuth
+
+Both flows send a per-attempt random `state` and an S256 PKCE challenge, and the
+loopback listener refuses to hand back a code unless `state` matches. The
+listener is reachable by anything that can talk to localhost — including any web
+page the user has open — so without that check a hostile page could deliver its
+own authorization code and bind its mailbox to this client. A mismatched
+callback is answered and ignored rather than treated as an error, so a hostile
+page cannot abort a legitimate sign-in by racing it. The listener also times out
+after 5 minutes and closes on every path.
+
+### Credentials
+
+Rule 5 in CLAUDE.md: **never put credentials in a build**. See
+[OAuth setup](#oauth-setup) for where they come from instead. Account passwords
+and tokens are encrypted with `safeStorage`; when no keyring is available that
+degrades to base64, which is an open item in `TODO.md`.
+
+### Attachments
+
+Opening an attachment whose extension can execute (`.desktop`, `.sh`, `.jar`,
+`.exe`, …) prompts first, naming the real extension — the point of a
+`.pdf.exe` is that the eye stops reading at `.pdf`. See
+`electron/services/attachment-safety.ts`. Attachment files are written `0600`
+and keyed by attachment id, so two parts sharing a filename cannot overwrite
+each other.
+
 ## Scripts
 
 | Command | Description |
@@ -273,8 +362,9 @@ Local database path: `~/.config/orbit-mail/data/orbit-mail.db`
 framework. The one exception is the sync layer, where the failure modes are
 protocol-level and expensive to get wrong (silent TLS downgrade, push that
 stops arriving, a cache wipe that loses mail). Those are covered by an
-integration suite that runs against a real mail server. It also covers the
-OAuth loopback listener, which is a security control worth a regression guard.
+integration suite that runs against a real mail server. It has since grown to
+cover the security controls and a few pure-logic invariants too — 71 checks in
+all — because those are the things that fail silently.
 
 ```bash
 npm run test:imap           # start GreenMail, run the suite, tear it down
@@ -301,6 +391,10 @@ reimplementing them, so it exercises the shipping code paths:
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once, shares its Message-ID with the delivered copy, and does not carry `Bcc` in its headers. |
+| Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning, and ordinary documents are not. |
+| OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
+| Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
+| IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 
 Notes for anyone extending it:
 
@@ -355,7 +449,7 @@ sudo dpkg -i release/Orbit\ Mail-*.deb
 
 Packaged builds install a `.desktop` launcher with `StartupWMClass=orbit-mail` for correct taskbar/window grouping on Cinnamon and other desktops. `mailto:` handling is opt-in so the app does not hijack links from browsers or admin consoles.
 
-OAuth credentials from `.env` are embedded at build time via electron-vite environment loading — rebuild after changing `.env`.
+**Packages never contain OAuth credentials** (CLAUDE.md rule 5, enforced by `npm run test:imap`). A build made with a `.env` present is byte-identical in this respect to one made without: credentials are resolved at runtime from the environment, `~/.config/orbit-mail/.env`, or the Add Account dialog. There is nothing to rebuild after changing them.
 
 ## Troubleshooting (development)
 

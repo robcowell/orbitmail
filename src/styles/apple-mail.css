@@ -2287,6 +2287,11 @@ textarea {
   font-size: 13px;
   z-index: 200;
   animation: fadeIn 0.2s ease;
+  /* Errors can be a sentence or two — without these a long message renders as
+     one line wider than the window. */
+  max-width: min(560px, calc(100vw - 48px));
+  line-height: 1.45;
+  text-align: center;
 }
 
 .theme-toggle {

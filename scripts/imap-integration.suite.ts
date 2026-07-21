@@ -131,6 +131,102 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('OAuth config: credentials must never be built into the app')
+  // -------------------------------------------------------------------------
+  {
+    // A packaged app is started from a desktop entry, so dotenv's cwd lookup
+    // finds nothing and .env is not in electron-builder's `files`. Credentials
+    // therefore come from the environment, ~/.config/orbit-mail/.env, or values
+    // baked in at build time — in that order.
+    const cfg = await import('../electron/services/oauth-config')
+    const saved = {
+      gid: process.env.GOOGLE_CLIENT_ID,
+      gsecret: process.env.GOOGLE_CLIENT_SECRET,
+      mid: process.env.MICROSOFT_CLIENT_ID,
+      tenant: process.env.MICROSOFT_TENANT_ID
+    }
+    try {
+      process.env.GOOGLE_CLIENT_ID = 'runtime-id'
+      process.env.GOOGLE_CLIENT_SECRET = 'runtime-secret'
+      const google = cfg.getGoogleOAuthConfig()
+      ok('credentials are read from the environment at runtime',
+        google.clientId === 'runtime-id' && google.clientSecret === 'runtime-secret')
+
+      process.env.MICROSOFT_CLIENT_ID = 'ms-id'
+      delete process.env.MICROSOFT_TENANT_ID
+      ok('microsoft tenant defaults to common',
+        cfg.getMicrosoftOAuthConfig().tenantId === 'common')
+
+      // This suite is bundled without the app's define block, so with the
+      // environment cleared there is nothing left to fall back to.
+      delete process.env.GOOGLE_CLIENT_ID
+      delete process.env.GOOGLE_CLIENT_SECRET
+      let err: Error | null = null
+      try {
+        cfg.getGoogleOAuthConfig()
+      } catch (e) {
+        err = e as Error
+      }
+      ok('missing credentials throw rather than half-configure', err !== null)
+      ok('the error names every place they can be supplied',
+        !!err && err.message.includes('~/.config/orbit-mail/.env') && err.message.includes('.env'),
+        err?.message.split('\n')[0])
+      ok('hasGoogleOAuthConfig reports absence without throwing',
+        cfg.hasGoogleOAuthConfig() === false)
+    } finally {
+      const restore = (k: string, v: string | undefined) => {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+      restore('GOOGLE_CLIENT_ID', saved.gid)
+      restore('GOOGLE_CLIENT_SECRET', saved.gsecret)
+      restore('MICROSOFT_CLIENT_ID', saved.mid)
+      restore('MICROSOFT_TENANT_ID', saved.tenant)
+    }
+
+    // A build must never contain credentials: a package has to be safe to hand
+    // to someone else. This is the guard on that promise.
+    const { existsSync, readFileSync } = await import('fs')
+    const bundle = join(process.cwd(), 'out', 'main', 'index.js')
+    const configSource = join(process.cwd(), 'electron.vite.config.ts')
+
+    if (existsSync(configSource)) {
+      const config = readFileSync(configSource, 'utf8')
+      ok('the build config defines no OAuth constants',
+        !/__OAUTH_|GOOGLE_CLIENT|MICROSOFT_CLIENT/.test(config))
+    }
+
+    if (!existsSync(bundle)) {
+      todo('build output present to scan for credentials', false, 'run npm run build first')
+    } else {
+      const source = readFileSync(bundle, 'utf8')
+      ok('no OAuth placeholders survive in the bundle',
+        !source.includes('__OAUTH_'))
+
+      // Read the project .env directly rather than the environment: this suite
+      // does not load it, and a developer machine is exactly where a leak would
+      // show up. CI has no .env, so there it degrades to the checks above.
+      const envPath = join(process.cwd(), '.env')
+      const values = existsSync(envPath)
+        ? readFileSync(envPath, 'utf8')
+            .split('\n')
+            .map((line) => /^\s*(GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|MICROSOFT_CLIENT_ID)\s*=\s*(.+)$/.exec(line))
+            .filter((m): m is RegExpExecArray => !!m)
+            .map((m) => ({ key: m[1], value: m[2].trim().replace(/^["']|["']$/g, '') }))
+            .filter((entry) => entry.value.length > 8)
+        : []
+      const leaked = values.filter((entry) => source.includes(entry.value))
+      ok('no real credential value appears in the build output',
+        leaked.length === 0,
+        leaked.length
+          ? `LEAKED: ${leaked.map((l) => l.key).join(', ')}`
+          : values.length
+            ? `checked ${values.length} value(s) from .env`
+            : 'no .env present to check against')
+    }
+  }
+
+  // -------------------------------------------------------------------------
   section('Attachments: opening one must not silently run code')
   // -------------------------------------------------------------------------
   {

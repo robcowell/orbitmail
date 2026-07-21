@@ -6,6 +6,7 @@ import {
 } from '@azure/msal-node'
 import { startLoopbackServer, openExternalAuthUrl, generateState } from './oauth-loopback'
 import type { TokenData } from './db-service'
+import { getMicrosoftOAuthConfig } from './oauth-config'
 
 // Delegated scopes for IMAP/SMTP client access to Exchange Online via XOAUTH2.
 // These are requested dynamically at sign-in and consented by the user, so they do
@@ -20,11 +21,7 @@ const MS_SCOPES = [
 ]
 
 function getMsalApp(): PublicClientApplication {
-  const clientId = process.env.MICROSOFT_CLIENT_ID
-  const tenantId = process.env.MICROSOFT_TENANT_ID ?? 'common'
-  if (!clientId) {
-    throw new Error('MICROSOFT_CLIENT_ID must be set in .env')
-  }
+  const { clientId, tenantId } = getMicrosoftOAuthConfig()
 
   return new PublicClientApplication({
     auth: {

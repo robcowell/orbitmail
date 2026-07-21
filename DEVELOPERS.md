@@ -42,7 +42,14 @@ If the launcher icon is missing, run `npm run icons` before `npm run install:des
 
 OAuth client IDs are loaded from a `.env` file at dev/build time. End users of packaged builds need registered app credentials until in-app OAuth configuration is added (see [Known limitations](#known-limitations)).
 
-**Bring-your-own-credentials.** Orbit Mail does **not** ship with bundled Google/Microsoft credentials. Established open-source clients — Thunderbird (Mozilla), and Evolution/Geary via GNOME Online Accounts — each register one OAuth client, take it through full verification, and embed it so sign-in "just works" for every user. That approach carries a recurring verification and security-assessment burden (see [Full verification & CASA](#full-verification--casa-public-distribution-only)) that only an org can realistically sustain. Instead, each person running Orbit Mail (or building their own copy) registers their **own** OAuth app and drops the client ID into `.env`. The cost of that model is the one-time setup below, plus an "unverified app" click-through per account — in exchange for zero verification cost and no user cap beyond Google's unverified 100.
+**Credentials are never built into a package.** This is a hard rule (CLAUDE.md, rule 5). A build must be safe to hand to someone else, and anything compiled into the bundle ships with it — the builder would be distributing their own Google client secret and Microsoft app identity, with abuse landing on their Cloud project, and a package cannot be recalled. Inlining `.env` at build time via a Vite `define` is the obvious way to make packaged sign-in "just work"; it is prohibited here. `npm run test:imap` fails if any credential value appears in `out/main/index.js`, or if the build config gains OAuth constants.
+
+**Where credentials come from at runtime**, first hit wins:
+
+1. **The process environment** — a developer's `.env` (loaded by dotenv in `main.ts`), or an operator export.
+2. **`~/.config/orbit-mail/.env`** — how someone running a packaged build supplies their own. Same `KEY=value` format; environment variables win over it.
+
+Building without credentials is the normal case for anything you intend to distribute, and is not an error: sign-in then fails with a message naming both locations above.
 
 ```bash
 cp .env.example .env

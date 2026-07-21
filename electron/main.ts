@@ -1,7 +1,8 @@
 import 'dotenv/config'
+import { parse as parseDotenv } from 'dotenv'
 import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
 import { join, basename } from 'path'
-import { statSync, writeFileSync, copyFileSync } from 'fs'
+import { statSync, writeFileSync, copyFileSync, existsSync, readFileSync } from 'fs'
 import type {
   ComposePayload,
   SyncStatus,
@@ -124,6 +125,25 @@ process.on('uncaughtException', (err) => {
   console.error('[orbit-mail] Uncaught exception:', err)
 })
 
+// A packaged app is launched from a desktop entry, so dotenv's cwd lookup above
+// finds nothing. Give people running a build a place to put their own OAuth
+// credentials without rebuilding. Existing environment variables win, so this
+// never overrides a developer's shell or the project .env.
+function loadUserEnvFile(): void {
+  const path = join(app.getPath('userData'), '.env')
+  if (!existsSync(path)) return
+  try {
+    const parsed = parseDotenv(readFileSync(path))
+    for (const [key, value] of Object.entries(parsed)) {
+      if (process.env[key] === undefined) process.env[key] = value
+    }
+    console.log(`[orbit-mail] Loaded environment overrides from ${path}`)
+  } catch (err) {
+    console.warn(`[orbit-mail] Could not read ${path}:`, err)
+  }
+}
+
+loadUserEnvFile()
 configureLinuxDesktopIntegration()
 
 function getWindowIcon(): string | undefined {

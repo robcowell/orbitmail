@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 import { TextB } from '@phosphor-icons/react/dist/ssr/TextB'
 import { TextItalic } from '@phosphor-icons/react/dist/ssr/TextItalic'
 import { TextUnderline } from '@phosphor-icons/react/dist/ssr/TextUnderline'
@@ -38,7 +39,9 @@ export function RichTextEditor({ initialHtml, onChange, placeholder }: RichTextE
   useEffect(() => {
     const el = editorRef.current
     if (!el) return
-    el.innerHTML = initialHtml
+    // initialHtml is not always ours: a mailto: link supplies the body, so this
+    // is an untrusted-input sink in a window that carries the full preload.
+    el.innerHTML = sanitizeEmailHtml(initialHtml) ?? ''
     setEmpty(el.innerText.trim().length === 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

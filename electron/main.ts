@@ -126,6 +126,49 @@ function getWindowIcon(): string | undefined {
   return getAppIconPath()
 }
 
+// The renderer holds the full-privilege preload, so it must never navigate away
+// from the app's own document: a form submit or a link inside untrusted email
+// HTML would otherwise hand `window.orbitMail` to an attacker-controlled page.
+// Anything that isn't the app shell is cancelled and handed to the OS browser.
+function isAppUrl(url: string): boolean {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL
+  if (rendererUrl && url.startsWith(rendererUrl)) return true
+  return url.startsWith(`file://${join(__dirname, '../renderer/')}`)
+}
+
+function blockOffAppNavigation(window: BrowserWindow): void {
+  const guard = (event: { preventDefault: () => void }, url: string) => {
+    if (isAppUrl(url)) return
+    event.preventDefault()
+    if (/^https?:$/.test(safeProtocol(url))) void shell.openExternal(url)
+  }
+
+  window.webContents.on('will-navigate', guard)
+  window.webContents.on('will-frame-navigate', (details) => {
+    // Fires for every frame including the main one, which `will-navigate`
+    // already covers — without this the browser would open twice.
+    if (details.isMainFrame) return
+    guard(details, details.url)
+  })
+}
+
+function safeProtocol(url: string): string {
+  try {
+    return new URL(url).protocol
+  } catch {
+    return ''
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function parseMailtoUrl(url: string): Partial<ComposePayload> {
   try {
     const parsed = new URL(url)
@@ -141,7 +184,9 @@ function parseMailtoUrl(url: string): Partial<ComposePayload> {
       bcc: bcc || undefined,
       subject,
       bodyText: body,
-      bodyHtml: body ? `<p>${body.replace(/\n/g, '<br>')}</p>` : ''
+      // The body comes from a URL any web page can hand us, and lands in the
+      // compose editor's innerHTML — escape before building markup.
+      bodyHtml: body ? `<p>${escapeHtml(body).replace(/\n/g, '<br>')}</p>` : ''
     }
   } catch {
     return {}
@@ -337,6 +382,8 @@ function createMainWindow(): void {
     return { action: 'deny' }
   })
 
+  blockOffAppNavigation(mainWindow)
+
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -385,6 +432,8 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
     shell.openExternal(url)
     return { action: 'deny' }
   })
+
+  blockOffAppNavigation(composeWindow)
 
   const composeUrl = process.env.ELECTRON_RENDERER_URL
     ? `${process.env.ELECTRON_RENDERER_URL}#/compose`

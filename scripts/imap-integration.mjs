@@ -97,7 +97,13 @@ function buildSuite() {
 function runSuite(entry) {
   return new Promise((resolve) => {
     const electron = join(ROOT, 'node_modules', '.bin', 'electron')
-    const child = spawn(electron, ['--no-sandbox', entry], {
+    // Electron initialises Ozone even with no window, so on a machine with no
+    // X server (CI) it exits with "Missing X server or $DISPLAY". The headless
+    // Ozone platform avoids that without needing xvfb. Only applied when there
+    // is genuinely no display, so local runs behave exactly as before.
+    const headless = !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY
+    const args = ['--no-sandbox', ...(headless ? ['--ozone-platform=headless'] : []), entry]
+    const child = spawn(electron, args, {
       cwd: ROOT,
       stdio: 'inherit',
       env: {
@@ -139,6 +145,13 @@ console.log(`[test:imap] GreenMail ready on imap:${PORTS.imap} smtp:${PORTS.smtp
 let code = 1
 try {
   code = await runSuite(buildSuite())
+  if (code !== 0) {
+    // Dump the server's view before the container goes away — on CI this is the
+    // only chance to see why a protocol-level check failed.
+    console.log(`\n[test:imap] GreenMail log (last 40 lines):`)
+    const logs = run('docker', ['logs', '--tail', '40', CONTAINER])
+    process.stdout.write((logs.stdout ?? '') + (logs.stderr ?? ''))
+  }
 } finally {
   cleanup()
   if (keep) console.log(`\n[test:imap] container ${CONTAINER} left running (--keep)`)

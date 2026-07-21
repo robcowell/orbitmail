@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall downloads the Electron binary; caching it saves ~100MB of
+      # download per run. Keyed on the Electron version in the lockfile.
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # Also rebuilds better-sqlite3 against Electron's ABI (electron-builder
+      # install-app-deps, from postinstall), which the integration suite needs.
+      - name: Install dependencies
+        run: npm ci
+
+      # The verification gate for the app itself: compiles main, preload and
+      # renderer. Note there is deliberately no `tsc -b` step — the source does
+      # not pass a standalone tsc even on main (third-party typing and
+      # target/lib mismatches that esbuild transpiles past), so it would fail
+      # every run. See CLAUDE.md.
+      - name: Build
+        run: npm run build
+
+      # Starts GreenMail in Docker (preinstalled on ubuntu-latest) and runs the
+      # suite in a windowless Electron main process. No xvfb needed: the runner
+      # switches to headless Ozone when there is no DISPLAY.
+      # On failure the runner prints GreenMail's log before tearing the
+      # container down, so there is no separate log-collection step here.
+      - name: Integration tests
+        run: npm run test:imap

@@ -19,12 +19,27 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Manual reply** — a primary, non-AI **Reply** action in the reader (opens the composer with quoted text); the AI reply-draft is demoted to a secondary action.
 - **Reply All** — replies to the sender plus all other To/Cc recipients (self and the original sender de-duplicated), exposed as a visible button in the single-message and thread reader headers and the toolbar, alongside the existing right-click context-menu entry.
 
-## Critical
+## Decided: bring-your-own OAuth credentials
 
-### End-user OAuth distribution
-- Google/Microsoft client IDs still require a developer `.env` at build/dev time.
-- **Impact:** `.deb` / AppImage users cannot sign in without credentials of their own. Since #44 they no longer have to clone and rebuild — a package carries whatever the build machine's `.env` held, and anyone can drop their own into `~/.config/orbit-mail/.env`. What is still missing is a *zero-config* option, and an in-app screen so it does not require editing a file.
-- **Fix:** Ship registered public OAuth app IDs (needs verification + CASA for the restricted Gmail scope — see DEVELOPERS.md). ~~Or add an in-app settings screen for OAuth client configuration.~~ **Done** (#46) — picking Gmail or Microsoft 365 with nothing configured now prompts for the credentials in the dialog, so no file editing is required. That removes the *packaged build is unusable* half of this item; what remains is the genuinely zero-config option, which needs a verified public client.
+Orbit Mail does **not** ship Google/Microsoft OAuth credentials, and will not.
+Shipping them means either embedding the builder's own client secret in every
+package — prohibited, see CLAUDE.md rule 5 — or registering a public client and
+taking it through Google verification plus a CASA security assessment for the
+restricted Gmail scope. **That cost has been declined** (2026-07-21), so the
+bring-your-own model is the design, not a stopgap.
+
+What that means for someone installing a build:
+
+- They register their own OAuth app once (DEVELOPERS.md → OAuth setup), then
+  either enter the credentials in the Add Account dialog (#46), put them in
+  `~/.config/orbit-mail/.env`, or export them in the environment.
+- They click through Google's "unverified app" warning per account, and the
+  unverified user cap (100) applies to their own app — which is ample for a
+  personal client.
+
+The engineering side of this is finished: a packaged build is self-sufficient
+and needs no file editing (#45, #46). What remains is inherent to the model,
+not a defect.
 
 ## Security & correctness audit (2026-07-21)
 

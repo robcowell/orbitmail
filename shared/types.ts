@@ -336,7 +336,8 @@ export interface OrbitMailAPI {
   }
   attachments: {
     download: (attachmentId: string) => Promise<string>
-    open: (attachmentId: string) => Promise<void>
+    /** Resolves false if the user declined the executable-attachment warning. */
+    open: (attachmentId: string) => Promise<boolean>
     // Prompt for a destination and save one attachment. Resolves the saved path,
     // or null if the user cancelled.
     saveAs: (attachmentId: string) => Promise<string | null>

@@ -72,6 +72,10 @@ import { autodetectMailSettings } from './services/mail-autoconfig'
 import { addManualAccount } from './services/manual-account'
 import { ensureAttachmentLocal } from './services/attachment-fetch'
 import {
+  isExecutableAttachment,
+  executableAttachmentWarning
+} from './services/attachment-safety'
+import {
   getAccountInfo,
   createMailbox,
   exportMailboxToMbox,
@@ -862,9 +866,31 @@ function registerIpc(): void {
     return ensureAttachmentLocal(attachmentId)
   })
 
+  // Returns false if the user declined the "this may run code" prompt.
   ipcMain.handle('attachments:open', async (_, attachmentId: string) => {
+    const att = getAttachment(attachmentId)
+    const filename = att?.filename ?? ''
+
+    if (isExecutableAttachment(filename)) {
+      const { message, detail } = executableAttachmentWarning(filename)
+      const options = {
+        type: 'warning' as const,
+        buttons: ['Cancel', 'Open anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+        message,
+        detail
+      }
+      const { response } = mainWindow
+        ? await dialog.showMessageBox(mainWindow, options)
+        : await dialog.showMessageBox(options)
+      if (response !== 1) return false
+    }
+
     const localPath = await ensureAttachmentLocal(attachmentId)
     await shell.openPath(localPath)
+    return true
   })
 
   // Save a single attachment to a user-chosen location. Returns the saved path,

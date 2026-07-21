@@ -307,8 +307,13 @@ Notes for anyone extending it:
   run, so the suite can describe reality without going red. There are none at
   present; use `todo()` rather than deleting a check when you find a bug you are
   not fixing yet.
-- The suite exits non-zero on any failure, so it is CI-ready, but nothing runs
-  it automatically yet.
+- The suite exits non-zero on any failure and runs in CI on every push and pull
+  request (`.github/workflows/ci.yml`), alongside `npm run build`. Docker is
+  preinstalled on the runners, and the runner switches to headless Ozone when
+  there is no `DISPLAY`, so no xvfb is needed.
+- On failure the runner prints GreenMail's last 40 log lines before removing the
+  container — on CI that is the only view of the server side.
+- CI deliberately does not run `tsc -b`; see the note in the workflow.
 
 ## Building & packaging
 

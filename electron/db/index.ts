@@ -229,6 +229,33 @@ function migrateSchema(db: Database.Database): void {
   if (!sweepTaskNames.has('source')) {
     db.exec("ALTER TABLE sweep_tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'sweep'")
   }
+
+  // Thread listing indexes. Threads are keyed by COALESCE(thread_id, id) — a
+  // message with no derived thread is its own thread — and no plain column
+  // index can serve that expression, so listThreads/countThreads were scanning
+  // the account and building temp b-trees for DISTINCT, GROUP BY and ORDER BY
+  // on every folder switch (twice: once to list, once to count).
+  //
+  //  - thread_key_date: groups a conversation's messages together in date
+  //    order, so MAX(date) per thread comes off the index.
+  //  - folder_thread_key: covering index for "which conversations have a
+  //    message in this folder", which is the whole of countThreads. account_id
+  //    must precede the expression for the DISTINCT over (account_id, key) to
+  //    be satisfied by an ordered index scan; is_read rides along for the
+  //    unread-only variant.
+  //
+  // Measured on a real 3.3k-message, 1140-thread profile, for ~0.9MB of index:
+  //   listThreads   57.7ms -> 35.4ms   (warm page cache, via db-service)
+  //   countThreads   3.9ms ->  1.0ms
+  //   heads query  119.4ms -> 38.5ms   (cold page cache, raw SQL)
+  // Cold is what a folder switch shortly after launch pays. The gain does not
+  // depend on ANALYZE having run, which this app never does.
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS messages_thread_key_date_idx ON messages(account_id, COALESCE(thread_id, id), date)'
+  )
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS messages_folder_thread_key_idx ON messages(folder_id, account_id, COALESCE(thread_id, id), is_read)'
+  )
 }
 
 // One-time: give already-synced messages a thread_id. They predate the stored

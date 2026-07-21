@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, index, primaryKey } from 'drizzle-orm/sqlite-core'
+import { sql } from 'drizzle-orm'
 
 export const accounts = sqliteTable('accounts', {
   id: text('id').primaryKey(),
@@ -83,7 +84,21 @@ export const messages = sqliteTable(
     index('messages_folder_date_idx').on(t.folderId, t.date),
     index('messages_account_date_idx').on(t.accountId, t.date),
     index('messages_thread_idx').on(t.accountId, t.threadId),
-    index('messages_message_id_idx').on(t.messageId)
+    index('messages_message_id_idx').on(t.messageId),
+    // Thread listing. The thread key is COALESCE(thread_id, id), so these are
+    // expression indexes; see the matching CREATE INDEX statements in
+    // db/index.ts, which are what actually run.
+    index('messages_thread_key_date_idx').on(
+      t.accountId,
+      sql`COALESCE(thread_id, id)`,
+      t.date
+    ),
+    index('messages_folder_thread_key_idx').on(
+      t.folderId,
+      t.accountId,
+      sql`COALESCE(thread_id, id)`,
+      t.isRead
+    )
   ]
 )
 

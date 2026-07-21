@@ -981,6 +981,18 @@ function registerIpc(): void {
     blockSender(email)
   })
 
+  ipcMain.handle('oauth:getStatus', () => getOAuthConfigStatus())
+
+  // Values arrive from the renderer, are written encrypted, and are never read
+  // back out to it — the reply is the same status shape as getStatus.
+  ipcMain.handle(
+    'oauth:saveCredentials',
+    (_, values: Partial<Record<OAuthCredentialKey, string>>) => {
+      setStoredOAuthCredentials(values ?? {})
+      return getOAuthConfigStatus()
+    }
+  )
+
   ipcMain.handle(
     'ai:analyze',
     (_, messageId: string, force?: boolean, includeAttachments?: boolean) =>

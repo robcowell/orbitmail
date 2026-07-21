@@ -131,6 +131,42 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('Launcher badge: the Unity signal must be well-formed')
+  // -------------------------------------------------------------------------
+  {
+    // The badge is emitted with gdbus, whose failures were swallowed as "this
+    // desktop ignores Unity signals". A malformed object path fails the same
+    // way, so a permanently broken badge looked like an environment quirk for
+    // as long as it existed. These are pure string checks — no D-Bus needed.
+    const { unityObjectPath, unityBadgeProperties } = await import('../electron/app-badge')
+    const { LINUX_DESKTOP_ENTRY_ID } = await import('../electron/app-icon')
+
+    // D-Bus allows only [A-Za-z0-9_] between slashes.
+    const VALID_OBJECT_PATH = /^(\/[A-Za-z0-9_]+)+$/
+    const path = unityObjectPath()
+    ok('object path is a valid D-Bus path', VALID_OBJECT_PATH.test(path), path)
+    ok('object path is stable across calls', unityObjectPath() === path)
+
+    // The old form, kept here so the specific regression stays described.
+    const percentEncoded = `/com/canonical/Unity/LauncherEntry/${encodeURIComponent(
+      `application://${LINUX_DESKTOP_ENTRY_ID}`
+    )}`
+    ok('a percent-encoded app URI would be rejected as a path',
+      !VALID_OBJECT_PATH.test(percentEncoded))
+
+    const set = unityBadgeProperties(3)
+    const clear = unityBadgeProperties(0)
+    ok('a non-zero count shows the badge', set.includes("'count-visible': <true>"), set)
+    ok('zero hides the badge', clear.includes("'count-visible': <false>"), clear)
+    ok('count is typed int64, as the LauncherEntry spec expects',
+      set.includes('<int64 3>') && clear.includes('<int64 0>'))
+
+    // Electron's Linux badge/progress APIs want the *.desktop file name.
+    ok('desktop entry id keeps its .desktop suffix',
+      LINUX_DESKTOP_ENTRY_ID.endsWith('.desktop'), LINUX_DESKTOP_ENTRY_ID)
+  }
+
+  // -------------------------------------------------------------------------
   section('OAuth: the loopback listener accepts only our own callback')
   // -------------------------------------------------------------------------
   {

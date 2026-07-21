@@ -77,6 +77,9 @@ Remaining items still reference the audit-time line numbers, which have shifted 
 
 ### Low
 
+- ~~**Linux launcher badge never cleared.**~~ **Fixed** (#41) — the Unity `LauncherEntry` signal was emitted on a percent-encoded object path that D-Bus rejects outright, and the failure was swallowed as "this desktop ignores Unity signals", so a badge once set could never be cleared. `app.setDesktopName` was also stripping the `.desktop` suffix Electron documents as required, leaving `setBadgeCount` pointing at a non-existent entry. In-app counts were always correct; only the launcher was stale.
+
+
 - Optimistic star/read/flag never rolls back in threaded view (the default), because `patchMessageInList` returns `null` when the row exists only in `selectedMessage` (`mailStore.ts:287-320`).
 - `selectThread` has no error handling — a failed fetch pins "Loading conversation…" forever and rejects into a `void` call (`mailStore.ts:535-563`); milder in `selectMessage:1165`.
 - Thread mutations (`deleteThread`, `archiveThread`, `moveThreadToFolder`) test a pre-`await` state snapshot, so the reader can keep showing a deleted conversation.

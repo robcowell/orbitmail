@@ -20,5 +20,9 @@ export function getAppIconPath(): string | undefined {
 export function configureLinuxDesktopIntegration(): void {
   if (process.platform !== 'linux') return
   app.commandLine.appendSwitch('class', 'orbit-mail')
-  app.setDesktopName(LINUX_DESKTOP_ENTRY_ID.replace(/\.desktop$/, ''))
+  // Electron wants the *.desktop file name here, suffix included — its docs for
+  // the Linux badge/progress APIs say to "specify the `*.desktop` file name".
+  // Stripping it, as this used to, pointed libunity at an entry that does not
+  // exist, so setBadgeCount had nothing to attach to or clear.
+  app.setDesktopName(LINUX_DESKTOP_ENTRY_ID)
 }

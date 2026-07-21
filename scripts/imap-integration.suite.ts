@@ -131,6 +131,46 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('Attachments: opening one must not silently run code')
+  // -------------------------------------------------------------------------
+  {
+    const { isExecutableAttachment, attachmentExtension } = await import(
+      '../electron/services/attachment-safety'
+    )
+
+    // The filename and its extension come from whoever sent the mail.
+    const risky = [
+      'invoice.pdf.exe', // reads as a PDF, ends in .exe
+      'Statement.desktop', // a launcher on Linux
+      'setup.sh',
+      'installer.run',
+      'tool.AppImage', // case must not matter
+      'macro.vbs',
+      'app.jar',
+      'script.py'
+    ]
+    for (const name of risky) {
+      ok(`warns before opening ${name}`, isExecutableAttachment(name))
+    }
+
+    const ordinary = [
+      'invoice.pdf',
+      'photo.jpeg',
+      'notes.txt',
+      'report.docx',
+      'archive.zip',
+      'sheet.xlsx',
+      'exec-summary.pdf' // must not match on a substring
+    ]
+    for (const name of ordinary) {
+      ok(`opens ${name} without a prompt`, !isExecutableAttachment(name))
+    }
+
+    ok('extension parsing takes the last segment',
+      attachmentExtension('a.tar.gz') === 'gz' && attachmentExtension('README') === '')
+  }
+
+  // -------------------------------------------------------------------------
   section('Launcher badge: the Unity signal must be well-formed')
   // -------------------------------------------------------------------------
   {
@@ -281,6 +321,79 @@ async function main(): Promise<void> {
     const again = await sync.syncFolder(client, account.id, inbox.id, 'INBOX')
     ok('a second sync is a no-op', again === 0 && db.countMessages(inbox.id) === 3,
       `newCount=${again} cached=${db.countMessages(inbox.id)}`)
+    await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
+  section('Attachments: same-named parts must not overwrite each other')
+  // -------------------------------------------------------------------------
+  {
+    // Two parts with one filename is ordinary mail — scanners, mail-merges, and
+    // inline images that are all image001.png. The on-disk cache keyed both to
+    // the same path, so fetching the second clobbered the first.
+    const { ensureAttachmentLocal } = await import('../electron/services/attachment-fetch')
+    const { readFileSync } = await import('fs')
+
+    const client = rawClient()
+    await client.connect()
+    const box = 'DupeAttach'
+    await client.mailboxCreate(box).catch(() => {})
+    const folder = db.upsertFolder(account.id, box, box, 'custom')
+
+    const boundary = 'orbitboundary123'
+    const part = (body: string) =>
+      [
+        `--${boundary}`,
+        'Content-Type: application/octet-stream; name="invoice.pdf"',
+        'Content-Disposition: attachment; filename="invoice.pdf"',
+        '',
+        body,
+        ''
+      ].join('\r\n')
+
+    await client.append(
+      box,
+      Buffer.from(
+        [
+          'From: Scanner <scanner@example.com>',
+          `To: Me <${EMAIL}>`,
+          'Subject: Two invoices, one name',
+          'Message-ID: <dupe-attach@example.com>',
+          `Date: ${new Date().toUTCString()}`,
+          `Content-Type: multipart/mixed; boundary="${boundary}"`,
+          '',
+          part('FIRST-DOCUMENT-CONTENT'),
+          part('SECOND-DOCUMENT-CONTENT-which-is-a-different-length'),
+          `--${boundary}--`,
+          ''
+        ].join('\r\n')
+      ),
+      ['\\Seen']
+    )
+    await sync.syncFolder(client, account.id, folder.id, box)
+
+    const msg = db.listMessages(folder.id, 10, 0).find((m) => m.subject === 'Two invoices, one name')
+    const atts = msg ? db.listMessageAttachments(msg.id) : []
+    ok('both attachments are recorded', atts.length === 2, `found=${atts.length}`)
+
+    if (atts.length === 2) {
+      const pathA = await ensureAttachmentLocal(atts[0].id)
+      const pathB = await ensureAttachmentLocal(atts[1].id)
+      ok('same-named attachments get distinct cache paths', pathA !== pathB,
+        `${pathA.split('/').pop()} vs ${pathB.split('/').pop()}`)
+
+      const a = readFileSync(pathA, 'utf8')
+      const b = readFileSync(pathB, 'utf8')
+      ok('each file keeps its own content',
+        a.includes('FIRST-DOCUMENT') && b.includes('SECOND-DOCUMENT'),
+        `A=${a.trim().slice(0, 24)} B=${b.trim().slice(0, 24)}`)
+
+      // Re-fetching the first must not be affected by the second having landed.
+      const again = readFileSync(await ensureAttachmentLocal(atts[0].id), 'utf8')
+      ok('the first attachment survives fetching the second',
+        again.includes('FIRST-DOCUMENT'), again.trim().slice(0, 24))
+    }
+
     await client.logout()
   }
 

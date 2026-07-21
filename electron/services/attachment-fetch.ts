@@ -10,6 +10,7 @@ import {
   getFolderById,
   getManualCredentials,
   getMessageSyncContext,
+  listMessageAttachments,
   updateAttachmentLocalPath
 } from './db-service'
 import { withImapClient } from './imap-pool'
@@ -37,33 +38,54 @@ export function recordAttachmentsMetadata(
 function findParsedAttachment(
   parsedAttachments: ParsedAttachment[] | undefined,
   filename: string,
-  size: number
+  size: number,
+  occurrence = 0
 ): ParsedAttachment | undefined {
   if (!parsedAttachments?.length) return undefined
 
-  const exact = parsedAttachments.find(
-    (att) =>
-      (att.filename ?? 'attachment') === filename &&
-      (att.size ?? att.content?.length ?? 0) === size
-  )
-  if (exact?.content) return exact
-
-  return parsedAttachments.find(
+  const sameName = parsedAttachments.filter(
     (att) => (att.filename ?? 'attachment') === filename && att.content
   )
+  if (sameName.length <= 1) return sameName[0]
+
+  // Several parts share the filename, so size cannot identify one either (and
+  // often does not match anyway — see resolveAttachmentPart). Rows were created
+  // in MIME order, so take the nth.
+  const exact = sameName.filter((att) => (att.size ?? att.content?.length ?? 0) === size)
+  if (exact.length === 1) return exact[0]
+  return sameName[occurrence] ?? sameName[0]
+}
+
+/**
+ * Which copy this is among the message's attachments sharing its filename.
+ *
+ * A message can legitimately carry several parts with one name. Rows are
+ * inserted in MIME order by recordAttachmentsMetadata, and both the
+ * BODYSTRUCTURE walk and mailparser enumerate parts in that same order, so
+ * position is what identifies them.
+ */
+function attachmentOccurrence(messageId: string, attachmentId: string, filename: string): number {
+  const sameName = listMessageAttachments(messageId).filter((a) => a.filename === filename)
+  const index = sameName.findIndex((a) => a.id === attachmentId)
+  return index < 0 ? 0 : index
 }
 
 function writeAttachmentFile(
   attachmentId: string,
-  messageId: string,
   uid: number,
   filename: string,
   content: Buffer
 ): string {
   const dir = getAttachmentsDir()
   const safeName = safeAttachmentName(filename, uid)
-  const path = join(dir, `${messageId}-${safeName}`)
-  writeFileSync(path, content)
+  // Keyed by attachment id, not message id: a message can carry two parts with
+  // the same filename (scanners and mail-merges do it, and inline images are
+  // routinely all image001.png). Sharing a path made both rows resolve to one
+  // file, so fetching the second overwrote the first and opening either showed
+  // the same content. Existing rows keep whatever path they already stored.
+  const path = join(dir, `${attachmentId}-${safeName}`)
+  // 0600: these are someone's mail, in a directory this app creates.
+  writeFileSync(path, content, { mode: 0o600 })
   updateAttachmentLocalPath(attachmentId, path)
   return path
 }
@@ -96,16 +118,23 @@ function partFilename(node: BodyStructureNode): string {
 function resolveAttachmentPart(
   structure: BodyStructureNode | undefined,
   filename: string,
-  size: number
+  size: number,
+  occurrence = 0
 ): string | null {
   const parts: BodyStructureNode[] = []
   collectParts(structure, parts)
 
-  const exact = parts.find((p) => partFilename(p) === filename && (p.size ?? 0) === size)
-  if (exact?.part) return exact.part
+  const sameName = parts.filter((p) => partFilename(p) === filename)
+  if (sameName.length === 0) return null
+  if (sameName.length === 1) return sameName[0].part ?? null
 
-  const byName = parts.find((p) => partFilename(p) === filename)
-  return byName?.part ?? null
+  // Size is a weak identifier here: BODYSTRUCTURE reports encoded octets while
+  // the stored size is mailparser's decoded length, so they agree only for
+  // unencoded parts. Use it only when it picks exactly one, then fall back to
+  // position, which is how the rows were created.
+  const exact = sameName.filter((p) => (p.size ?? 0) === size)
+  if (exact.length === 1) return exact[0].part ?? null
+  return (sameName[occurrence] ?? sameName[0]).part ?? null
 }
 
 async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
@@ -118,7 +147,8 @@ async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 
 async function downloadAttachmentFromImap(
   attachmentId: string,
-  att: { filename: string; size: number; messageId: string }
+  att: { filename: string; size: number; messageId: string },
+  occurrence: number
 ): Promise<string> {
   const context = getMessageSyncContext(att.messageId)
   if (!context) throw new Error('Message not found')
@@ -140,7 +170,8 @@ async function downloadAttachmentFromImap(
         ? resolveAttachmentPart(
             meta.bodyStructure as BodyStructureNode | undefined,
             att.filename,
-            att.size
+            att.size,
+            occurrence
           )
         : null
 
@@ -154,7 +185,6 @@ async function downloadAttachmentFromImap(
             if (buffer.length > 0) {
               return writeAttachmentFile(
                 attachmentId,
-                att.messageId,
                 context.uid,
                 att.filename,
                 buffer
@@ -172,12 +202,11 @@ async function downloadAttachmentFromImap(
       if (!msg || !msg.source) throw new Error('Message not found on server')
 
       const parsed = await simpleParser(msg.source)
-      const match = findParsedAttachment(parsed.attachments, att.filename, att.size)
+      const match = findParsedAttachment(parsed.attachments, att.filename, att.size, occurrence)
       if (!match?.content) throw new Error('Attachment not found on server')
 
       return writeAttachmentFile(
         attachmentId,
-        att.messageId,
         context.uid,
         att.filename,
         match.content
@@ -199,7 +228,8 @@ function hashUid(serverUid: string, msgNum: number): number {
 
 async function downloadAttachmentFromPop3(
   attachmentId: string,
-  att: { filename: string; size: number; messageId: string }
+  att: { filename: string; size: number; messageId: string },
+  occurrence: number
 ): Promise<string> {
   const context = getMessageSyncContext(att.messageId)
   if (!context) throw new Error('Message not found')
@@ -228,12 +258,11 @@ async function downloadAttachmentFromPop3(
     if (!raw) throw new Error('Message not found on server')
 
     const parsed = await simpleParser(raw)
-    const match = findParsedAttachment(parsed.attachments, att.filename, att.size)
+    const match = findParsedAttachment(parsed.attachments, att.filename, att.size, occurrence)
     if (!match?.content) throw new Error('Attachment not found on server')
 
     return writeAttachmentFile(
       attachmentId,
-      att.messageId,
       context.uid,
       att.filename,
       match.content
@@ -251,9 +280,11 @@ export async function ensureAttachmentLocal(attachmentId: string): Promise<strin
   const context = getMessageSyncContext(att.messageId)
   if (!context) throw new Error('Message not found')
 
+  const occurrence = attachmentOccurrence(att.messageId, attachmentId, att.filename)
+
   if (context.provider === 'pop3') {
-    return downloadAttachmentFromPop3(attachmentId, att)
+    return downloadAttachmentFromPop3(attachmentId, att, occurrence)
   }
 
-  return downloadAttachmentFromImap(attachmentId, att)
+  return downloadAttachmentFromImap(attachmentId, att, occurrence)
 }

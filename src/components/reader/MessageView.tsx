@@ -546,7 +546,10 @@ function AttachmentList({
     if (anyBusy) return
     setBusy({ id, kind: 'open' })
     try {
-      await window.orbitMail.attachments.open(id)
+      const opened = await window.orbitMail.attachments.open(id)
+      // Declined at the "this may run code" prompt — say so, rather than
+      // leaving the click looking like it did nothing.
+      if (!opened) setToast('Attachment not opened')
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Failed to open attachment')
     } finally {

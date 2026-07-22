@@ -1,7 +1,7 @@
 {
   "name": "orbit-mail",
   "version": "0.1.0",
-  "description": "Orbit Mail \u2014 a polished desktop email client for Linux",
+  "description": "Orbit Mail — a polished desktop email client for Linux",
   "main": "out/main/index.js",
   "homepage": "https://github.com/orbit-mail/orbit-mail",
   "author": {
@@ -51,7 +51,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^3.0.0",
     "esbuild": "^0.25.12",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "typescript": "^5.7.3",
     "vite": "^6.0.11"
   },

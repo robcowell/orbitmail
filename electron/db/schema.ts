@@ -72,6 +72,10 @@ export const messages = sqliteTable(
     hasAttachments: integer('has_attachments', { mode: 'boolean' }).notNull().default(false),
     bodyHtml: text('body_html'),
     bodyText: text('body_text'),
+    // Plain-text projection of the body (text/plain, or stripped HTML), so
+    // search scans ~10x less data than raw body_html and matches content, not
+    // markup. Populated on upsert; backfilled in the background for old rows.
+    searchText: text('search_text'),
     aiAnalysis: text('ai_analysis'),
     aiAnalysisAt: integer('ai_analysis_at'),
     // Cached per-message sweep extraction: JSON array of { task, priority }.

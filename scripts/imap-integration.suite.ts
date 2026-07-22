@@ -306,6 +306,69 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Search: body is searched via the plain-text column, not raw HTML')
+  // -------------------------------------------------------------------------
+  {
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+    const box = 'SearchBox'
+    const client = rawClient()
+    await client.connect()
+    await client.mailboxCreate(box).catch(() => {})
+    const folder = db.upsertFolder(account.id, box, box, 'custom')
+
+    // Sync a message whose body content lives only in HTML.
+    await client.append(
+      box,
+      Buffer.from(
+        [
+          'From: Sender <s@example.com>',
+          `To: Me <${EMAIL}>`,
+          'Subject: Newsletter',
+          'Message-ID: <search-html@example.com>',
+          `Date: ${new Date().toUTCString()}`,
+          'Content-Type: text/html; charset=utf-8',
+          '',
+          '<div><p>The <b>quarterly</b> figures are attached.</p></div>',
+          ''
+        ].join('\r\n')
+      ),
+      ['\\Seen']
+    )
+    await sync.syncFolder(client, account.id, folder.id, box)
+    const msg = db.listMessages(folder.id, 10, 0).find((m) => m.subject === 'Newsletter')
+    ok('the HTML message synced', !!msg)
+
+    // Upsert populates search_text — a word from inside the HTML body is found.
+    const found = db.searchMessages('quarterly', account.id, 'body', 50)
+    ok('search finds a word from the HTML body', found.some((m) => m.id === msg?.id),
+      `${found.length} hit(s)`)
+
+    // ...and markup is NOT matched: a tag name from the raw HTML must not hit.
+    const tagHit = db.searchMessages('div', account.id, 'body', 50)
+    ok('an HTML tag name is not a match', !tagHit.some((m) => m.id === msg?.id))
+
+    // Fallback path: null out search_text to simulate a not-yet-backfilled row,
+    // and confirm the body_html fallback still finds it.
+    raw.prepare('UPDATE messages SET search_text = NULL WHERE id = ?').run(msg!.id)
+    ok('un-backfilled rows still match via the body_html fallback',
+      db.searchMessages('quarterly', account.id, 'body', 50).some((m) => m.id === msg?.id))
+
+    // The background backfill repopulates it.
+    const processed = db.backfillSearchTextBatch()
+    const stored = raw
+      .prepare('SELECT search_text FROM messages WHERE id = ?')
+      .get(msg!.id) as { search_text: string | null }
+    ok('the backfill repopulates search_text', processed >= 1 && !!stored.search_text?.includes('quarterly'))
+
+    // The renderer-supplied limit is clamped.
+    const many = db.searchMessages('a', account.id, 'all', 1_000_000)
+    ok('an over-large limit is clamped', many.length <= 200, `returned ${many.length}`)
+
+    await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {

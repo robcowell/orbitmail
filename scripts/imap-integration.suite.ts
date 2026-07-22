@@ -1021,6 +1021,38 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Attachments: metadata reduction preserves fields and drops the buffer')
+  // -------------------------------------------------------------------------
+  {
+    // Sync reduces each parsed attachment to metadata as soon as it is parsed,
+    // so the content Buffer is freed rather than retained across the batch. This
+    // pins the exact fields the old inline path recorded, including the size
+    // fallback that reads content.length before the Buffer is let go.
+    const { toAttachmentMeta } = await import('../electron/services/attachment-fetch')
+
+    const explicit = toAttachmentMeta({
+      filename: 'invoice.pdf',
+      contentType: 'application/pdf',
+      size: 1234,
+      content: Buffer.from('xx')
+    } as never)
+    ok('explicit filename/type/size are preserved',
+      explicit.filename === 'invoice.pdf' &&
+        explicit.contentType === 'application/pdf' &&
+        explicit.size === 1234)
+
+    const fallback = toAttachmentMeta({ content: Buffer.from('hello') } as never)
+    ok('missing size falls back to content length; name/type default',
+      fallback.size === 5 &&
+        fallback.filename === 'attachment' &&
+        fallback.contentType === 'application/octet-stream',
+      JSON.stringify(fallback))
+
+    ok('the reduced metadata holds no content buffer',
+      !Buffer.isBuffer((fallback as { content?: unknown }).content))
+  }
+
+  // -------------------------------------------------------------------------
   section('UIDVALIDITY: a reset rebuilds the cache instead of truncating it')
   // -------------------------------------------------------------------------
   {

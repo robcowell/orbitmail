@@ -1,5 +1,5 @@
 import { ImapFlow } from 'imapflow'
-import { simpleParser, type Attachment } from 'mailparser'
+import { simpleParser } from 'mailparser'
 import { writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -45,7 +45,7 @@ import {
 } from './db-service'
 import type { Folder } from '../../shared/types'
 import { getLastSyncAt, setLastSyncAt } from './preferences-service'
-import { recordAttachmentsMetadata } from './attachment-fetch'
+import { recordAttachmentsMetadata, toAttachmentMeta, type AttachmentMeta } from './attachment-fetch'
 import { isWithinSyncWindow, syncSinceDate } from './sync-policy'
 import { isVirtualViewFolder } from '../../shared/folders'
 import { imapConnectionSecurity } from './account-credentials'
@@ -498,8 +498,10 @@ async function fetchMessagesByUid(
 
   // Parse (async, per-message) into a buffer first, then commit the whole batch
   // in one transaction so a folder's fetch is a single WAL commit rather than one
-  // per message.
-  const pending: { data: UpsertMessageData; attachments: Attachment[] }[] = []
+  // per message. Only attachment *metadata* is kept here, not the parsed content
+  // Buffers — those are re-fetched on open, and retaining a whole folder's worth
+  // across the batch was gigabytes for large attachments (they are never used).
+  const pending: { data: UpsertMessageData; attachments: AttachmentMeta[] }[] = []
 
   for await (const msg of client.fetch(
     uids.join(','),
@@ -562,7 +564,7 @@ async function fetchMessagesByUid(
         bodyHtml,
         bodyText
       },
-      attachments: parsed.attachments ?? []
+      attachments: (parsed.attachments ?? []).map(toAttachmentMeta)
     })
   }
 

@@ -13,7 +13,7 @@ import {
   pruneMessagesOutsideSyncWindow
 } from './db-service'
 import { pop3ClientOptions } from './account-credentials'
-import { recordAttachmentsMetadata } from './attachment-fetch'
+import { recordAttachmentsMetadata, toAttachmentMeta } from './attachment-fetch'
 import { isWithinSyncWindow } from './sync-policy'
 import { computeThreadId, normalizeReferences } from './thread-util'
 import type { SyncProgressHandler } from './imap-sync'
@@ -140,7 +140,7 @@ export async function syncPop3Account(
       if (!isNew) continue
 
       if (parsed.attachments?.length) {
-        recordAttachmentsMetadata(id, parsed.attachments)
+        recordAttachmentsMetadata(id, parsed.attachments.map(toAttachmentMeta))
       }
 
       newCount++

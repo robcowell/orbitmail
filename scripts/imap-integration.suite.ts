@@ -369,6 +369,56 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('POP3: a stalled server times out instead of wedging all sync')
+  // -------------------------------------------------------------------------
+  {
+    const { pop3ClientOptions } = await import('../electron/services/account-credentials')
+
+    // Config guard: the timeout must be present. node-pop3 arms its socket timer
+    // only when one is supplied, and without it a stalled POP3 op hangs forever
+    // with syncStatus.syncing stuck true — wedging sync for every account.
+    const opts = pop3ClientOptions(
+      { host: 'h', port: 110, security: 'ssl' },
+      'u',
+      'p'
+    ) as { timeout?: number }
+    ok('pop3 client options include a socket timeout',
+      typeof opts.timeout === 'number' && opts.timeout > 0, `timeout=${opts.timeout}`)
+
+    // End-to-end: a server that accepts the TCP connection but never sends the
+    // POP3 greeting. Without a timeout, UIDL() would hang forever. With one, it
+    // rejects — which is what lets pollForNewMessages' try/catch recover.
+    const net = await import('net')
+    const Pop3Command = ((await import('node-pop3')) as { default: new (o: unknown) => { UIDL: () => Promise<unknown> } }).default
+    const server = net.createServer(() => {
+      // accept the socket, send nothing — the classic stall
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+    const port = (server.address() as { port: number }).port
+
+    const pop3 = new Pop3Command({
+      host: '127.0.0.1',
+      port,
+      user: 'x',
+      password: 'y',
+      tls: false,
+      timeout: 800 // short, for the test — production uses 60s
+    })
+    const started = Date.now()
+    let rejected = false
+    try {
+      await pop3.UIDL()
+    } catch {
+      rejected = true
+    }
+    const elapsed = Date.now() - started
+    ok('a silent POP3 server rejects rather than hanging', rejected && elapsed < 5000,
+      `rejected=${rejected} after ${elapsed}ms`)
+
+    server.close()
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {

@@ -227,6 +227,12 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   on background refresh, so memoized rows skip re-render and the list doesn't flicker.
 - **DB** — WAL + tuned pragmas; `COUNT(*)` for counts; list queries project just the
   summary columns (no body blobs); partial index on unread rows.
+- **Freelist reclaim** — deleting mail (prune, account removal, empty folder) frees
+  pages that SQLite keeps on the freelist, so the file only ever grew (`auto_vacuum`
+  is off). `reclaimFreelistIfLarge` runs `VACUUM` from `window-all-closed`, after the
+  window is gone so the ~2s synchronous block is invisible, and only when the freelist
+  is ≥25% of the file and ≥20MB. Self-throttling — `VACUUM` zeroes the freelist — so it
+  is rare; small databases are left alone.
 - **Thread listing** — threads are keyed by `COALESCE(thread_id, id)`, which no plain
   column index can serve, so `listThreads`/`countThreads` were scanning the account and
   building temp b-trees on every folder switch. Two expression indexes fixed that (#35):
@@ -363,8 +369,9 @@ framework. The one exception is the sync layer, where the failure modes are
 protocol-level and expensive to get wrong (silent TLS downgrade, push that
 stops arriving, a cache wipe that loses mail). Those are covered by an
 integration suite that runs against a real mail server. It has since grown to
-cover the security controls and a few pure-logic invariants too — 71 checks in
-all — because those are the things that fail silently.
+cover the security controls, account-data hygiene, and a few pure-logic
+invariants too — the areas in the table below — because those are the things
+that fail silently.
 
 ```bash
 npm run test:imap           # start GreenMail, run the suite, tear it down
@@ -396,6 +403,9 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
+| Task-orphan cleanup | The one-time migration for tasks left by pre-fix deletions removes a per-folder orphan (folder gone), leaves a unified task whose source message is merely missing (could be a valid todo that aged out of the cache), and is idempotent. |
+| DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |
 
 Notes for anyone extending it:
 

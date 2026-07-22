@@ -84,6 +84,8 @@ function initTables(db: Database.Database): void {
       local_path TEXT
     );
 
+    CREATE INDEX IF NOT EXISTS attachments_message_id_idx ON attachments(message_id);
+
     CREATE TABLE IF NOT EXISTS app_preferences (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -247,6 +249,12 @@ function migrateSchema(db: Database.Database): void {
   db.exec(
     'CREATE INDEX IF NOT EXISTS messages_folder_thread_key_idx ON messages(folder_id, account_id, COALESCE(thread_id, id), is_read)'
   )
+
+  // Attachments are only ever looked up by message_id, and the ON DELETE CASCADE
+  // from messages walks the same key. Without this index every message open is a
+  // full scan of attachments, and deleting messages is one full scan *per row* —
+  // pruning a folder of N messages did N scans of the whole table.
+  db.exec('CREATE INDEX IF NOT EXISTS attachments_message_id_idx ON attachments(message_id)')
 
   // Drop the old full-text index. It was written on every synced message and
   // never read — the search path has always used LIKE — and its deletes could

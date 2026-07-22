@@ -250,6 +250,11 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   count 3.9→1.0ms. **Still linear in account size**: the remaining cost is `MAX(date)`
   per thread plus a sort of every thread before `LIMIT`. Going sub-linear needs a
   denormalised thread key and last-activity date.
+- **Attachment lookups** — `attachments.message_id` is indexed
+  (`attachments_message_id_idx`, #66). Every attachment read is by `message_id`,
+  and the `ON DELETE CASCADE` from `messages` walks the same key, so without it a
+  message open was a full table scan and pruning N messages was N scans. Present
+  in `initTables` for fresh DBs and added by `migrateSchema` for existing ones.
 - **Connection lane** — `imap-pool` serialises operations per account. Anything holding
   the lane across many folders blocks user actions behind it; the flag reconcile now
   re-borrows per folder for that reason (#34).
@@ -434,6 +439,7 @@ reimplementing them, so it exercises the shipping code paths:
 | DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |
 | Search | Body search matches a word inside an HTML message (via `search_text`) but not an HTML tag name; an un-backfilled row still matches via the `body_html` fallback; the backfill repopulates `search_text`; the result limit is clamped. |
 | Remote images | `allowSenderImages` stores a normalized sender (display name stripped, lowercased), does not double-add, and persists to `app_preferences`. The renderer-side blocking sanitizer is verified separately with jsdom, as the sanitizer itself is. |
+| Attachment index | `attachments.message_id` has an index, and the planner uses it (`EXPLAIN QUERY PLAN` shows the index, not a `SCAN`) — so a message-id lookup and the delete cascade are not full scans. |
 | Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). |
 
 Notes for anyone extending it:

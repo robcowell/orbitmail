@@ -476,6 +476,60 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Startup: duplicate (folder_id, uid) rows are deduped so the index builds')
+  // -------------------------------------------------------------------------
+  {
+    // A pre-constraint DB can hold duplicate (folder_id, uid) rows; building the
+    // UNIQUE index over them throws out of startup, every launch. dedupe removes
+    // them first, keeping the row that carries the most work.
+    const { getRawSqlite, dedupeMessagesByFolderUid } = await import('../electron/db')
+    const raw = getRawSqlite()
+    const folder = db.upsertFolder(account.id, 'DedupeUid', 'DedupeUid', 'custom')
+
+    // Reproduce the broken state: drop the unique index, insert a duplicate pair
+    // (the older row carries AI analysis; the newer one does not) plus a singleton.
+    raw.exec('DROP INDEX IF EXISTS messages_folder_uid_idx')
+    const ins = raw.prepare(
+      `INSERT INTO messages (id, folder_id, account_id, uid, from_addr, to_addr, subject, snippet, date, ai_analysis)
+       VALUES (@id, @folder, @account, @uid, 'a@x', 'b@y', 'Dupe', 'snip', @date, @ai)`
+    )
+    ins.run({ id: 'dup-old-ai', folder: folder.id, account: account.id, uid: 42, date: 1000, ai: '{"summary":"keep"}' })
+    ins.run({ id: 'dup-new', folder: folder.id, account: account.id, uid: 42, date: 2000, ai: null })
+    ins.run({ id: 'solo', folder: folder.id, account: account.id, uid: 43, date: 1000, ai: null })
+
+    let threw = false
+    try {
+      raw.exec('CREATE UNIQUE INDEX messages_folder_uid_probe ON messages(folder_id, uid)')
+    } catch {
+      threw = true
+    }
+    raw.exec('DROP INDEX IF EXISTS messages_folder_uid_probe')
+    ok('a duplicate (folder_id, uid) blocks the unique index', threw)
+
+    const removed = dedupeMessagesByFolderUid(raw)
+    ok('dedupe removes exactly the surplus row', removed === 1, `removed=${removed}`)
+
+    const survivors = raw
+      .prepare('SELECT id FROM messages WHERE folder_id = ? AND uid = 42')
+      .all(folder.id) as Array<{ id: string }>
+    ok('one row survives per (folder_id, uid)', survivors.length === 1, `n=${survivors.length}`)
+    ok('the AI-carrying duplicate is the survivor', survivors[0]?.id === 'dup-old-ai', survivors[0]?.id)
+
+    let built = true
+    try {
+      raw.exec('CREATE UNIQUE INDEX IF NOT EXISTS messages_folder_uid_idx ON messages(folder_id, uid)')
+    } catch {
+      built = false
+    }
+    ok('the unique index builds once deduped', built)
+    ok('a healthy table dedupes to zero', dedupeMessagesByFolderUid(raw) === 0)
+
+    // Cleanup: remove the test folder and its rows so later sections are unaffected.
+    raw.prepare('DELETE FROM messages WHERE folder_id = ?').run(folder.id)
+    raw.prepare('DELETE FROM folders WHERE id = ?').run(folder.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Autoconfig: a STARTTLS socketType is not misread as implicit SSL')
   // -------------------------------------------------------------------------
   {

@@ -52,8 +52,15 @@ export async function authenticateGoogle(): Promise<TokenData> {
   try {
     const authUrl = client.generateAuthUrl({
       access_type: 'offline',
+      // Full consent every time, not incremental. `include_granted_scopes`
+      // (incremental authorization) is for apps that add scopes over time; this
+      // app always needs the same fixed set. With it on, an account that has any
+      // prior grant gets a "you already have some access" screen that no longer
+      // presents the restricted Gmail scope as a tickable permission — so it is
+      // unclear whether continuing grants it, and a sign-in that once left the
+      // Gmail box unticked gets stuck. Requesting the whole set fresh shows the
+      // Gmail permission explicitly on every sign-in.
       prompt: 'select_account consent',
-      include_granted_scopes: true,
       scope: [GMAIL_SCOPE, 'openid', 'email', 'profile'],
       redirect_uri: redirectUri,
       state,

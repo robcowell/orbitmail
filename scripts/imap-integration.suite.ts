@@ -365,6 +365,22 @@ async function main(): Promise<void> {
     const many = db.searchMessages('a', account.id, 'all', 1_000_000)
     ok('an over-large limit is clamped', many.length <= 200, `returned ${many.length}`)
 
+    // A literal `_` in the query must match a literal underscore, not act as
+    // LIKE's single-char wildcard (which used to make `foo_bar` match `fooXbar`).
+    const insProbe = raw.prepare(
+      `INSERT INTO messages (id, folder_id, account_id, uid, from_addr, to_addr, subject, snippet, date, search_text)
+       VALUES (@id, @f, @a, @uid, 's@example.com', @to, @subj, 'snip', @date, @st)`
+    )
+    insProbe.run({ id: 'us-literal', f: folder.id, a: account.id, uid: 9001, to: EMAIL, subj: 'US literal', date: 1000, st: 'order code foo_bar shipped' })
+    insProbe.run({ id: 'us-wild', f: folder.id, a: account.id, uid: 9002, to: EMAIL, subj: 'US wildcard', date: 1000, st: 'order code fooXbar shipped' })
+
+    const underscore = db.searchMessages('foo_bar', account.id, 'body', 50).map((m) => m.id)
+    ok('a literal _ is not treated as a wildcard',
+      underscore.includes('us-literal') && !underscore.includes('us-wild'),
+      underscore.join(', ') || 'no hits')
+
+    raw.prepare("DELETE FROM messages WHERE id IN ('us-literal', 'us-wild')").run()
+
     await client.logout()
   }
 

@@ -30,8 +30,15 @@ export function messageSearchableBody(
     .trim()
 }
 
+// Build a LIKE pattern from a user query: keep word chars, whitespace, `@` and
+// `.`; everything else becomes a word break, joined with `%` so terms match in
+// order with anything between. LIKE reads `_` (and `%`) as wildcards, and `\w`
+// keeps `_`, so a search for `foo_bar` used to also match `fooXbar`. The literal
+// wildcards a query can still contain are escaped with a backslash — callers
+// must pair this with `ESCAPE '\'` so the underscore matches literally.
 export function buildLikePattern(text: string): string | null {
   const query = text.replace(/[^\w\s@.]/g, ' ').trim()
   if (!query) return null
-  return `%${query.replace(/\s+/g, '%')}%`
+  const escaped = query.replace(/[\\_%]/g, '\\$&')
+  return `%${escaped.replace(/\s+/g, '%')}%`
 }

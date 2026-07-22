@@ -1772,7 +1772,7 @@ export function searchMessages(
   const safeLimit = Math.min(Math.max(1, Math.trunc(limit) || 50), SEARCH_LIMIT_MAX)
 
   const clauses = (SEARCH_META_COLUMNS[field] ?? SEARCH_META_COLUMNS.all).map(
-    (col) => `${col} LIKE ? COLLATE NOCASE`
+    (col) => `${col} LIKE ? COLLATE NOCASE ESCAPE '\\'`
   )
   const args: unknown[] = [accountId, ...clauses.map(() => likePattern)]
 
@@ -1782,8 +1782,8 @@ export function searchMessages(
     // search_text is NULL, so fall back to body_text/body_html for those — once
     // the backfill completes, only search_text is ever scanned.
     clauses.push(
-      `(COALESCE(m.search_text, m.body_text) LIKE ? COLLATE NOCASE` +
-        ` OR (m.search_text IS NULL AND m.body_html LIKE ? COLLATE NOCASE))`
+      `(COALESCE(m.search_text, m.body_text) LIKE ? COLLATE NOCASE ESCAPE '\\'` +
+        ` OR (m.search_text IS NULL AND m.body_html LIKE ? COLLATE NOCASE ESCAPE '\\'))`
     )
     args.push(likePattern, likePattern)
   }

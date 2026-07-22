@@ -434,6 +434,7 @@ reimplementing them, so it exercises the shipping code paths:
 | DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |
 | Search | Body search matches a word inside an HTML message (via `search_text`) but not an HTML tag name; an un-backfilled row still matches via the `body_html` fallback; the backfill repopulates `search_text`; the result limit is clamped. |
 | Remote images | `allowSenderImages` stores a normalized sender (display name stripped, lowercased), does not double-add, and persists to `app_preferences`. The renderer-side blocking sanitizer is verified separately with jsdom, as the sanitizer itself is. |
+| Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). |
 
 Notes for anyone extending it:
 

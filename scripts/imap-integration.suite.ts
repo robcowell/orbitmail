@@ -448,6 +448,53 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Autoconfig: a STARTTLS socketType is not misread as implicit SSL')
+  // -------------------------------------------------------------------------
+  {
+    // 'starttls'.includes('tls') is true, so a naive SSL-first check claimed a
+    // STARTTLS socketType and stored the account as implicit SSL — which then
+    // hangs on a TLS handshake against the plaintext-upgrade port (143/587).
+    const { parseAutoconfigXml } = await import('../electron/services/mail-autoconfig')
+    const xml = (inType: string, inSock: string, inPort: number, outSock: string, outPort: number) =>
+      `<clientConfig><emailProvider>` +
+      `<incomingServer type="${inType}"><hostname>mail.example.com</hostname>` +
+      `<port>${inPort}</port><socketType>${inSock}</socketType></incomingServer>` +
+      `<outgoingServer type="smtp"><hostname>smtp.example.com</hostname>` +
+      `<port>${outPort}</port><socketType>${outSock}</socketType></outgoingServer>` +
+      `</emailProvider></clientConfig>`
+
+    const starttls = parseAutoconfigXml(xml('imap', 'STARTTLS', 143, 'STARTTLS', 587))
+    ok('a STARTTLS incoming socketType maps to starttls, not ssl',
+      starttls?.incoming?.security === 'starttls', `got ${starttls?.incoming?.security}`)
+    ok('a STARTTLS outgoing socketType maps to starttls, not ssl',
+      starttls?.outgoing?.security === 'starttls', `got ${starttls?.outgoing?.security}`)
+
+    const ssl = parseAutoconfigXml(xml('imap', 'SSL', 993, 'SSL', 465))
+    ok('an SSL socketType still maps to ssl',
+      ssl?.incoming?.security === 'ssl' && ssl?.outgoing?.security === 'ssl',
+      `in=${ssl?.incoming?.security} out=${ssl?.outgoing?.security}`)
+
+    // No socketType tag → the parser's own defaults (incoming SSL, outgoing
+    // STARTTLS), which win over the port before parseSecurity's fallback.
+    const noSock = parseAutoconfigXml(
+      `<clientConfig><emailProvider>` +
+        `<incomingServer type="imap"><hostname>mail.example.com</hostname><port>993</port></incomingServer>` +
+        `<outgoingServer type="smtp"><hostname>smtp.example.com</hostname><port>587</port></outgoingServer>` +
+        `</emailProvider></clientConfig>`
+    )
+    ok('an absent socketType uses the parser defaults (incoming ssl, outgoing starttls)',
+      noSock?.incoming?.security === 'ssl' && noSock?.outgoing?.security === 'starttls',
+      `in=${noSock?.incoming?.security} out=${noSock?.outgoing?.security}`)
+
+    // An unrecognized socketType (no scheme in the string) is where the
+    // well-known-port fallback actually kicks in.
+    const plain = parseAutoconfigXml(xml('imap', 'plain', 143, 'plain', 465))
+    ok('an unrecognized socketType falls back to the port (143→starttls, 465→ssl)',
+      plain?.incoming?.security === 'starttls' && plain?.outgoing?.security === 'ssl',
+      `in=${plain?.incoming?.security} out=${plain?.outgoing?.security}`)
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {

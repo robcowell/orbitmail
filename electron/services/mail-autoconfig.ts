@@ -36,16 +36,22 @@ function fetchText(url: string): Promise<string | null> {
 
 function parseSecurity(type: string, port: number): ConnectionSecurity {
   const normalized = type.toLowerCase()
-  if (normalized.includes('ssl') || normalized.includes('tls') || port === 465 || port === 993 || port === 995) {
-    return 'ssl'
-  }
-  if (normalized.includes('starttls') || port === 587 || port === 143 || port === 110) {
-    return 'starttls'
-  }
+  // The type string names the scheme when present, and wins over the port.
+  // Check STARTTLS before SSL/TLS: 'starttls'.includes('tls') is true, so the
+  // SSL branch would otherwise claim a STARTTLS socketType and store the account
+  // as implicit SSL — which then hangs on a TLS handshake against the plaintext
+  // upgrade port (143/587).
+  if (normalized.includes('starttls')) return 'starttls'
+  if (normalized.includes('ssl') || normalized.includes('tls')) return 'ssl'
+  // No scheme in the type string — fall back to well-known ports.
+  if (port === 465 || port === 993 || port === 995) return 'ssl'
+  if (port === 587 || port === 143 || port === 110) return 'starttls'
   return port === 25 ? 'none' : 'starttls'
 }
 
-function parseAutoconfigXml(xml: string): Partial<ManualAccountInput> | null {
+// Exported for the integration suite: this is the pure XML→settings parse, with
+// no network, so the STARTTLS-vs-SSL classification can be tested directly.
+export function parseAutoconfigXml(xml: string): Partial<ManualAccountInput> | null {
   const incomingMatch = xml.match(
     /<incomingServer[^>]*type="([^"]+)"[^>]*>([\s\S]*?)<\/incomingServer>/i
   )

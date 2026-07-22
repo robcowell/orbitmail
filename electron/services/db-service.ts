@@ -27,6 +27,7 @@ import {
 import { DEFAULT_SYNC_DAYS, getSyncCutoffTimestamp } from './sync-policy'
 import { buildLikePattern, messageSearchableBody } from './search-index'
 import { normalizeSubject } from './thread-util'
+import { collectDisplayNames, extractName } from '../../shared/addresses'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
@@ -517,10 +518,16 @@ export function listMessages(
 // subject-fallback keys never merge across accounts.
 // ---------------------------------------------------------------------------
 
-function extractName(from: string): string {
-  const match = from.match(/^(.+?)\s*</)
-  if (match) return match[1].replace(/"/g, '').trim()
-  return from
+// A Sent folder's rows are about the recipient — the sender is always us.
+function isSentFolder(folderId: string | 'unified'): boolean {
+  if (folderId === 'unified') return false
+  const db = getDb()
+  const row = db
+    .select({ type: folders.type })
+    .from(folders)
+    .where(eq(folders.id, folderId))
+    .get()
+  return row?.type === 'sent'
 }
 
 // Folder ids the current view scopes to (unified = every inbox). Empty = nothing.
@@ -675,6 +682,7 @@ interface ThreadMsgRow {
   mkey: string
   folder_id: string
   from_addr: string
+  to_addr: string
   subject: string
   snippet: string
   date: number
@@ -696,6 +704,7 @@ export function listThreads(
   const scopeIds = threadScopeIds(folderId)
   if (scopeIds.length === 0) return []
   const scope = new Set(scopeIds)
+  const sentView = isSentFolder(folderId)
   const sqlite = getRawSqlite()
   const ph = scopeIds.map(() => '?').join(', ')
   // Unread-only restricts the conversation set to threads with an unread copy in
@@ -729,7 +738,7 @@ export function listThreads(
   const rows = sqlite
     .prepare(
       `SELECT id, account_id AS aid, COALESCE(thread_id, id) AS tkey, COALESCE(message_id, id) AS mkey,
-              folder_id, from_addr, subject, snippet, date, is_read, is_starred, flag_color, has_attachments
+              folder_id, from_addr, to_addr, subject, snippet, date, is_read, is_starred, flag_color, has_attachments
        FROM messages
        WHERE (account_id, COALESCE(thread_id, id)) IN (VALUES ${pairs})
        ORDER BY date ASC`
@@ -761,10 +770,19 @@ export function listThreads(
     const unique = g?.unique ?? []
     const all = g?.all ?? []
     const latest = unique[unique.length - 1]
+    // In a Sent folder the label is the recipients of our own copies, not the
+    // senders (always us). Those copies are read from `all`, not `unique` — the
+    // Message-ID dedupe can keep a Gmail All Mail copy of the same message and
+    // drop the one that lives in Sent.
     const participants: string[] = []
-    for (const m of unique) {
-      const name = extractName(m.from_addr)
-      if (!participants.includes(name)) participants.push(name)
+    if (sentView) {
+      const ourCopies = all.filter((m) => scope.has(m.folder_id))
+      participants.push(...collectDisplayNames(ourCopies.map((m) => m.to_addr)))
+    } else {
+      for (const m of unique) {
+        const name = extractName(m.from_addr)
+        if (!participants.includes(name)) participants.push(name)
+      }
     }
     const flagged = unique.find((m) => m.flag_color)
     return {
@@ -783,7 +801,11 @@ export function listThreads(
       // Gmail label copies can carry stale is_read and shouldn't mark the
       // conversation unread in the Inbox.
       hasUnread: all.some((m) => scope.has(m.folder_id) && m.is_read === 0),
-      participants: participants.length ? participants : [extractName(latest?.from_addr ?? '')]
+      participants: participants.length
+        ? participants
+        : sentView
+          ? collectDisplayNames([latest?.to_addr ?? ''])
+          : [extractName(latest?.from_addr ?? '')]
     }
   })
 }

@@ -195,6 +195,15 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   (`getThread`), so received + Sent messages interleave in the reader.
 - Search results stay flat (single-message reader); a one-message thread renders
   like an ordinary message.
+- **A row in a Sent folder is labelled with its recipients, not its sender** —
+  the sender there is always the account owner. `listThreads` builds
+  `ThreadSummary.participants` from the `to_addr` of the conversation's copies
+  *in that folder* (taken before the Message-ID dedupe, which can keep a Gmail
+  *All Mail* copy and drop the Sent one); the renderer does the same per row for
+  the flat/search/expanded-child views, keyed off each message's own folder type,
+  so a mixed list labels each row correctly. Name extraction, comma-splitting
+  that respects quoted names, and per-address dedupe live in `shared/addresses.ts`
+  (used by both processes).
 
 ### Search
 

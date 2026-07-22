@@ -385,6 +385,61 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Sent folders: a row names the recipient, not us')
+  // -------------------------------------------------------------------------
+  {
+    // In Sent the sender is always the account owner, so the useful label is who
+    // the mail went to. Thread rows get that from listThreads; the renderer does
+    // the same per row for flat/search views from MessageSummary.to.
+    const { getRawSqlite } = await import('../electron/db')
+    const { collectDisplayNames, splitAddressList } = await import('../shared/addresses')
+    const raw = getRawSqlite()
+
+    const sent = db.upsertFolder(account.id, 'SentLabels', 'SentLabels', 'sent')
+    const archive = db.upsertFolder(account.id, 'ArchiveLabels', 'ArchiveLabels', 'custom')
+    const ins = raw.prepare(
+      `INSERT INTO messages (id, folder_id, account_id, uid, message_id, thread_id, from_addr, to_addr, subject, snippet, date, is_read)
+       VALUES (@id, @f, @a, @uid, @mid, @tid, @from, @to, @subj, 'snip', @date, 1)`
+    )
+    const me = `Me <${EMAIL}>`
+    ins.run({ id: 'sent-1', f: sent.id, a: account.id, uid: 9101, mid: '<sent-1@x>', tid: 'thr-sent',
+      from: me, to: '"Doe, Jane" <jane@example.com>, bob@example.com', subj: 'Quote', date: 3000 })
+    // The Gmail shape: the same message also filed under a non-Sent label. The
+    // Message-ID dedupe can keep this copy and drop the Sent one, so the Sent
+    // label must be built from the copies that live in the folder being viewed.
+    ins.run({ id: 'sent-1-archive', f: archive.id, a: account.id, uid: 9102, mid: '<sent-1@x>', tid: 'thr-sent',
+      from: me, to: 'jane@example.com', subj: 'Quote', date: 3000 })
+    // Jane replies — her copy is in Archive, and must not become the Sent label.
+    ins.run({ id: 'reply-1', f: archive.id, a: account.id, uid: 9103, mid: '<reply-1@x>', tid: 'thr-sent',
+      from: 'Jane Doe <jane@example.com>', to: me, subj: 'Re: Quote', date: 4000 })
+
+    const sentThread = db.listThreads(sent.id, 10, 0).find((t) => t.threadId === 'thr-sent')
+    ok('a Sent thread is labelled with the recipients',
+      !!sentThread && sentThread.participants.join(', ') === 'Doe, Jane, bob@example.com',
+      sentThread?.participants.join(' | ') ?? 'thread missing')
+
+    const archiveThread = db.listThreads(archive.id, 10, 0).find((t) => t.threadId === 'thr-sent')
+    ok('the same thread elsewhere is still labelled with the senders',
+      !!archiveThread && archiveThread.participants.includes('Jane Doe'),
+      archiveThread?.participants.join(' | ') ?? 'thread missing')
+
+    // The renderer reads MessageSummary.to for flat/search rows.
+    const flat = db.listMessages(sent.id, 10, 0).find((m) => m.id === 'sent-1')
+    ok('the flat row carries the recipient list',
+      collectDisplayNames([flat?.to ?? '']).join(', ') === 'Doe, Jane, bob@example.com',
+      flat?.to ?? 'row missing')
+
+    // A comma inside a quoted display name does not split the address list.
+    ok('a quoted display name is one address, not two',
+      splitAddressList('"Doe, Jane" <jane@example.com>, bob@example.com').length === 2)
+    // One person written two ways is one participant, and the named form wins.
+    ok('the same address written two ways is listed once',
+      collectDisplayNames(['jane@example.com', 'Jane Doe <JANE@example.com>']).join(', ') === 'Jane Doe')
+
+    raw.prepare("DELETE FROM messages WHERE id IN ('sent-1', 'sent-1-archive', 'reply-1')").run()
+  }
+
+  // -------------------------------------------------------------------------
   section('POP3: a stalled server times out instead of wedging all sync')
   // -------------------------------------------------------------------------
   {

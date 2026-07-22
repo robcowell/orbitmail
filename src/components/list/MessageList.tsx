@@ -6,6 +6,7 @@ import type {
   MessageDetail,
   ThreadSummary
 } from '../../../shared/types'
+import { collectDisplayNames, extractName } from '../../../shared/addresses'
 import {
   useMailStore,
   selectMessage,
@@ -44,12 +45,6 @@ function formatDate(timestamp: number): string {
     day: 'numeric',
     year: isThisYear ? undefined : 'numeric'
   })
-}
-
-function extractName(from: string): string {
-  const match = from.match(/^(.+?)\s*</)
-  if (match) return match[1].replace(/"/g, '').trim()
-  return from
 }
 
 // ---- Search-result row (flat, single message) ----------------------------
@@ -271,16 +266,34 @@ export function MessageList() {
     () => new Map(folders.map((folder) => [folder.id, folder.name])),
     [folders]
   )
+  const folderTypeById = useMemo(
+    () => new Map(folders.map((folder) => [folder.id, folder.type])),
+    [folders]
+  )
+
+  // A row in a Sent folder names who the mail went to — the sender is us, and
+  // saying so in every row tells the reader nothing. Keyed off the message's own
+  // folder, so a mixed list (search, unified) labels each row correctly.
+  const rowDisplayName = useCallback(
+    (message: MessageSummary) => {
+      if (folderTypeById.get(message.folderId) === 'sent') {
+        const recipients = collectDisplayNames([message.to])
+        if (recipients.length > 0) return participantsLabel(recipients)
+      }
+      return extractName(message.from)
+    },
+    [folderTypeById]
+  )
 
   // Flat message rows — used for search results and for unthreaded folder view.
   const buildFlatRow = useCallback(
     (message: MessageSummary, showFolder: boolean) => ({
       message,
-      displayName: extractName(message.from),
+      displayName: rowDisplayName(message),
       formattedDate: formatDate(message.date),
       folderName: showFolder ? folderNameById.get(message.folderId) ?? 'Mailbox' : null
     }),
-    [folderNameById]
+    [folderNameById, rowDisplayName]
   )
 
   // Search always shows the folder; the flat folder view only shows it in unified.
@@ -507,7 +520,7 @@ export function MessageList() {
             key={`${key}:${m.id}`}
             message={m}
             nested
-            displayName={extractName(m.from)}
+            displayName={rowDisplayName(m)}
             formattedDate={formatDate(m.date)}
             isRead={m.isRead}
             isSelected={selectedMessageId === m.id && !selectedThreadId}

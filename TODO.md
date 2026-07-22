@@ -17,6 +17,7 @@ Items intentionally deferred. Tackle these before calling Orbit Mail production-
 - **Quality-of-life fixes** — dark-mode attachment-chip contrast, search clear button, and an attachment paperclip on message-list rows.
 - **Attachment save-as** — per-attachment **Save** and **Save all** actions, plus a right-click *Save attachment* context menu, with a download path picker.
 - **Manual reply** — a primary, non-AI **Reply** action in the reader (opens the composer with quoted text); the AI reply-draft is demoted to a secondary action.
+- **Sent rows name the recipient** — in any account's Sent folder the list row shows who the mail went to instead of the sender (always the account owner), in threaded, flat, expanded-thread-child and search views; multiple recipients read as `A, B, +N`, deduped per address so one person written two ways is listed once.
 - **Reply All** — replies to the sender plus all other To/Cc recipients (self and the original sender de-duplicated), exposed as a visible button in the single-message and thread reader headers and the toolbar, alongside the existing right-click context-menu entry.
 
 ## Decided: bring-your-own OAuth credentials

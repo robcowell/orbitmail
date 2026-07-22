@@ -111,7 +111,9 @@ export interface ThreadSummary {
   hasAttachments: boolean
   messageCount: number
   hasUnread: boolean
-  // Distinct sender display names, oldest first.
+  // Distinct display names for the row's label, oldest first: senders, or — in a
+  // Sent folder, where the sender is always the account owner — the recipients
+  // of the copies that live in that folder.
   participants: string[]
 }
 

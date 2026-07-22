@@ -18,6 +18,7 @@ import {
   deleteSelectedMessages,
   deleteThread
 } from './stores/mailStore'
+import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
 import { printMessageDetail, printThreadDetails } from './utils/printMessage'
 
@@ -216,6 +217,7 @@ function MainApp() {
 
   return (
     <div className="app-shell">
+      <SecureStorageBanner />
       <Toolbar />
       <ThreePaneLayout
         sidebar={<Sidebar />}

@@ -343,8 +343,11 @@ after 5 minutes and closes on every path.
 
 Rule 5 in CLAUDE.md: **never put credentials in a build**. See
 [OAuth setup](#oauth-setup) for where they come from instead. Account passwords
-and tokens are encrypted with `safeStorage`; when no keyring is available that
-degrades to base64, which is an open item in `TODO.md`.
+and tokens are encrypted with `safeStorage`; when no keyring is available it
+falls back to base64 so the app still works, and warns — the main process logs
+it at startup and a dismissible banner (`SecureStorageBanner`, driven by
+`app.getSecureStorageStatus()`) tells the user their secrets are obfuscated, not
+encrypted.
 
 ### Attachments
 

@@ -12,7 +12,8 @@ import type {
   DraftTone,
   SearchField,
   AttachmentDraft,
-  OAuthCredentialKey
+  OAuthCredentialKey,
+  Provider
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
 import { updateAppBadge } from './app-badge'
@@ -542,21 +543,33 @@ function registerIpc(): void {
 
   ipcMain.handle('accounts:list', () => listAccounts())
 
+  // The first sync of a newly added account runs in the background so the UI can
+  // show the account and close the Add Account dialog the moment auth + save is
+  // done, rather than waiting out the whole initial fetch. Folders and messages
+  // stream into the sidebar as they arrive (each synced folder fires the
+  // folder-synced notification the renderer already listens for). IDLE is
+  // (re)started only once the sync has created the inbox folder it needs.
+  const syncNewAccountInBackground = (accountId: string, provider: Provider): void => {
+    void refreshAccount(accountId, provider)
+      .then(() => restartIdleMonitoring())
+      .catch((err) =>
+        console.warn('[orbit-mail] Initial sync after adding an account failed:', err)
+      )
+  }
+
   ipcMain.handle('accounts:add', async (_, provider: 'gmail' | 'o365') => {
     const tokenData =
       provider === 'gmail'
         ? await authenticateGoogle()
         : await authenticateMicrosoft()
     const account = saveAccount(provider, tokenData)
-    await refreshAccount(account.id, account.provider)
-    restartIdleMonitoring()
+    syncNewAccountInBackground(account.id, account.provider)
     return account
   })
 
   ipcMain.handle('accounts:addManual', async (_, input: ManualAccountInput) => {
     const account = await addManualAccount(input)
-    await refreshAccount(account.id, account.provider)
-    restartIdleMonitoring()
+    syncNewAccountInBackground(account.id, account.provider)
     return account
   })
 

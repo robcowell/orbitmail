@@ -968,12 +968,15 @@ export async function addAccount(provider: 'gmail' | 'o365'): Promise<void> {
   const store = useMailStore.getState()
   try {
     const account = await window.orbitMail.accounts.add(provider)
+    // Auth and save are done; show the account and close the dialog now. The
+    // first sync runs in the background (see accounts:add in main.ts) and its
+    // folders fill in underneath as they arrive — App.tsx reloads the folder
+    // tree on each sync:messagesUpdated. Waiting for the whole sync here is what
+    // used to hold the dialog open for the full initial fetch.
     store.setShowAddAccount(false)
-    store.setToast('Account added successfully')
+    store.setToast('Account added — syncing…')
     store.expandAccount(account.id)
     await loadInitialData()
-    await window.orbitMail.sync.refresh()
-    await refreshMessages()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Failed to add account')
   }
@@ -983,12 +986,12 @@ export async function addManualAccount(input: ManualAccountInput): Promise<void>
   const store = useMailStore.getState()
   try {
     const account = await window.orbitMail.accounts.addManual(input)
+    // Same as addAccount: show it and close the dialog now; the background sync
+    // fills the folders in underneath.
     store.setShowAddAccount(false)
-    store.setToast('Account added successfully')
+    store.setToast('Account added — syncing…')
     store.expandAccount(account.id)
     await loadInitialData()
-    await window.orbitMail.sync.refresh()
-    await refreshMessages()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Failed to add account')
     throw err

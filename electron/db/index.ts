@@ -203,6 +203,7 @@ function migrateSchema(db: Database.Database): void {
   db.exec('CREATE INDEX IF NOT EXISTS messages_thread_idx ON messages(account_id, thread_id)')
   db.exec('CREATE INDEX IF NOT EXISTS messages_message_id_idx ON messages(message_id)')
   backfillThreadIds(db)
+  pruneOrphanedSweepTasks(db)
 
   const accountCols = db.prepare('PRAGMA table_info(accounts)').all() as Array<{ name: string }>
   const accountNames = new Set(accountCols.map((c) => c.name))
@@ -279,6 +280,44 @@ function backfillThreadIds(db: Database.Database): void {
 
   db.prepare(
     "INSERT INTO app_preferences (key, value) VALUES ('thread_backfill_v1', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+  ).run()
+}
+
+// One-time: remove AI Tasks (sweep_tasks) orphaned by account deletions that
+// predate the per-account cleanup in removeAccount. sweep_tasks has no foreign
+// key, so those deletions cascaded the account's folders and messages away but
+// left the task rows behind, invisible in the UI (their folder is gone) yet
+// still holding mail-derived content.
+//
+// Scoped to the unambiguous signature: a *per-folder* task whose folder no
+// longer exists. Folders vanish only via the account cascade — there is no
+// folder-delete path — so a missing folder means the account was removed.
+//
+// Deliberately NOT swept: unified-inbox tasks (folder_id 'unified') whose source
+// message is missing. A message goes missing both when its account is deleted
+// AND when it ages out of the local sync window, and the two are
+// indistinguishable after the fact — so removing those would risk deleting a
+// still-valid todo whose email merely left the cache. removeAccount handles the
+// unified case correctly going forward, while the message still exists.
+export function pruneOrphanedSweepTasks(db: Database.Database): void {
+  const done = db
+    .prepare("SELECT value FROM app_preferences WHERE key = 'sweep_task_orphan_cleanup_v1'")
+    .get() as { value: string } | undefined
+  if (done?.value === '1') return
+
+  const info = db
+    .prepare(
+      `DELETE FROM sweep_tasks
+       WHERE folder_id <> 'unified'
+         AND folder_id NOT IN (SELECT id FROM folders)`
+    )
+    .run()
+  if (info.changes > 0) {
+    console.log(`[orbit-mail] Removed ${info.changes} orphaned AI task(s) from deleted accounts.`)
+  }
+
+  db.prepare(
+    "INSERT INTO app_preferences (key, value) VALUES ('sweep_task_orphan_cleanup_v1', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   ).run()
 }
 

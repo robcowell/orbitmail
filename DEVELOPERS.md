@@ -177,7 +177,11 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   per-account operation mutex and 30s idle-close, so a batch of server ops shares a
   single connection instead of reconnecting each time. Kept separate from the IDLE
   monitor's persistent client.
-- **Batched writes** — each folder's fetched messages upsert in one transaction
+- **Batched writes** — each folder's fetched messages upsert in one transaction.
+  Only attachment *metadata* is buffered across the batch, not the parsed content
+  `Buffer`s: each message is reduced via `toAttachmentMeta` as it is parsed, so a
+  folder of large attachments no longer retains gigabytes of buffers until the
+  write (they are re-fetched on open). #67.
 - **Unread counts** — recalculated from local message read state after fetch (kept in sync with the message list)
 
 ### Threading
@@ -439,6 +443,7 @@ reimplementing them, so it exercises the shipping code paths:
 | DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |
 | Search | Body search matches a word inside an HTML message (via `search_text`) but not an HTML tag name; an un-backfilled row still matches via the `body_html` fallback; the backfill repopulates `search_text`; the result limit is clamped. |
 | Remote images | `allowSenderImages` stores a normalized sender (display name stripped, lowercased), does not double-add, and persists to `app_preferences`. The renderer-side blocking sanitizer is verified separately with jsdom, as the sanitizer itself is. |
+| Attachment metadata | `toAttachmentMeta` preserves filename/type/size (including the size-from-`content.length` fallback) and returns no content Buffer, so the sync batch can drop the parsed buffers instead of retaining them. |
 | Attachment index | `attachments.message_id` has an index, and the planner uses it (`EXPLAIN QUERY PLAN` shows the index, not a `SCAN`) — so a message-id lookup and the delete cascade are not full scans. |
 | Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). |
 

@@ -20,18 +20,32 @@ function safeAttachmentName(filename: string | undefined, uid: number): string {
   return (filename ?? `attachment-${uid}`).replace(/[^\w.-]/g, '_')
 }
 
+// Only the metadata is persisted; the parsed attachment's `content` Buffer is
+// never stored (it is re-fetched on demand when opened). Reducing to this shape
+// as soon as a message is parsed lets the Buffer be GC'd, instead of being
+// retained until a whole folder's batch is written — ~2GB for a folder of large
+// attachments (imap-sync buffers the batch; see recordAttachmentsMetadata's
+// caller there).
+export interface AttachmentMeta {
+  filename: string
+  contentType: string
+  size: number
+}
+
+export function toAttachmentMeta(att: ParsedAttachment): AttachmentMeta {
+  return {
+    filename: att.filename ?? 'attachment',
+    contentType: att.contentType ?? 'application/octet-stream',
+    size: att.size ?? att.content?.length ?? 0
+  }
+}
+
 export function recordAttachmentsMetadata(
   messageId: string,
-  parsedAttachments: ParsedAttachment[]
+  attachments: AttachmentMeta[]
 ): void {
-  for (const att of parsedAttachments) {
-    addAttachment(
-      messageId,
-      att.filename ?? 'attachment',
-      att.contentType ?? 'application/octet-stream',
-      att.size ?? att.content?.length ?? 0,
-      null
-    )
+  for (const att of attachments) {
+    addAttachment(messageId, att.filename, att.contentType, att.size, null)
   }
 }
 

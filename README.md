@@ -16,7 +16,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 - **Incremental sync** — only new messages are downloaded after the initial sync
 - **Near-realtime updates** — background sync plus IMAP IDLE on inbox folders, with live flag changes and server-side deletions (EXPUNGE) pushed and reconciled
 - **Read, compose, reply, and forward** — separate compose window with threading headers on reply
-- **Move and archive** — delete moves to Trash; archive moves to All Mail / Archive when available
+- **Move and archive** — delete moves to Trash; archive moves to All Mail / Archive when available. Anything that takes a message out of the list moves you on to the next one down, so you can work through a folder without re-picking a row
 - **Star and mark unread** — synced to the server
 - **Attachments** — view incoming attachments (rows carrying attachments are flagged with a paperclip in the list); attach files when sending
 - **Scoped search** — search across **All / From / To / Subject / Body** with a one-click clear, matched instantly against locally cached mail; your last-used scope is remembered

@@ -241,12 +241,15 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 - **Optimistic UI** — read/star/flag/move/delete update the list (and open reader)
   immediately and roll back on IPC failure; the reader header paints from the list
   summary while the body loads. See `patchMessageInList` in `mailStore.ts`.
-- **Delete advances the selection** — deleting the selected message or thread
-  (key, toolbar or context menu) lands on the next row *down*, falling back to the
-  row above when the deleted rows were last, so repeated deletes don't dead-end on
-  an empty reader. `successorMessageId` / `successorThread` in `mailStore.ts`
-  compute the target before the rows are dropped; deleting a row that was *not*
-  selected leaves the reader alone. Archive and move still clear the selection.
+- **Removing a row advances the selection** — delete, archive, junk and move (key,
+  toolbar or context menu) land on the next row *down*, falling back to the row
+  above when the removed rows were last, so repeated actions don't dead-end on an
+  empty reader. Every such action funnels through `removeMessagesAndAdvance` /
+  `removeThreadAndAdvance` in `mailStore.ts`, which resolve the target
+  (`successorMessageId` / `successorThread`) *before* the rows are dropped —
+  afterwards the neighbour is unknowable. Acting on a row that was *not* selected
+  leaves the open reader alone. Copy-to-folder does not remove the row, so it is
+  not part of this.
 - **Virtualized list** — the message list renders through `virtua`'s `VList` with a
   memoized row, so DOM node count stays roughly constant regardless of folder size.
 - **Reference-preserving refresh** — `mergeMessageList` reuses unchanged row objects

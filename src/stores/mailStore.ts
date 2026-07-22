@@ -293,11 +293,12 @@ function removeMessagesFromList(ids: string[]): void {
   if (removed > 0) store.setMessageTotal(Math.max(0, store.messageTotal - removed))
 }
 
-// The row a delete should land on: the next one *down* the list — the row that
-// slides up into the deleted one's place — falling back to the row above when
-// the deleted rows sat at the bottom. (Apple Mail, Outlook and Thunderbird all
-// advance downwards and only step back at the end of the list.) Call this
-// *before* dropping the rows, while the deleted ones are still in the list.
+// The row an action should land on when it takes the current row out of the
+// list: the next one *down* — the row that slides up into the removed one's
+// place — falling back to the row above when the removed rows sat at the bottom.
+// (Apple Mail, Outlook and Thunderbird all advance downwards and only step back
+// at the end of the list.) Call this *before* dropping the rows, while the
+// removed ones are still in the list.
 function successorMessageId(removedIds: string[]): string | null {
   const store = useMailStore.getState()
   const list = displayedMessages(store)
@@ -327,6 +328,48 @@ function successorThread(accountId: string, threadId: string): ThreadSummary | n
   const idx = list.findIndex((t) => t.threadId === threadId && t.accountId === accountId)
   if (idx === -1) return null
   return list[idx + 1] ?? list[idx - 1] ?? null
+}
+
+// Drop rows from the visible list and carry the selection to the successor, so
+// delete / archive / move can be fired repeatedly without re-picking a row. Rows
+// that were not selected are removed without disturbing the open reader.
+function removeMessagesAndAdvance(ids: string[]): void {
+  const store = useMailStore.getState()
+  const selected = new Set(
+    [store.selectedMessageId, ...store.selectedMessageIds].filter((id): id is string => !!id)
+  )
+  const wasSelected = ids.some((id) => selected.has(id))
+  const nextId = wasSelected ? successorMessageId(ids) : null
+
+  removeMessagesFromList(ids)
+  if (!wasSelected) return
+
+  store.setSelectedMessageIds([])
+  store.setSelectionAnchorId(null)
+  if (nextId) {
+    void selectMessage(nextId)
+    return
+  }
+  store.setSelectedMessage(null)
+  store.setSelectedMessageId(null)
+  scheduleSaveUiPreferences({ selectedMessageId: null })
+}
+
+// Thread-list counterpart of removeMessagesAndAdvance.
+function removeThreadAndAdvance(accountId: string, threadId: string): void {
+  const store = useMailStore.getState()
+  const wasSelected = store.selectedThreadId === threadId
+  const next = wasSelected ? successorThread(accountId, threadId) : null
+
+  removeThreadFromList(accountId, threadId)
+  if (!wasSelected) return
+
+  if (next) {
+    void selectThread(next.accountId, next.threadId)
+    return
+  }
+  store.setSelectedThread(null)
+  store.setSelectedThreadId(null)
 }
 
 // Optimistically patch a single row in the visible list (and search results, and
@@ -698,17 +741,7 @@ export async function deleteThread(accountId: string, threadId: string): Promise
     return { id: m.id, targetFolderId: trash?.id ?? null }
   })
 
-  const wasSelected = store.selectedThreadId === threadId
-  const nextThread = wasSelected ? successorThread(accountId, threadId) : null
-  removeThreadFromList(accountId, threadId)
-  if (wasSelected) {
-    if (nextThread) {
-      void selectThread(nextThread.accountId, nextThread.threadId)
-    } else {
-      store.setSelectedThread(null)
-      store.setSelectedThreadId(null)
-    }
-  }
+  removeThreadAndAdvance(accountId, threadId)
   store.setToast(messages.length === 1 ? 'Deleted' : `Deleted ${messages.length} messages`)
 
   try {
@@ -767,11 +800,7 @@ export async function archiveThread(accountId: string, threadId: string): Promis
     return
   }
 
-  removeThreadFromList(accountId, threadId)
-  if (store.selectedThreadId === threadId) {
-    store.setSelectedThread(null)
-    store.setSelectedThreadId(null)
-  }
+  removeThreadAndAdvance(accountId, threadId)
   store.setToast(moves.length === 1 ? 'Message archived' : `Archived ${moves.length} messages`)
 
   try {
@@ -860,11 +889,7 @@ export async function moveThreadToFolder(
   const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
   const target = folders.find((f) => f.id === targetFolderId)
 
-  removeThreadFromList(accountId, threadId)
-  if (store.selectedThreadId === threadId) {
-    store.setSelectedThread(null)
-    store.setSelectedThreadId(null)
-  }
+  removeThreadAndAdvance(accountId, threadId)
   store.setToast(
     messages.length === 1
       ? `Message moved to ${target?.name ?? 'folder'}`
@@ -1409,23 +1434,7 @@ export async function moveMessageToTrash(messageId: string): Promise<void> {
   // Optimistically remove from the list, move the selection on, and show
   // feedback immediately — the server move + re-poll can take a few seconds, so
   // we don't wait for them to confirm the UI.
-  const wasSelected =
-    store.selectedMessageId === messageId || store.selectedMessageIds.includes(messageId)
-  const nextId = wasSelected ? successorMessageId([messageId]) : null
-  removeMessagesFromList([messageId])
-  // Deleting a row that wasn't selected (right-click on another row) leaves the
-  // reader where it was.
-  if (wasSelected) {
-    store.setSelectedMessageIds([])
-    store.setSelectionAnchorId(null)
-    if (nextId) {
-      void selectMessage(nextId)
-    } else {
-      store.setSelectedMessage(null)
-      store.setSelectedMessageId(null)
-      scheduleSaveUiPreferences({ selectedMessageId: null })
-    }
-  }
+  removeMessagesAndAdvance([messageId])
   store.setToast(
     trash ? `Moved to “${trash.name}”` : alreadyInTrash ? 'Deleted permanently' : 'Deleted'
   )
@@ -1486,17 +1495,7 @@ export async function deleteSelectedMessages(): Promise<void> {
 
   // Optimistically drop the rows and land on the next one before the server
   // round-trips.
-  const nextId = successorMessageId(ids)
-  removeMessagesFromList(ids)
-  store.setSelectedMessageIds([])
-  store.setSelectionAnchorId(null)
-  if (nextId) {
-    void selectMessage(nextId)
-  } else {
-    store.setSelectedMessage(null)
-    store.setSelectedMessageId(null)
-    scheduleSaveUiPreferences({ selectedMessageId: null })
-  }
+  removeMessagesAndAdvance(ids)
 
   const label = destinations.length === 1 ? destinations[0] : 'Trash'
   try {
@@ -1531,13 +1530,7 @@ export async function archiveMessage(messageId: string): Promise<void> {
 
   // Optimistically remove from the list + clear the reader, then move on the
   // server. The row is already gone locally; roll back on failure.
-  removeMessagesFromList([messageId])
-  if (store.selectedMessageId === messageId) {
-    store.setSelectedMessage(null)
-    store.setSelectedMessageId(null)
-    store.setSelectedMessageIds([])
-    scheduleSaveUiPreferences({ selectedMessageId: null })
-  }
+  removeMessagesAndAdvance([messageId])
   store.setToast('Message archived')
 
   try {
@@ -1588,13 +1581,7 @@ export async function moveMessageToJunk(messageId: string): Promise<void> {
     return
   }
 
-  removeMessagesFromList([messageId])
-  if (store.selectedMessageId === messageId) {
-    store.setSelectedMessage(null)
-    store.setSelectedMessageId(null)
-    store.setSelectedMessageIds([])
-    scheduleSaveUiPreferences({ selectedMessageId: null })
-  }
+  removeMessagesAndAdvance([messageId])
   store.setToast('Message moved to Junk')
 
   try {
@@ -1614,13 +1601,7 @@ export async function moveMessageToFolder(
   const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
   const target = folders.find((folder) => folder.id === targetFolderId)
 
-  removeMessagesFromList([messageId])
-  if (store.selectedMessageId === messageId) {
-    store.setSelectedMessage(null)
-    store.setSelectedMessageId(null)
-    store.setSelectedMessageIds([])
-    scheduleSaveUiPreferences({ selectedMessageId: null })
-  }
+  removeMessagesAndAdvance([messageId])
   store.setToast(`Message moved to ${target?.name ?? 'folder'}`)
 
   try {

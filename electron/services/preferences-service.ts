@@ -28,6 +28,7 @@ export interface PersistedAppState {
   window?: WindowPreferences
   mutedSenders?: string[]
   blockedSenders?: string[]
+  imageAllowedSenders?: string[]
 }
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
@@ -46,7 +47,8 @@ export const DEFAULT_APP_STATE: PersistedAppState = {
   lastSyncAt: null,
   handleMailtoLinks: false,
   mutedSenders: [],
-  blockedSenders: []
+  blockedSenders: [],
+  imageAllowedSenders: []
 }
 
 function readRawState(): PersistedAppState {
@@ -65,6 +67,7 @@ function readRawState(): PersistedAppState {
       handleMailtoLinks: parsed.handleMailtoLinks ?? false,
       mutedSenders: parsed.mutedSenders ?? [],
       blockedSenders: parsed.blockedSenders ?? [],
+      imageAllowedSenders: parsed.imageAllowedSenders ?? [],
       window: parsed.window
     }
   } catch {
@@ -102,7 +105,8 @@ export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppSt
     ui: { ...current.ui, ...patch.ui },
     handleMailtoLinks: patch.handleMailtoLinks ?? current.handleMailtoLinks ?? false,
     mutedSenders: patch.mutedSenders ?? current.mutedSenders ?? [],
-    blockedSenders: patch.blockedSenders ?? current.blockedSenders ?? []
+    blockedSenders: patch.blockedSenders ?? current.blockedSenders ?? [],
+    imageAllowedSenders: patch.imageAllowedSenders ?? current.imageAllowedSenders ?? []
   }
   saveAppState(next)
   return next
@@ -134,6 +138,14 @@ export function getWindowPreferences(): WindowPreferences | undefined {
 function normalizeEmail(email: string): string {
   const match = email.match(/<([^>]+)>/)
   return (match ? match[1] : email).trim().toLowerCase()
+}
+
+export function allowSenderImages(email: string): void {
+  const normalized = normalizeEmail(email)
+  if (!normalized) return
+  const current = getAppState()
+  if (current.imageAllowedSenders?.includes(normalized)) return
+  patchAppState({ imageAllowedSenders: [...(current.imageAllowedSenders ?? []), normalized] })
 }
 
 export function muteSender(email: string): void {

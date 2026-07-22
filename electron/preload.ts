@@ -117,6 +117,8 @@ const api: OrbitMailAPI = {
     setHandleMailtoLinks: (enabled: boolean) =>
       ipcRenderer.invoke('preferences:setHandleMailtoLinks', enabled),
     muteSender: (email: string) => ipcRenderer.invoke('preferences:muteSender', email),
+    allowSenderImages: (email: string) =>
+      ipcRenderer.invoke('preferences:allowSenderImages', email),
     blockSender: (email: string) => ipcRenderer.invoke('preferences:blockSender', email)
   },
   oauth: {

@@ -96,7 +96,8 @@ import {
   setWindowPreferences,
   getWindowPreferences,
   muteSender,
-  blockSender
+  blockSender,
+  allowSenderImages
 } from './services/preferences-service'
 import {
   analyzeMessage,
@@ -990,6 +991,10 @@ function registerIpc(): void {
 
   ipcMain.handle('preferences:muteSender', (_, email: string) => {
     muteSender(email)
+  })
+
+  ipcMain.handle('preferences:allowSenderImages', (_, email: string) => {
+    allowSenderImages(email)
   })
 
   ipcMain.handle('preferences:blockSender', (_, email: string) => {

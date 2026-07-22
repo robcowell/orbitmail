@@ -61,6 +61,8 @@ interface MailState {
   isOnline: boolean
   collapsedAccountIds: Record<string, boolean>
   favoriteFolderIds: string[]
+  // Senders whose remote images load without the block prompt (persisted).
+  imageAllowedSenders: string[]
   // Conversation grouping on/off (persisted). When off, the list is flat.
   threadedView: boolean
   // Per-account "unread only" list filter (persisted). Keyed by account id, plus
@@ -116,6 +118,8 @@ interface MailState {
   toggleAccountCollapsed: (accountId: string) => void
   expandAccount: (accountId: string) => void
   toggleFavoriteFolder: (folderId: string) => void
+  setImageAllowedSenders: (senders: string[]) => void
+  addImageAllowedSender: (email: string) => void
   setThreadedView: (enabled: boolean) => void
   setUnreadFilterByAccount: (map: Record<string, boolean>) => void
   setExpandedThreadKeys: (keys: string[]) => void
@@ -167,6 +171,7 @@ export const useMailStore = create<MailState>((set) => ({
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   collapsedAccountIds: {},
   favoriteFolderIds: [],
+  imageAllowedSenders: [],
   threadedView: true,
   unreadFilterByAccount: {},
   expandedThreadKeys: [],
@@ -262,6 +267,14 @@ export const useMailStore = create<MailState>((set) => ({
       return { favoriteFolderIds }
     }),
   setThreadedView: (enabled) => set({ threadedView: enabled }),
+
+  setImageAllowedSenders: (senders) => set({ imageAllowedSenders: senders }),
+  addImageAllowedSender: (email) =>
+    set((state) => {
+      const normalized = email.trim().toLowerCase()
+      if (!normalized || state.imageAllowedSenders.includes(normalized)) return {}
+      return { imageAllowedSenders: [...state.imageAllowedSenders, normalized] }
+    }),
   setUnreadFilterByAccount: (map) => set({ unreadFilterByAccount: map }),
   setExpandedThreadKeys: (keys) => set({ expandedThreadKeys: keys }),
   setExpandedThreadMessages: (map) => set({ expandedThreadMessages: map })
@@ -1611,6 +1624,13 @@ export function clearSearch(): void {
   store.setSearchResults([])
   store.setSearchLoading(false)
   store.setServerSearched(false)
+}
+
+export async function allowSenderImages(email: string): Promise<void> {
+  const normalized = email.trim().toLowerCase()
+  if (!normalized) return
+  useMailStore.getState().addImageAllowedSender(normalized)
+  await window.orbitMail.preferences.allowSenderImages(normalized)
 }
 
 export async function runSearch(

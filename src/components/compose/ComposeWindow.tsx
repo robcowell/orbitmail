@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import DOMPurify from 'dompurify'
+import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
 import { Paperclip } from '@phosphor-icons/react/dist/ssr/Paperclip'
 import { X } from '@phosphor-icons/react/dist/ssr/X'
 import { CaretRight } from '@phosphor-icons/react/dist/ssr/CaretRight'
@@ -66,9 +66,17 @@ export function ComposeWindow() {
       bodyHtmlRef.current = initial.bodyHtml ?? ''
       bodyTextRef.current = initial.bodyText ?? ''
       setEditorSeq((n) => n + 1)
+      // Sanitize the quoted original once, here, so both the preview and the
+      // sent body use the safe version. The raw HTML is the sender's — sending
+      // it verbatim would carry their scripts/navigation sinks and, worse, their
+      // remote trackers into our reply and the Sent copy. blockRemoteContent
+      // strips remote images/backgrounds, matching how the reader renders them.
       setQuoted(
         initial.quotedHtml || initial.quotedText
-          ? { html: initial.quotedHtml ?? '', text: initial.quotedText ?? '' }
+          ? {
+              html: sanitizeEmailHtml(initial.quotedHtml ?? '', { blockRemoteContent: true }) ?? '',
+              text: initial.quotedText ?? ''
+            }
           : null
       )
       setQuotedExpanded(false)
@@ -279,7 +287,7 @@ export function ComposeWindow() {
             {quotedExpanded && (
               <div
                 className="compose-quote-body"
-                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(quoted.html) }}
+                dangerouslySetInnerHTML={{ __html: quoted.html }}
               />
             )}
           </div>

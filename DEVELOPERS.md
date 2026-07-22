@@ -197,7 +197,13 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 - **Local search** — scope-aware substring `LIKE` over the cached `messages` table
   (`searchMessages` in `db-service.ts`). The scope (`SearchField`) selects the
   columns matched: `all` (From/To/Subject/Snippet/Body), `from`, `to`, `subject`,
-  or `body`. The chosen scope is persisted in `UiPreferences`.
+  or `body`. The chosen scope is persisted in `UiPreferences`. The **body** is
+  matched against a stored plain-text `search_text` column (text/plain, or HTML
+  stripped of tags), not the raw `body_html` — ~10x less data to scan and free of
+  markup false-matches (99ms → 19ms on a real profile). `search_text` is written
+  on upsert and backfilled in the background for old rows; search falls back to
+  `body_html` for any row not yet backfilled, so it is correct throughout. The
+  renderer-supplied result `limit` is clamped (≤200).
 - **Server-side fallback** — when local search returns nothing (or on the explicit
   *Search whole mailbox* action), `searchServerMessages` (`imap-sync.ts`) runs a
   live IMAP search — Gmail `X-GM-RAW` over *All Mail*, or `from`/`to`/`subject`/`body`
@@ -210,11 +216,12 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   column back as NULL, so its delete-by-`message_id` never matched and it accumulated a
   duplicate row per re-index. It was removed (#36) rather than repaired, taking ~0.5ms
   per synced message and ~8MB with it.
-- If full-text search is wanted later, build it as an **external-content** FTS5 table
-  over `messages` (`content='messages'`, joined on the implicit `rowid`) maintained by
-  triggers — that stores no duplicate text and makes deletes work. Note it changes
-  matching: FTS matches whole tokens, so `mail` would stop matching `gmail`, which
-  today's substring `LIKE` does. Preserving that needs prefix or trigram tokenisation.
+- Substring `LIKE` over `search_text` is still **linear** in body size — it cannot be
+  indexed. The sub-linear step, if search latency ever demands it, is an FTS5 index
+  with the **`trigram`** tokenizer over `search_text`: unlike the default tokenizer it
+  supports `LIKE`/substring queries *and* is indexed, so it keeps today's mid-word
+  matching (`mail` matches `gmail`) rather than breaking it the way a word-token FTS
+  would. Not done here — it re-adds FTS machinery and wants its own justification.
 
 ### Performance notes
 
@@ -406,6 +413,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
 | Task-orphan cleanup | The one-time migration for tasks left by pre-fix deletions removes a per-folder orphan (folder gone), leaves a unified task whose source message is merely missing (could be a valid todo that aged out of the cache), and is idempotent. |
 | DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |
+| Search | Body search matches a word inside an HTML message (via `search_text`) but not an HTML tag name; an un-backfilled row still matches via the `body_html` fallback; the backfill repopulates `search_text`; the result limit is clamped. |
 
 Notes for anyone extending it:
 

@@ -38,7 +38,8 @@ import {
   getLatestInboxMessage,
   regroupThreadsIfNeeded,
   getAttachment,
-  listMessageAttachments
+  listMessageAttachments,
+  backfillSearchTextBatch
 } from './services/db-service'
 import { authenticateGoogle } from './services/oauth-google'
 import { authenticateMicrosoft } from './services/oauth-microsoft'
@@ -1139,6 +1140,31 @@ if (!gotSingleInstanceLock) {
     // Defer background network — IMAP IDLE connections and the polling loop —
     // until after the first render and the renderer's initial (local) data load,
     // so opening several IMAP sockets doesn't compete with startup paint.
+    // Populate search_text for mail synced before that column existed, one small
+    // batch at a time with a yield between, so the ~5s of HTML-stripping never
+    // becomes a single freeze. Search stays correct throughout (it falls back to
+    // body_html for rows not yet reached), and this drains once — new mail gets
+    // search_text on upsert.
+    const backfillSearchTextInBackground = (): void => {
+      let done = false
+      const step = (): void => {
+        if (done) return
+        try {
+          const processed = backfillSearchTextBatch()
+          if (processed === 0) {
+            done = true
+            return
+          }
+        } catch (err) {
+          done = true
+          console.warn('[orbit-mail] search-text backfill stopped:', err)
+          return
+        }
+        setTimeout(step, 60)
+      }
+      setTimeout(step, 2000)
+    }
+
     const startBackgroundWork = () => {
       // One immediate catch-up sync so the list refreshes shortly after launch,
       // then settle into the differentiated poll cadence (fast POP3, slow IDLE).
@@ -1148,6 +1174,7 @@ if (!gotSingleInstanceLock) {
       reconcileAllAccountsFlags({ filter: (a) => a.provider !== 'pop3' }).catch(() => {})
       startBackgroundSync()
       startIdleMonitoring()
+      backfillSearchTextInBackground()
     }
     if (mainWindow) {
       mainWindow.webContents.once('did-finish-load', () => {

@@ -25,7 +25,7 @@ import {
   type AccountCredentials
 } from './account-credentials'
 import { DEFAULT_SYNC_DAYS, getSyncCutoffTimestamp } from './sync-policy'
-import { buildLikePattern } from './search-index'
+import { buildLikePattern, messageSearchableBody } from './search-index'
 import { normalizeSubject } from './thread-util'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
@@ -1400,6 +1400,9 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
   const id = existing?.id ?? randomUUID()
   const isNew = !existing
 
+  // Plain-text projection for search — computed here so every writer gets it.
+  const searchText = messageSearchableBody(data.bodyText, data.bodyHtml)
+
   if (existing) {
     db.update(messages)
       .set({
@@ -1418,7 +1421,8 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
         flagColor: data.isStarred ? existing.flagColor : null,
         hasAttachments: data.hasAttachments,
         bodyHtml: data.bodyHtml,
-        bodyText: data.bodyText
+        bodyText: data.bodyText,
+        searchText
       })
       .where(eq(messages.id, id))
       .run()
@@ -1442,7 +1446,8 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
       isStarred: data.isStarred,
       hasAttachments: data.hasAttachments,
       bodyHtml: data.bodyHtml,
-      bodyText: data.bodyText
+      bodyText: data.bodyText,
+      searchText
     }).run()
   }
 
@@ -1738,13 +1743,19 @@ const SEARCH_SELECT = `SELECT m.id, m.folder_id, m.account_id, m.uid, m.message_
 // subject and body. Search is a substring LIKE over the messages table — no
 // full-text index is involved (see search-index.ts) — which is correct for
 // every scope, matches mid-word, and is fast at cache sizes.
-const SEARCH_FIELD_COLUMNS: Record<SearchField, string[]> = {
-  all: ['m.from_addr', 'm.to_addr', 'm.subject', 'm.snippet', 'm.body_text', 'm.body_html'],
+// Metadata columns each scope matches against. The message body is handled
+// separately (see searchMessages) because it searches the plain-text
+// search_text column, with a fallback to raw body_html for rows the background
+// backfill has not reached yet.
+const SEARCH_META_COLUMNS: Record<SearchField, string[]> = {
+  all: ['m.from_addr', 'm.to_addr', 'm.subject', 'm.snippet'],
   from: ['m.from_addr'],
   to: ['m.to_addr'],
   subject: ['m.subject'],
-  body: ['m.body_text', 'm.body_html']
+  body: []
 }
+const SEARCH_FIELDS_WITH_BODY: ReadonlySet<SearchField> = new Set<SearchField>(['all', 'body'])
+const SEARCH_LIMIT_MAX = 200
 
 export function searchMessages(
   text: string,
@@ -1756,20 +1767,58 @@ export function searchMessages(
   const likePattern = buildLikePattern(text)
   if (!likePattern || !accountId) return []
 
-  const columns = SEARCH_FIELD_COLUMNS[field] ?? SEARCH_FIELD_COLUMNS.all
-  const where = columns.map((col) => `${col} LIKE ? COLLATE NOCASE`).join(' OR ')
+  // `limit` crosses the IPC boundary from the renderer; clamp it so a bad value
+  // cannot ask the main process to marshal an unbounded result set.
+  const safeLimit = Math.min(Math.max(1, Math.trunc(limit) || 50), SEARCH_LIMIT_MAX)
+
+  const clauses = (SEARCH_META_COLUMNS[field] ?? SEARCH_META_COLUMNS.all).map(
+    (col) => `${col} LIKE ? COLLATE NOCASE`
+  )
+  const args: unknown[] = [accountId, ...clauses.map(() => likePattern)]
+
+  if (SEARCH_FIELDS_WITH_BODY.has(field)) {
+    // search_text is the stripped plain-text body (~10x smaller than raw HTML
+    // and free of markup false-matches). For rows the backfill has not reached,
+    // search_text is NULL, so fall back to body_text/body_html for those — once
+    // the backfill completes, only search_text is ever scanned.
+    clauses.push(
+      `(COALESCE(m.search_text, m.body_text) LIKE ? COLLATE NOCASE` +
+        ` OR (m.search_text IS NULL AND m.body_html LIKE ? COLLATE NOCASE))`
+    )
+    args.push(likePattern, likePattern)
+  }
+  args.push(safeLimit)
 
   const rows = sqlite
     .prepare(
       `${SEARCH_SELECT}
        FROM messages m
-       WHERE m.account_id = ? AND (${where})
+       WHERE m.account_id = ? AND (${clauses.join(' OR ')})
        ORDER BY m.date DESC
        LIMIT ?`
     )
-    .all(accountId, ...columns.map(() => likePattern), limit) as SearchRow[]
+    .all(...args) as SearchRow[]
 
   return mapSearchRows(rows)
+}
+
+// Populate search_text for one batch of rows that lack it (old mail synced
+// before the column existed). Returns rows processed; 0 when none remain, so a
+// caller can loop until drained. New/updated messages get search_text on upsert,
+// so this only ever drains the historical backlog.
+export function backfillSearchTextBatch(batchSize = 250): number {
+  const sqlite = getRawSqlite()
+  const rows = sqlite
+    .prepare('SELECT id, body_text, body_html FROM messages WHERE search_text IS NULL LIMIT ?')
+    .all(batchSize) as Array<{ id: string; body_text: string | null; body_html: string | null }>
+  if (rows.length === 0) return 0
+
+  const update = sqlite.prepare('UPDATE messages SET search_text = ? WHERE id = ?')
+  const run = sqlite.transaction((batch: typeof rows) => {
+    for (const r of batch) update.run(messageSearchableBody(r.body_text, r.body_html), r.id)
+  })
+  run(rows)
+  return rows.length
 }
 
 // Load specific messages as summaries, newest first. Used by the server-side

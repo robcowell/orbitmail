@@ -209,7 +209,7 @@ All local data is stored under the Electron user data directory:
 
 **How mail is rendered.** Message HTML comes from whoever sent it, so it is sanitized before display: scripts, forms, frames and embedded objects are removed, and CSS that would let a message paint over the app is stripped. The window itself cannot be navigated away from the app, and a Content-Security-Policy backs both. Links open in your browser, not in Orbit Mail. Attachments whose type can execute — `.desktop`, `.sh`, `.exe` and similar — ask for confirmation before opening, naming the real file extension.
 
-Removing an account from the sidebar deletes its local cached mail for that account.
+Removing an account deletes all of its local data — cached mail and message bodies, downloaded attachment files, its saved AI Tasks, and its stored credentials. When the app has closed, if the database has accumulated a lot of freed space it is compacted (`VACUUM`) to return it to the disk.
 
 ## Known limitations
 

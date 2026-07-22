@@ -292,6 +292,22 @@ export function removeAccount(accountId: string): void {
     }
   }
 
+  // sweep_tasks (AI Tasks) have no foreign key, so the account cascade below does
+  // not reach them. Delete this account's tasks explicitly, before the cascade
+  // drops the folders and messages the subqueries reference:
+  //   - per-folder sweeps, keyed by one of the account's folder ids
+  //   - unified-inbox sweeps, which are keyed by 'unified' but whose
+  //     source_message_id points at one of this account's messages
+  // Other accounts' unified tasks reference their own messages, so they are left
+  // untouched. Runs on the same synchronous connection as the delete below.
+  sqlite
+    .prepare(
+      `DELETE FROM sweep_tasks
+       WHERE folder_id IN (SELECT id FROM folders WHERE account_id = ?)
+          OR source_message_id IN (SELECT id FROM messages WHERE account_id = ?)`
+    )
+    .run(accountId, accountId)
+
   const db = getDb()
   db.delete(accounts).where(eq(accounts.id, accountId)).run()
 }

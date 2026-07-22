@@ -45,6 +45,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Renderer-store checks: plain node, no Docker or Electron needed, so they
+      # run before the slow suite and fail fast.
+      - name: Store tests
+        run: npm run test:store
+
       # Starts GreenMail in Docker (preinstalled on ubuntu-latest) and runs the
       # suite in a windowless Electron main process. No xvfb needed: the runner
       # switches to headless Ozone when there is no DISPLAY.

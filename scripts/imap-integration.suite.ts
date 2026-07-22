@@ -448,6 +448,34 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Attachments: message_id lookups use an index, not a full scan')
+  // -------------------------------------------------------------------------
+  {
+    // Every attachment read is by message_id, and the ON DELETE CASCADE from
+    // messages walks the same key — so without the index a prune of N messages
+    // is N full scans of attachments. An index that exists but the planner does
+    // not pick is worthless, so this asserts the plan, not just the schema.
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+
+    const idx = raw
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'attachments_message_id_idx'"
+      )
+      .get()
+    ok('attachments_message_id_idx exists', !!idx)
+
+    const plan = raw
+      .prepare('EXPLAIN QUERY PLAN SELECT id FROM attachments WHERE message_id = ?')
+      .all('any') as Array<{ detail: string }>
+    const detail = plan.map((p) => p.detail).join(' | ')
+    ok('a message_id lookup uses the index rather than scanning',
+      /USING (?:COVERING )?INDEX attachments_message_id_idx/.test(detail) &&
+        !/\bSCAN attachments\b/.test(detail),
+      detail)
+  }
+
+  // -------------------------------------------------------------------------
   section('Autoconfig: a STARTTLS socketType is not misread as implicit SSL')
   // -------------------------------------------------------------------------
   {

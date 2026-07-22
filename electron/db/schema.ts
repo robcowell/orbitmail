@@ -106,16 +106,23 @@ export const messages = sqliteTable(
   ]
 )
 
-export const attachments = sqliteTable('attachments', {
-  id: text('id').primaryKey(),
-  messageId: text('message_id')
-    .notNull()
-    .references(() => messages.id, { onDelete: 'cascade' }),
-  filename: text('filename').notNull(),
-  mimeType: text('mime_type').notNull(),
-  size: integer('size').notNull(),
-  localPath: text('local_path')
-})
+export const attachments = sqliteTable(
+  'attachments',
+  {
+    id: text('id').primaryKey(),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull(),
+    size: integer('size').notNull(),
+    localPath: text('local_path')
+  },
+  // Every attachment lookup is by message_id, and the ON DELETE CASCADE above
+  // needs it too — without this index each parent delete is a full scan, so
+  // pruning N messages is N scans.
+  (t) => [index('attachments_message_id_idx').on(t.messageId)]
+)
 
 export const appPreferences = sqliteTable('app_preferences', {
   key: text('key').primaryKey(),

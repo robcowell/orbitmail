@@ -131,6 +131,65 @@ async function main(): Promise<void> {
   })
 
   // -------------------------------------------------------------------------
+  section('Account removal: AI tasks are deleted, not orphaned')
+  // -------------------------------------------------------------------------
+  {
+    // sweep_tasks has no foreign key, so the account cascade does not reach it.
+    // removeAccount must delete this account's tasks — per-folder ones, and
+    // unified-inbox ones tied to its messages — while leaving other accounts'.
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+
+    const mkMessage = (id: string, folderId: string, acctId: string, uid: number) =>
+      raw
+        .prepare(
+          `INSERT INTO messages (id, folder_id, account_id, uid, from_addr, to_addr, subject, snippet, date)
+           VALUES (?, ?, ?, ?, 'a@b.c', 'd@e.f', 'subj', 'snip', 0)`
+        )
+        .run(id, folderId, acctId, uid)
+    const mkTask = (folderId: string, id: string, sourceMessageId: string) =>
+      raw
+        .prepare(
+          `INSERT INTO sweep_tasks (folder_id, id, task, priority, source_message_id, source_subject, source_from, created_at)
+           VALUES (?, ?, 'do a thing', 'low', ?, 'subj', 'a@b.c', 0)`
+        )
+        .run(folderId, id, sourceMessageId)
+    const taskExists = (folderId: string, id: string) =>
+      !!raw.prepare('SELECT 1 FROM sweep_tasks WHERE folder_id = ? AND id = ?').get(folderId, id)
+
+    const del = db.saveManualAccount('imap', {
+      authType: 'password', email: 'removal-test@example.com', displayName: 'Del',
+      username: 'd', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const keep = db.saveManualAccount('imap', {
+      authType: 'password', email: 'keep-test@example.com', displayName: 'Keep',
+      username: 'k', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const delFolder = db.upsertFolder(del.id, 'INBOX', 'Inbox', 'inbox')
+    const keepFolder = db.upsertFolder(keep.id, 'INBOX', 'Inbox', 'inbox')
+    mkMessage('del-msg', delFolder.id, del.id, 1)
+    mkMessage('keep-msg', keepFolder.id, keep.id, 1)
+
+    mkTask(delFolder.id, 'per-folder', 'del-msg')   // per-folder, this account
+    mkTask('unified', 'unified-del', 'del-msg')      // unified, tied to this account
+    mkTask('unified', 'unified-keep', 'keep-msg')    // unified, other account — must survive
+    mkTask(keepFolder.id, 'keep-folder', 'keep-msg') // per-folder, other account — must survive
+
+    db.removeAccount(del.id)
+
+    ok('the removed account\'s per-folder task is gone', !taskExists(delFolder.id, 'per-folder'))
+    ok('the removed account\'s unified task is gone', !taskExists('unified', 'unified-del'))
+    ok('another account\'s unified task survives', taskExists('unified', 'unified-keep'))
+    ok('another account\'s per-folder task survives', taskExists(keepFolder.id, 'keep-folder'))
+
+    db.removeAccount(keep.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {

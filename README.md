@@ -217,7 +217,7 @@ See [`TODO.md`](TODO.md) for the full backlog. Notable items at v0.1.0:
 
 - **Gmail / Microsoft sign-in needs your own OAuth app** — no build of Orbit Mail contains credentials, by design. Register once and enter the details when adding an account (about 15 minutes); see [DEVELOPERS.md](DEVELOPERS.md#oauth-setup)
 - **Remote images load automatically** — opening a message confirms the read and reveals your IP to the sender; there is no block-remote-content option yet
-- **Credential encryption needs a keyring** — without one (`safeStorage` unavailable), stored passwords, tokens and API keys fall back to obfuscation rather than encryption
+- **Credential encryption needs a keyring** — without one (`safeStorage` unavailable), stored passwords, tokens and API keys fall back to obfuscation rather than encryption. The app warns you when this is the case (a banner at the top of the window); install a keyring such as gnome-keyring or kwallet to enable encryption at rest
 - **POP3** — inbox sync only; move/archive are not supported on the server
 - **Initial sync depth** — first sync fetches up to 200 messages per folder; use **Load more** for older mail, or **Search whole mailbox** to pull in older matches on demand (IMAP accounts)
 - **Compose** — rich text (HTML) editor; no signatures or inline images yet

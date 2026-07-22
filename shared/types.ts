@@ -349,6 +349,8 @@ export interface OrbitMailAPI {
   }
   app: {
     onNeedsAccount: (callback: () => void) => () => void
+    /** Whether OS-level encryption (safeStorage) is available for stored secrets. */
+    getSecureStorageStatus: () => Promise<{ available: boolean }>
   }
   attachments: {
     download: (attachmentId: string) => Promise<string>

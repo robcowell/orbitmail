@@ -101,7 +101,8 @@ const api: OrbitMailAPI = {
       const handler = () => callback()
       ipcRenderer.on('app:needsAccount', handler)
       return () => ipcRenderer.removeListener('app:needsAccount', handler)
-    }
+    },
+    getSecureStorageStatus: () => ipcRenderer.invoke('app:getSecureStorageStatus')
   },
   attachments: {
     download: (attachmentId) => ipcRenderer.invoke('attachments:download', attachmentId),

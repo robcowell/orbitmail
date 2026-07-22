@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { parse as parseDotenv } from 'dotenv'
-import { app, BrowserWindow, ipcMain, shell, dialog, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, Notification, safeStorage } from 'electron'
 import { join, basename } from 'path'
 import { statSync, writeFileSync, copyFileSync, existsSync, readFileSync } from 'fs'
 import type {
@@ -996,6 +996,10 @@ function registerIpc(): void {
     blockSender(email)
   })
 
+  ipcMain.handle('app:getSecureStorageStatus', () => ({
+    available: safeStorage.isEncryptionAvailable()
+  }))
+
   ipcMain.handle('oauth:getStatus', () => getOAuthConfigStatus())
 
   // Values arrive from the renderer, are written encrypted, and are never read
@@ -1085,6 +1089,14 @@ if (!gotSingleInstanceLock) {
     // initial data requests are served the moment the window loads and any
     // sync-triggered event has a handler.
     registerIpc()
+
+    if (!safeStorage.isEncryptionAvailable()) {
+      console.warn(
+        '[orbit-mail] No OS keyring available — stored credentials (passwords, ' +
+          'tokens, API keys) are obfuscated, not encrypted. Install gnome-keyring ' +
+          'or kwallet for encryption at rest.'
+      )
+    }
 
     setOnFolderSynced(() => {
       notifyMessagesUpdated()

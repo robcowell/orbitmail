@@ -190,6 +190,83 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('One-time cleanup: orphaned AI tasks from pre-fix deletions')
+  // -------------------------------------------------------------------------
+  {
+    const { getRawSqlite, pruneOrphanedSweepTasks } = await import('../electron/db')
+    const raw = getRawSqlite()
+
+    const mkMessage = (id: string, folderId: string, acctId: string) =>
+      raw
+        .prepare(
+          `INSERT INTO messages (id, folder_id, account_id, uid, from_addr, to_addr, subject, snippet, date)
+           VALUES (?, ?, ?, 1, 'a@b.c', 'd@e.f', 'subj', 'snip', 0)`
+        )
+        .run(id, folderId, acctId)
+    const mkTask = (folderId: string, id: string, sourceMessageId: string) =>
+      raw
+        .prepare(
+          `INSERT INTO sweep_tasks (folder_id, id, task, priority, source_message_id, source_subject, source_from, created_at)
+           VALUES (?, ?, 't', 'low', ?, 's', 'a@b.c', 0)`
+        )
+        .run(folderId, id, sourceMessageId)
+    const taskExists = (folderId: string, id: string) =>
+      !!raw.prepare('SELECT 1 FROM sweep_tasks WHERE folder_id = ? AND id = ?').get(folderId, id)
+
+    // An account with a per-folder task, whose account row is then deleted
+    // *directly* — bypassing removeAccount — to reproduce a pre-fix orphan.
+    const orphanAcct = db.saveManualAccount('imap', {
+      authType: 'password', email: 'orphan-src@example.com', displayName: 'O',
+      username: 'o', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const orphanFolder = db.upsertFolder(orphanAcct.id, 'INBOX', 'Inbox', 'inbox')
+    mkMessage('orphan-msg', orphanFolder.id, orphanAcct.id)
+    mkTask(orphanFolder.id, 'orphan-task', 'orphan-msg')
+
+    // A live account whose task must survive, plus a unified task whose source
+    // message is missing — which the cleanup must NOT sweep (could be a valid
+    // todo whose email aged out of the cache).
+    const liveAcct = db.saveManualAccount('imap', {
+      authType: 'password', email: 'live-src@example.com', displayName: 'L',
+      username: 'l', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const liveFolder = db.upsertFolder(liveAcct.id, 'INBOX', 'Inbox', 'inbox')
+    mkTask(liveFolder.id, 'live-task', 'nonexistent')
+    mkTask('unified', 'unified-ghost', 'nonexistent') // missing message, must survive
+
+    // Delete the orphan account row directly (cascades its folder + message,
+    // leaves the task) — this is the pre-#56 state the migration cleans up.
+    raw.prepare('DELETE FROM accounts WHERE id = ?').run(orphanAcct.id)
+    ok('the orphan exists before cleanup (folder gone, task remains)',
+      taskExists(orphanFolder.id, 'orphan-task') &&
+        !raw.prepare('SELECT 1 FROM folders WHERE id = ?').get(orphanFolder.id))
+
+    // The suite's fresh DB already ran the guarded cleanup once (on empty data),
+    // so clear the flag to run it against this fixture.
+    raw.prepare("DELETE FROM app_preferences WHERE key = 'sweep_task_orphan_cleanup_v1'").run()
+    pruneOrphanedSweepTasks(raw)
+
+    ok('cleanup removes the orphaned per-folder task', !taskExists(orphanFolder.id, 'orphan-task'))
+    ok('a live account\'s task survives', taskExists(liveFolder.id, 'live-task'))
+    ok('a unified task with a missing message is NOT swept', taskExists('unified', 'unified-ghost'))
+
+    // Guarded: a second run is a no-op and does not touch a fresh orphan.
+    mkTask(orphanFolder.id, 'orphan-2', 'orphan-msg')
+    pruneOrphanedSweepTasks(raw)
+    ok('the cleanup is guarded — a second call does nothing',
+      taskExists(orphanFolder.id, 'orphan-2'))
+
+    // Cleanup fixtures.
+    raw.prepare("DELETE FROM sweep_tasks WHERE folder_id = ? OR id IN ('unified-ghost')").run(orphanFolder.id)
+    raw.prepare("DELETE FROM sweep_tasks WHERE folder_id = 'unified' AND id = 'unified-ghost'").run()
+    db.removeAccount(liveAcct.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {

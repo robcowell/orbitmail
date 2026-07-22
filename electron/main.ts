@@ -190,6 +190,16 @@ function safeProtocol(url: string): string {
   }
 }
 
+// Whether a URL is safe to hand to the OS opener. `shell.openExternal` launches
+// the registered handler for *any* scheme — `file:` opens a path, and custom
+// schemes can invoke other installed apps — so a URL that reaches it from
+// untrusted email HTML must be restricted to the web/mail schemes a link can
+// legitimately be. The navigation guard above is stricter still (http/https
+// only): a `mailto:` is a click to open the composer, not a page navigation.
+function isSafeExternalUrl(url: string): boolean {
+  return /^(?:https?|mailto):$/.test(safeProtocol(url))
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -408,7 +418,7 @@ function createMainWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isSafeExternalUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -459,7 +469,7 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
   })
 
   composeWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isSafeExternalUrl(url)) shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -895,6 +905,10 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('shell:openExternal', async (_, url: string) => {
+    // The renderer is not trusted to have vetted this — it may be a raw link
+    // from a message body. Refuse anything that is not http(s)/mailto rather
+    // than launch an arbitrary scheme's handler.
+    if (!isSafeExternalUrl(url)) return
     await shell.openExternal(url)
   })
 

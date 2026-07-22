@@ -319,6 +319,11 @@ which carries the full-privilege preload. Three independent layers:
    and `will-frame-navigate` to anything outside the app shell, forwarding
    `http(s)` to the OS browser. Without it, a form submit inside an email could
    navigate the renderer to an attacker page that inherits `window.orbitMail`.
+   Every URL handed to the OS opener is scheme-checked first: `isSafeExternalUrl`
+   allows only `http`/`https`/`mailto`, applied to the `shell:openExternal` IPC
+   handler and both `setWindowOpenHandler`s (`window.open`/`target=_blank`), so a
+   `file:` or custom-scheme link in a message body cannot launch an arbitrary
+   handler.
 3. **CSP** — injected per mode by the `orbit-csp` plugin in
    `electron.vite.config.ts`. Production gets `script-src 'self' file:`;
    the dev server additionally needs `'unsafe-inline'` for the react-refresh

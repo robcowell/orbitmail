@@ -323,7 +323,11 @@ which carries the full-privilege preload. Three independent layers:
    decides whether the reader shows its "images were blocked" bar at all, so
    plain-text and inline-only mail never shows a spurious prompt. The per-sender
    allowlist lives in the `app_preferences` blob (`imageAllowedSenders`); loading
-   once is session-only renderer state.
+   once is session-only renderer state. The same sanitizer also runs **outbound**:
+   `src/components/compose/ComposeWindow.tsx` sanitizes the quoted original with
+   `blockRemoteContent: true` before it goes into the reply's preview and sent
+   body, so the sender's scripts, navigation sinks and remote trackers are not
+   carried into our reply or the Sent copy (#69).
 2. **Navigation** — `blockOffAppNavigation` in `main.ts` cancels `will-navigate`
    and `will-frame-navigate` to anything outside the app shell, forwarding
    `http(s)` to the OS browser. Without it, a form submit inside an email could

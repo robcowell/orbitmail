@@ -321,6 +321,38 @@ export function pruneOrphanedSweepTasks(db: Database.Database): void {
   ).run()
 }
 
+// Whether a full VACUUM is worth its cost — a whole-file rewrite that blocks the
+// connection and briefly needs free disk roughly equal to the database size.
+// Only when a large fraction of the file is free pages *and* there is a
+// meaningful amount to reclaim; vacuuming a small database churns disk for
+// nothing. Pure so it can be tested without a bloated database.
+export function shouldReclaimFreelist(
+  pageCount: number,
+  freelistCount: number,
+  pageSize: number
+): boolean {
+  if (pageCount <= 0) return false
+  const freeBytes = freelistCount * pageSize
+  return freelistCount / pageCount >= 0.25 && freeBytes >= 20 * 1024 * 1024
+}
+
+// Reclaim freelist space with VACUUM when it has grown large. Returns the bytes
+// reclaimed, or 0 if skipped. VACUUM is synchronous and blocks the connection
+// for the rewrite (~2s on a 300MB database), so the caller runs this only at a
+// quiet moment — on quit, after the window has closed — never during
+// interactive use or before first paint. Self-throttling: VACUUM zeroes the
+// freelist, so it does not run again until enough mail has been deleted to
+// rebuild it.
+export function reclaimFreelistIfLarge(): number {
+  const db = getRawSqlite()
+  const pageCount = db.pragma('page_count', { simple: true }) as number
+  const freelistCount = db.pragma('freelist_count', { simple: true }) as number
+  const pageSize = db.pragma('page_size', { simple: true }) as number
+  if (!shouldReclaimFreelist(pageCount, freelistCount, pageSize)) return 0
+  db.exec('VACUUM')
+  return freelistCount * pageSize
+}
+
 export function getDb() {
   if (!dbInstance) {
     const dbPath = join(getDataDir(), 'orbit-mail.db')

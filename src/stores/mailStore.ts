@@ -293,6 +293,42 @@ function removeMessagesFromList(ids: string[]): void {
   if (removed > 0) store.setMessageTotal(Math.max(0, store.messageTotal - removed))
 }
 
+// The row a delete should land on: the next one *down* the list — the row that
+// slides up into the deleted one's place — falling back to the row above when
+// the deleted rows sat at the bottom. (Apple Mail, Outlook and Thunderbird all
+// advance downwards and only step back at the end of the list.) Call this
+// *before* dropping the rows, while the deleted ones are still in the list.
+function successorMessageId(removedIds: string[]): string | null {
+  const store = useMailStore.getState()
+  const list = displayedMessages(store)
+  const removed = new Set(removedIds)
+
+  let first = -1
+  let last = -1
+  list.forEach((m, i) => {
+    if (!removed.has(m.id)) return
+    if (first === -1) first = i
+    last = i
+  })
+  if (first === -1) return null
+
+  for (let i = last + 1; i < list.length; i++) {
+    if (!removed.has(list[i].id)) return list[i].id
+  }
+  for (let i = first - 1; i >= 0; i--) {
+    if (!removed.has(list[i].id)) return list[i].id
+  }
+  return null
+}
+
+// Same rule for the threaded view: the next conversation down, else the one above.
+function successorThread(accountId: string, threadId: string): ThreadSummary | null {
+  const list = useMailStore.getState().threads
+  const idx = list.findIndex((t) => t.threadId === threadId && t.accountId === accountId)
+  if (idx === -1) return null
+  return list[idx + 1] ?? list[idx - 1] ?? null
+}
+
 // Optimistically patch a single row in the visible list (and search results, and
 // the open reader if it matches) so a flag/read/star change shows instantly
 // without re-fetching the page. Returns the prior values of the changed fields
@@ -662,10 +698,16 @@ export async function deleteThread(accountId: string, threadId: string): Promise
     return { id: m.id, targetFolderId: trash?.id ?? null }
   })
 
+  const wasSelected = store.selectedThreadId === threadId
+  const nextThread = wasSelected ? successorThread(accountId, threadId) : null
   removeThreadFromList(accountId, threadId)
-  if (store.selectedThreadId === threadId) {
-    store.setSelectedThread(null)
-    store.setSelectedThreadId(null)
+  if (wasSelected) {
+    if (nextThread) {
+      void selectThread(nextThread.accountId, nextThread.threadId)
+    } else {
+      store.setSelectedThread(null)
+      store.setSelectedThreadId(null)
+    }
   }
   store.setToast(messages.length === 1 ? 'Deleted' : `Deleted ${messages.length} messages`)
 
@@ -1364,15 +1406,26 @@ export async function moveMessageToTrash(messageId: string): Promise<void> {
   const alreadyInTrash = currentFolder?.type === 'trash'
   const trash = alreadyInTrash ? null : findAccountFolder(folders, msg.accountId, 'trash')
 
-  // Optimistically remove from the list, clear selection, and show feedback
-  // immediately — the server move + re-poll can take a few seconds, so we don't
-  // wait for them to confirm the UI.
+  // Optimistically remove from the list, move the selection on, and show
+  // feedback immediately — the server move + re-poll can take a few seconds, so
+  // we don't wait for them to confirm the UI.
+  const wasSelected =
+    store.selectedMessageId === messageId || store.selectedMessageIds.includes(messageId)
+  const nextId = wasSelected ? successorMessageId([messageId]) : null
   removeMessagesFromList([messageId])
-  store.setSelectedMessage(null)
-  store.setSelectedMessageId(null)
-  store.setSelectedMessageIds([])
-  store.setSelectionAnchorId(null)
-  scheduleSaveUiPreferences({ selectedMessageId: null })
+  // Deleting a row that wasn't selected (right-click on another row) leaves the
+  // reader where it was.
+  if (wasSelected) {
+    store.setSelectedMessageIds([])
+    store.setSelectionAnchorId(null)
+    if (nextId) {
+      void selectMessage(nextId)
+    } else {
+      store.setSelectedMessage(null)
+      store.setSelectedMessageId(null)
+      scheduleSaveUiPreferences({ selectedMessageId: null })
+    }
+  }
   store.setToast(
     trash ? `Moved to “${trash.name}”` : alreadyInTrash ? 'Deleted permanently' : 'Deleted'
   )
@@ -1431,13 +1484,19 @@ export async function deleteSelectedMessages(): Promise<void> {
     items.push({ id, targetFolderId: trash?.id ?? null })
   }
 
-  // Optimistically clear the list + selection before the server round-trips.
+  // Optimistically drop the rows and land on the next one before the server
+  // round-trips.
+  const nextId = successorMessageId(ids)
   removeMessagesFromList(ids)
-  store.setSelectedMessage(null)
-  store.setSelectedMessageId(null)
   store.setSelectedMessageIds([])
   store.setSelectionAnchorId(null)
-  scheduleSaveUiPreferences({ selectedMessageId: null })
+  if (nextId) {
+    void selectMessage(nextId)
+  } else {
+    store.setSelectedMessage(null)
+    store.setSelectedMessageId(null)
+    scheduleSaveUiPreferences({ selectedMessageId: null })
+  }
 
   const label = destinations.length === 1 ? destinations[0] : 'Trash'
   try {

@@ -149,6 +149,12 @@ function migrateSchema(db: Database.Database): void {
     `)
   }
 
+  // The UNIQUE(folder_id, uid) index postdates the MVP, which inserted a fresh
+  // row per sync and so could accumulate duplicate (folder_id, uid) rows. On such
+  // a database `CREATE UNIQUE INDEX` fails with "UNIQUE constraint failed", and
+  // because this runs at startup the whole app fails to launch — every launch,
+  // with no in-app recovery. Remove the duplicates first so the index can build.
+  dedupeMessagesByFolderUid(db)
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS messages_folder_uid_idx ON messages(folder_id, uid)'
   )
@@ -265,6 +271,44 @@ function migrateSchema(db: Database.Database): void {
   // itself only shrinks on a VACUUM, which this app does not run.
   db.exec('DROP TABLE IF EXISTS messages_fts')
   db.prepare("DELETE FROM app_preferences WHERE key = 'fts_index_v2'").run()
+}
+
+// Remove duplicate (folder_id, uid) message rows so the UNIQUE index can be
+// built (see its caller). Duplicates are the same server message copied by the
+// pre-constraint upsert path, so collapsing them to one row is correct. The
+// survivor is chosen to preserve the most work: a row that already carries AI
+// analysis or a sweep cache is kept over one that does not, then the most
+// recently written (highest rowid). Attachments of dropped rows go with them via
+// ON DELETE CASCADE. Returns the number of rows removed (0 on a healthy DB, so
+// this is a cheap no-op on every normal launch). Exported for the suite.
+export function dedupeMessagesByFolderUid(db: Database.Database): number {
+  const dupeGroups = db
+    .prepare(
+      'SELECT COUNT(*) AS n FROM (SELECT 1 FROM messages GROUP BY folder_id, uid HAVING COUNT(*) > 1)'
+    )
+    .get() as { n: number }
+  if (dupeGroups.n === 0) return 0
+
+  const removed = db
+    .prepare(
+      `DELETE FROM messages WHERE rowid IN (
+         SELECT rowid FROM (
+           SELECT rowid, ROW_NUMBER() OVER (
+             PARTITION BY folder_id, uid
+             ORDER BY (ai_analysis IS NOT NULL) DESC,
+                      (sweep_cache IS NOT NULL) DESC,
+                      rowid DESC
+           ) AS rn
+           FROM messages
+         ) WHERE rn > 1
+       )`
+    )
+    .run().changes
+
+  console.warn(
+    `[db] removed ${removed} duplicate (folder_id, uid) message row(s) before building the unique index`
+  )
+  return removed
 }
 
 // One-time: give already-synced messages a thread_id. They predate the stored

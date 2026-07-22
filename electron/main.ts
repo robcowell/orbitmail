@@ -70,6 +70,7 @@ import {
   setIdleNewMailHandler
 } from './services/imap-idle'
 import { closeAccountPool, closeAllPools } from './services/imap-pool'
+import { reclaimFreelistIfLarge } from './db'
 import { sendMail, buildReplyPayload } from './services/smtp-send'
 import { autodetectMailSettings } from './services/mail-autoconfig'
 import { addManualAccount } from './services/manual-account'
@@ -1182,5 +1183,19 @@ app.on('window-all-closed', () => {
   stopBackgroundSync()
   stopIdleMonitoring()
   void closeAllPools()
+  // The window is gone, so this is a good moment to reclaim database freelist
+  // space if it has grown large — the brief VACUUM block is invisible here.
+  // Rare (self-throttling), and skipped silently on error, e.g. if a sync write
+  // is still settling.
+  try {
+    const reclaimed = reclaimFreelistIfLarge()
+    if (reclaimed > 0) {
+      console.log(
+        `[orbit-mail] Compacted database on exit, reclaimed ~${Math.round(reclaimed / 1024 / 1024)} MB`
+      )
+    }
+  } catch (err) {
+    console.warn('[orbit-mail] Database compaction skipped:', err)
+  }
   if (process.platform !== 'darwin') app.quit()
 })

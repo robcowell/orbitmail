@@ -267,6 +267,45 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('DB maintenance: reclaim freelist space when it grows large')
+  // -------------------------------------------------------------------------
+  {
+    const { getRawSqlite, shouldReclaimFreelist, reclaimFreelistIfLarge } =
+      await import('../electron/db')
+
+    // Decision logic — the numbers include a real 3.3k-message profile.
+    ok('vacuums a large, mostly-free file', shouldReclaimFreelist(80697, 29872, 4096))
+    ok('does not vacuum a freshly compacted file', !shouldReclaimFreelist(50638, 0, 4096))
+    ok('does not vacuum a small file even when its free fraction is high',
+      !shouldReclaimFreelist(1000, 900, 4096)) // 3.6MB free — not worth a rewrite
+    ok('the 25% / 20MB threshold is a real boundary',
+      shouldReclaimFreelist(80000, 20000, 4096) && !shouldReclaimFreelist(80000, 19999, 4096))
+
+    // Real end-to-end: bloat the database well past the threshold, drop it to
+    // the freelist, then reclaim and confirm the file actually shrank.
+    const raw = getRawSqlite()
+    raw.exec('CREATE TABLE _vac_bloat (id INTEGER PRIMARY KEY, blob TEXT)')
+    const chunk = 'x'.repeat(4000)
+    const insert = raw.prepare('INSERT INTO _vac_bloat (blob) VALUES (?)')
+    raw.transaction(() => {
+      for (let i = 0; i < 7000; i++) insert.run(chunk) // ~28MB
+    })()
+    raw.exec('DROP TABLE _vac_bloat') // pages move to the freelist
+
+    const pagesBefore = raw.pragma('page_count', { simple: true }) as number
+    const reclaimed = reclaimFreelistIfLarge()
+    const pagesAfter = raw.pragma('page_count', { simple: true }) as number
+    const freelistAfter = raw.pragma('freelist_count', { simple: true }) as number
+
+    ok('reclaims the space when the freelist is large', reclaimed > 20 * 1024 * 1024,
+      `reclaimed=${Math.round(reclaimed / 1024 / 1024)}MB`)
+    ok('the file shrinks and the freelist is zeroed',
+      pagesAfter < pagesBefore && freelistAfter === 0,
+      `pages ${pagesBefore} -> ${pagesAfter}, freelist ${freelistAfter}`)
+    ok('a second call is a no-op once compacted', reclaimFreelistIfLarge() === 0)
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {

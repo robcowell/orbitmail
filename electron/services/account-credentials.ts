@@ -100,6 +100,16 @@ export function smtpTransportOptions(config: ServerConfig, username: string, pas
   }
 }
 
+// node-pop3 arms its socket inactivity timeout only when one is supplied
+// (`if (typeof this.timeout !== 'undefined')` in Connection.js). Without it, a
+// server that completes the TCP handshake but never sends a greeting — or stalls
+// mid-RETR — leaves the operation pending forever. pollForNewMessages awaits
+// that promise with syncStatus.syncing set true, so a single stalled POP3
+// account wedges sync for *every* account until restart (a hang is neither
+// resolve nor reject, so the per-account try/catch cannot save it). This bounds
+// it: after this much inactivity the operation rejects and sync moves on.
+const POP3_SOCKET_TIMEOUT_MS = 60_000
+
 export function pop3ClientOptions(
   config: ServerConfig,
   username: string,
@@ -110,12 +120,14 @@ export function pop3ClientOptions(
   user: string
   password: string
   tls: boolean
+  timeout: number
 } {
   return {
     host: config.host,
     port: config.port,
     user: username,
     password,
-    tls: config.security === 'ssl' || config.security === 'starttls'
+    tls: config.security === 'ssl' || config.security === 'starttls',
+    timeout: POP3_SOCKET_TIMEOUT_MS
   }
 }

@@ -304,7 +304,17 @@ which carries the full-privilege preload. Three independent layers:
    (`base`, `meta`, `link`). An `afterSanitizeAttributes` hook strips
    `position: fixed|sticky|absolute` and its offsets from `style` attributes —
    DOMPurify never inspects style *contents*, which otherwise left the reader
-   pane paintable over with a convincing fake UI.
+   pane paintable over with a convincing fake UI. The same hook enforces
+   **remote-content blocking**: when the reader passes `blockRemoteContent`, the
+   hook drops remote `src`/`srcset`/`background`/`poster` and rewrites remote
+   `url(...)` in `style` to `url()`, so no external image or CSS background is
+   fetched. `data:` and `cid:` (inline/embedded) references are kept. Blocking is
+   driven by a module-level flag set around each `sanitize` call — safe because
+   sanitization is synchronous on the single renderer thread — and `hasRemoteContent()`
+   decides whether the reader shows its "images were blocked" bar at all, so
+   plain-text and inline-only mail never shows a spurious prompt. The per-sender
+   allowlist lives in the `app_preferences` blob (`imageAllowedSenders`); loading
+   once is session-only renderer state.
 2. **Navigation** — `blockOffAppNavigation` in `main.ts` cancels `will-navigate`
    and `will-frame-navigate` to anything outside the app shell, forwarding
    `http(s)` to the OS browser. Without it, a form submit inside an email could
@@ -315,9 +325,10 @@ which carries the full-privilege preload. Three independent layers:
    preamble. Neither uses `'unsafe-eval'`. `form-action`, `object-src`,
    `frame-src` and `base-uri` are all `'none'`.
 
-**Not defended:** remote content loads unconditionally, so opening a message
-confirms the read and reveals the client's IP to the sender. There is no
-block-remote-images preference yet.
+**Remote images** are blocked by default (layer 1 above), so opening a message no
+longer fetches tracking pixels or reveals the client's IP to the sender until the
+user loads them — once for a message, or always for a sender. There is no global
+"load everything" preference yet; the per-sender allow is the escape hatch.
 
 ### Transport
 
@@ -417,6 +428,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Task-orphan cleanup | The one-time migration for tasks left by pre-fix deletions removes a per-folder orphan (folder gone), leaves a unified task whose source message is merely missing (could be a valid todo that aged out of the cache), and is idempotent. |
 | DB maintenance | The freelist reclaim fires only above the 25% / 20MB threshold and not on a small or freshly compacted database; the real `VACUUM` path shrinks the file and zeroes the freelist. |
 | Search | Body search matches a word inside an HTML message (via `search_text`) but not an HTML tag name; an un-backfilled row still matches via the `body_html` fallback; the backfill repopulates `search_text`; the result limit is clamped. |
+| Remote images | `allowSenderImages` stores a normalized sender (display name stripped, lowercased), does not double-add, and persists to `app_preferences`. The renderer-side blocking sanitizer is verified separately with jsdom, as the sanitizer itself is. |
 
 Notes for anyone extending it:
 

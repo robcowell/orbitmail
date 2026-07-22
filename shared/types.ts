@@ -182,6 +182,8 @@ export interface PersistedAppState {
   handleMailtoLinks?: boolean
   mutedSenders: string[]
   blockedSenders: string[]
+  /** Senders whose remote images are loaded without the block prompt. */
+  imageAllowedSenders: string[]
   window?: {
     width: number
     height: number
@@ -369,6 +371,7 @@ export interface OrbitMailAPI {
     save: (state: Partial<PersistedAppState>) => Promise<PersistedAppState>
     setHandleMailtoLinks: (enabled: boolean) => Promise<boolean>
     muteSender: (email: string) => Promise<void>
+    allowSenderImages: (email: string) => Promise<void>
     blockSender: (email: string) => Promise<void>
   }
   oauth: {

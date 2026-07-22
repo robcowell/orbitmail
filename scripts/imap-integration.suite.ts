@@ -419,6 +419,35 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Remote images: the sender allowlist persists and normalizes')
+  // -------------------------------------------------------------------------
+  {
+    // The sanitizer blocking is renderer-side (needs a DOM) and is verified with
+    // jsdom, as the sanitizer itself was (#29). This covers the main-side half:
+    // the per-sender allowlist that the reader consults.
+    const prefs = await import('../electron/services/preferences-service')
+
+    prefs.allowSenderImages('"Stripe" <News@Stripe.com>')
+    const after = prefs.getAppState().imageAllowedSenders
+    ok('allowSenderImages stores a normalized address (name stripped, lowercased)',
+      after.includes('news@stripe.com'), after.join(', '))
+
+    prefs.allowSenderImages('news@stripe.com')
+    const dupes = prefs
+      .getAppState()
+      .imageAllowedSenders.filter((e) => e === 'news@stripe.com').length
+    ok('the same sender is not added twice', dupes === 1, `count=${dupes}`)
+
+    // Survives a fresh read of the persisted blob (not just the in-memory cache).
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite().prepare("SELECT value FROM app_preferences WHERE key = 'app_state'").get() as
+      | { value: string }
+      | undefined
+    ok('the allowlist is persisted to app_preferences',
+      !!raw && JSON.parse(raw.value).imageAllowedSenders?.includes('news@stripe.com'))
+  }
+
+  // -------------------------------------------------------------------------
   section('Docs: claims must match the code (CLAUDE.md rule 6)')
   // -------------------------------------------------------------------------
   {

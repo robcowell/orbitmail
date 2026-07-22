@@ -34,6 +34,7 @@ export function applyUiPreferences(ui: UiPreferences): void {
 export async function loadPersistedPreferences(): Promise<void> {
   const state = await window.orbitMail.preferences.get()
   applyUiPreferences(state.ui)
+  useMailStore.getState().setImageAllowedSenders(state.imageAllowedSenders ?? [])
 }
 
 export function scheduleSaveUiPreferences(patch?: Partial<UiPreferences>): void {

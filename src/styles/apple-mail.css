@@ -2319,6 +2319,59 @@ textarea {
   background: rgba(242, 207, 122, 0.16);
 }
 
+
+/* Remote-content blocked bar in the reader (RemoteContentBar). */
+.remote-content-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 24px 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: var(--bg-list-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.remote-content-bar > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-content-load,
+.remote-content-allow {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.remote-content-load {
+  color: white;
+  background: var(--accent);
+}
+
+.remote-content-load:hover {
+  background: var(--accent-hover);
+}
+
+.remote-content-allow {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.remote-content-allow:hover {
+  background: var(--border);
+}
+
+/* Tighter when it sits inside a stacked thread message. */
+.thread-msg .remote-content-bar {
+  margin: 8px 0 0;
+}
+
 .toast {
   position: fixed;
   bottom: 24px;

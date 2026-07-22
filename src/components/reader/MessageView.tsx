@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { AiAnalysis, DraftTone, MessageDetail } from '../../../shared/types'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
+import { RemoteContentBar, useRemoteImageBlocking } from './RemoteContentBar'
 import {
   useMailStore,
   toggleMessageStar,
@@ -301,9 +302,14 @@ export function MessageView() {
 
   // Sanitizing a large email is expensive; only redo it when the message body
   // actually changes, not on every unrelated store update (star, AI, selection).
+  const remoteImages = useRemoteImageBlocking(
+    selectedMessage?.id ?? '',
+    selectedMessage?.from ?? '',
+    selectedMessage?.bodyHtml
+  )
   const sanitizedHtml = useMemo(
-    () => sanitizeEmailHtml(selectedMessage?.bodyHtml),
-    [selectedMessage?.id, selectedMessage?.bodyHtml]
+    () => sanitizeEmailHtml(selectedMessage?.bodyHtml, { blockRemoteContent: remoteImages.blocked }),
+    [selectedMessage?.id, selectedMessage?.bodyHtml, remoteImages.blocked]
   )
 
   // Conversation mode: a thread is open (takes priority over single-message).
@@ -476,6 +482,13 @@ export function MessageView() {
         </div>
       )}
 
+      {remoteImages.blocked && (
+        <RemoteContentBar
+          sender={remoteImages.senderEmail}
+          onLoadOnce={remoteImages.loadOnce}
+          onAlwaysAllow={remoteImages.alwaysAllow}
+        />
+      )}
       <div className="reader-body" onClick={handleBodyClick}>
         {sanitizedHtml ? (
           <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
@@ -768,9 +781,10 @@ const ThreadMessage = memo(function ThreadMessage({
   const [expanded, setExpanded] = useState(defaultExpanded)
   const isAnalyzing = aiAnalyzingId === message.id
 
+  const remoteImages = useRemoteImageBlocking(message.id, message.from, message.bodyHtml)
   const sanitizedHtml = useMemo(
-    () => sanitizeEmailHtml(message.bodyHtml),
-    [message.id, message.bodyHtml]
+    () => sanitizeEmailHtml(message.bodyHtml, { blockRemoteContent: remoteImages.blocked }),
+    [message.id, message.bodyHtml, remoteImages.blocked]
   )
 
   const handleBodyClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -849,6 +863,13 @@ const ThreadMessage = memo(function ThreadMessage({
         </div>
       )}
 
+      {remoteImages.blocked && (
+        <RemoteContentBar
+          sender={remoteImages.senderEmail}
+          onLoadOnce={remoteImages.loadOnce}
+          onAlwaysAllow={remoteImages.alwaysAllow}
+        />
+      )}
       <div className="reader-body thread-msg-body" onClick={handleBodyClick}>
         {sanitizedHtml ? (
           <div dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />

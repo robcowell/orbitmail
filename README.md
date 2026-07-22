@@ -163,7 +163,7 @@ Credentials are stored encrypted using your OS keychain.
 | `C` | Compose new message |
 | `R` | Reply to selected message |
 | `/` | Focus search |
-| `Delete` / `Backspace` | Move selected message to Trash (or delete permanently if already in Trash) |
+| `Delete` / `Backspace` | Move selected message to Trash (or delete permanently if already in Trash); selection moves to the next message down, so you can keep deleting |
 
 ### Toolbar actions
 

@@ -566,6 +566,7 @@ optimistic-UI invariants live.
 | Rollback | A rejected delete releases the hold *before* the caller's rollback refresh, so the row comes back rather than staying invisible until the next folder switch. |
 | Selection advance | Deleting mid-list selects the row below; deleting the last row falls back to the row above. |
 | Conversation multi-select | Shift-click selects a range of conversation rows and can shrink it again (the anchor survives `selectThread` moving the lead), ctrl/cmd-click adds and removes one, and Delete batches the whole selection into a single `deleteMany` — leaving the survivor selected exactly as a plain click would. |
+| Bulk archive and move | Archive and move batch a multi-selection into one `moveMany`, in both views, with every item aimed at the resolved destination; the rows leave the list; archive does not go out over the delete channel; and a move to the folder the messages are already in is a no-op rather than a round-trip. |
 
 The stub is deliberately thin — it is the IPC surface the store touches, nothing
 more — so adding a check usually means adding one more method to it. Extend this

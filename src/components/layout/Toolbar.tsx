@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { SearchField } from '../../../shared/types'
 import {
   useMailStore,
-  moveMessageToTrash,
-  archiveMessage,
+  deleteSelectedMessages,
+  deleteSelectedThreads,
+  archiveSelectedMessages,
+  archiveSelectedThreads,
   markMessageUnread,
   toggleMessageStar,
   runSearch,
@@ -116,6 +118,8 @@ function SearchScopeMenu({
 
 export function Toolbar() {
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
+  const selectedThreadId = useMailStore((s) => s.selectedThreadId)
+  const selectedThreadKeys = useMailStore((s) => s.selectedThreadKeys)
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const accounts = useMailStore((s) => s.accounts)
   const folders = useMailStore((s) => s.folders)
@@ -174,19 +178,26 @@ export function Toolbar() {
     })
   }
 
+  // Conversation view keeps selectedMessageId null, so both of these took the
+  // thread branch or did nothing at all before.
+  const threadSelection = selectedThreadKeys.length > 0 || !!selectedThreadId
+  const hasSelection = threadSelection || !!selectedMessageId
+
   const handleDelete = async () => {
-    if (!selectedMessageId) return
+    if (!hasSelection) return
     try {
-      await moveMessageToTrash(selectedMessageId)
+      if (threadSelection) await deleteSelectedThreads()
+      else await deleteSelectedMessages()
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Delete failed')
     }
   }
 
   const handleArchive = async () => {
-    if (!selectedMessageId) return
+    if (!hasSelection) return
     try {
-      await archiveMessage(selectedMessageId)
+      if (threadSelection) await archiveSelectedThreads()
+      else await archiveSelectedMessages()
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Archive failed')
     }
@@ -309,7 +320,7 @@ export function Toolbar() {
           className="toolbar-btn"
           title="Delete"
           onClick={handleDelete}
-          disabled={!selectedMessageId}
+          disabled={!hasSelection}
         >
           <Trash {...iconProps} />
         </button>
@@ -317,7 +328,7 @@ export function Toolbar() {
           className="toolbar-btn"
           title="Archive"
           onClick={handleArchive}
-          disabled={!selectedMessageId}
+          disabled={!hasSelection}
         >
           <Archive {...iconProps} />
         </button>

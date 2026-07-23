@@ -865,18 +865,38 @@ async function selectThreadKeepingSelection(
 
 // Delete every selected conversation in one batch — the same server call the
 // single-thread delete uses, with all the rows resolved up front.
-export async function deleteSelectedThreads(): Promise<void> {
+type RelocateItem = { id: string; targetFolderId: string | null }
+
+// Shared spine for the bulk conversation actions. They differ only in where each
+// message goes and what the toast says: delete sends messages to Trash (or
+// deletes them outright when already there), archive and move send them to a
+// named folder. Everything else — resolving the conversations, dropping the rows
+// optimistically, advancing past the run, holding the rows out of a refresh
+// until the server answers — is identical.
+async function relocateSelectedThreads(options: {
+  // Where a message goes: a folder id, null to delete it, or undefined to leave
+  // it where it is (already in the destination, or no such folder).
+  destination: (message: MessageDetail, folders: Folder[]) => string | null | undefined
+  toast: (threadCount: number) => string
+  nothingToDo?: string
+  failure: string
+  invoke: (items: RelocateItem[]) => Promise<unknown>
+  // Falls back to the single-conversation action when only one row is selected,
+  // so the plain path keeps its own toasts and behaviour.
+  single: (accountId: string, threadId: string) => Promise<void>
+}): Promise<void> {
   const store = useMailStore.getState()
   const keys = store.selectedThreadKeys
+
   if (keys.length <= 1) {
     const key = keys[0]
     if (key) {
       const [accountId, threadId] = key.split(' ')
-      await deleteThread(accountId, threadId)
+      await options.single(accountId, threadId)
       return
     }
     const row = store.threads.find((t) => t.threadId === store.selectedThreadId)
-    if (row) await deleteThread(row.accountId, row.threadId)
+    if (row) await options.single(row.accountId, row.threadId)
     return
   }
 
@@ -888,14 +908,17 @@ export async function deleteSelectedThreads(): Promise<void> {
     selected.map((t) => resolveThreadMessages(t.accountId, t.threadId))
   )
   const messages = threads.flat()
-  if (messages.length === 0) return
 
-  const items = messages.map((m) => {
-    const currentFolder = folders.find((f) => f.id === m.folderId)
-    const trash =
-      currentFolder?.type === 'trash' ? null : findAccountFolder(folders, m.accountId, 'trash')
-    return { id: m.id, targetFolderId: trash?.id ?? null }
-  })
+  const items: RelocateItem[] = []
+  for (const m of messages) {
+    const target = options.destination(m, folders)
+    if (target === undefined) continue
+    items.push({ id: m.id, targetFolderId: target })
+  }
+  if (items.length === 0) {
+    if (options.nothingToDo) store.setToast(options.nothingToDo)
+    return
+  }
 
   // Advance past the whole run: the successor of the last selected row.
   const last = selected[selected.length - 1]
@@ -909,19 +932,62 @@ export async function deleteSelectedThreads(): Promise<void> {
     store.setSelectedThread(null)
     store.setSelectedThreadId(null)
   }
-  store.setToast(`Deleted ${selected.length} conversations`)
+  store.setToast(options.toast(selected.length))
 
   try {
     await withPendingRemoval(
       items.map((i) => i.id),
       keys,
-      () => window.orbitMail.messages.deleteMany(items)
+      () => options.invoke(items)
     )
     await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Delete failed')
+    store.setToast(err instanceof Error ? err.message : options.failure)
     await refreshMessages()
   }
+}
+
+export async function deleteSelectedThreads(): Promise<void> {
+  await relocateSelectedThreads({
+    destination: (m, folders) => {
+      const currentFolder = folders.find((f) => f.id === m.folderId)
+      if (currentFolder?.type === 'trash') return null
+      return findAccountFolder(folders, m.accountId, 'trash')?.id ?? null
+    },
+    toast: (n) => `Deleted ${n} conversations`,
+    failure: 'Delete failed',
+    invoke: (items) => window.orbitMail.messages.deleteMany(items),
+    single: deleteThread
+  })
+}
+
+export async function archiveSelectedThreads(): Promise<void> {
+  await relocateSelectedThreads({
+    // A message already in the archive stays put rather than failing the batch.
+    destination: (m, folders) => {
+      const archive = findArchiveFolder(folders, m.accountId)
+      if (!archive || m.folderId === archive.id) return undefined
+      return archive.id
+    },
+    toast: (n) => `Archived ${n} conversations`,
+    nothingToDo: 'No archive folder found for these accounts',
+    failure: 'Archive failed',
+    invoke: (items) => window.orbitMail.messages.moveMany(items),
+    single: archiveThread
+  })
+}
+
+export async function moveSelectedThreadsToFolder(targetFolderId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const target = store.folders.find((f) => f.id === targetFolderId)
+  await relocateSelectedThreads({
+    destination: (m) => (m.folderId === targetFolderId ? undefined : targetFolderId),
+    toast: (n) => `${n} conversations moved to ${target?.name ?? 'folder'}`,
+    nothingToDo: `Already in ${target?.name ?? 'that folder'}`,
+    failure: 'Move failed',
+    invoke: (items) => window.orbitMail.messages.moveMany(items),
+    single: (accountId, threadId) => moveThreadToFolder(accountId, threadId, targetFolderId)
+  })
 }
 
 export function selectAdjacentThread(direction: 1 | -1): void {
@@ -1752,6 +1818,88 @@ export async function deleteSelectedMessages(): Promise<void> {
     store.setToast(err instanceof Error ? err.message : 'Delete failed')
     await refreshMessages()
   }
+}
+
+// Flat-list counterpart of relocateSelectedThreads: archive or move every
+// selected message in one batch, falling back to the single-message action when
+// only one row is selected so its toasts and behaviour are unchanged.
+async function relocateSelectedMessages(options: {
+  destination: (message: MessageSummary, folders: Folder[]) => string | null | undefined
+  toast: (count: number) => string
+  nothingToDo?: string
+  failure: string
+  single: (messageId: string) => Promise<void>
+}): Promise<void> {
+  const store = useMailStore.getState()
+  const ids = store.selectedMessageIds.length
+    ? store.selectedMessageIds
+    : store.selectedMessageId
+      ? [store.selectedMessageId]
+      : []
+
+  if (ids.length <= 1) {
+    if (ids.length === 1) await options.single(ids[0])
+    return
+  }
+
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const summaries = new Map(
+    [...store.messages, ...store.searchResults].map((m) => [m.id, m])
+  )
+
+  const items: RelocateItem[] = []
+  for (const id of ids) {
+    const msg = summaries.get(id)
+    if (!msg) continue
+    const target = options.destination(msg, folders)
+    if (target === undefined) continue
+    items.push({ id, targetFolderId: target })
+  }
+  if (items.length === 0) {
+    if (options.nothingToDo) store.setToast(options.nothingToDo)
+    return
+  }
+
+  removeMessagesAndAdvance(items.map((i) => i.id))
+  store.setToast(options.toast(items.length))
+
+  try {
+    await withPendingRemoval(
+      items.map((i) => i.id),
+      [],
+      () => window.orbitMail.messages.moveMany(items)
+    )
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : options.failure)
+    await refreshMessages()
+  }
+}
+
+export async function archiveSelectedMessages(): Promise<void> {
+  await relocateSelectedMessages({
+    destination: (m, folders) => {
+      const archive = findArchiveFolder(folders, m.accountId)
+      if (!archive || m.folderId === archive.id) return undefined
+      return archive.id
+    },
+    toast: (n) => `Archived ${n} messages`,
+    nothingToDo: 'No archive folder found for these accounts',
+    failure: 'Archive failed',
+    single: archiveMessage
+  })
+}
+
+export async function moveSelectedMessagesToFolder(targetFolderId: string): Promise<void> {
+  const store = useMailStore.getState()
+  const target = store.folders.find((f) => f.id === targetFolderId)
+  await relocateSelectedMessages({
+    destination: (m) => (m.folderId === targetFolderId ? undefined : targetFolderId),
+    toast: (n) => `${n} messages moved to ${target?.name ?? 'folder'}`,
+    nothingToDo: `Already in ${target?.name ?? 'that folder'}`,
+    failure: 'Move failed',
+    single: (messageId) => moveMessageToFolder(messageId, targetFolderId)
+  })
 }
 
 export async function archiveMessage(messageId: string): Promise<void> {

@@ -122,6 +122,10 @@ Everything Orbit Mail knows lives on your machine:
 
 - **Nothing is sent anywhere except your mail servers** — no telemetry, no
   analytics, no accounts with us. There is no "us".
+- **Only your account can read it.** The database and downloaded attachments are
+  created readable by you alone, and an older install with looser permissions is
+  corrected the next time the app starts — it matters on a machine with more than
+  one user account.
 - **Passwords and tokens are encrypted** using your system keyring. Without a
   keyring installed they fall back to obfuscation, and the app tells you so with a
   banner rather than pretending otherwise.

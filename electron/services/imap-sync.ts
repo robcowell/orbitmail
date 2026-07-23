@@ -1592,8 +1592,10 @@ export async function exportMessageRawToTemp(messageId: string): Promise<string>
       if (!raw) throw new Error('Could not download message source')
 
       const safeName = (msg.subject || 'message').replace(/[^\w.-]+/g, '_').slice(0, 60)
-      const path = join(tmpdir(), `orbit-mail-${safeName}-${Date.now()}.eml`)
-      writeFileSync(path, raw)
+      // Owner-only, in this run's export directory, which is removed on quit —
+      // the file is an entire email, headers and attachments included.
+      const path = join(getExportDir(), `${safeName}-${Date.now()}.eml`)
+      writeFileSync(path, raw, { mode: PRIVATE_FILE_MODE })
       return path
     } finally {
       lock.release()

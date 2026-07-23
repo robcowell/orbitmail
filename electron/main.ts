@@ -22,6 +22,7 @@ import {
   clearApprovedAttachments
 } from './services/attachment-allowlist'
 import { initTray, destroyTray } from './tray'
+import { cleanupExportDir, sweepStaleExportDirs } from './services/temp-export'
 import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
@@ -1246,6 +1247,9 @@ if (!gotSingleInstanceLock) {
       startBackgroundSync()
       startIdleMonitoring()
       backfillSearchTextInBackground()
+      // Export directories left by a run that crashed before it could clean up.
+      const swept = sweepStaleExportDirs()
+      if (swept > 0) console.log(`[orbit-mail] removed ${swept} stale export dir(s)`)
     }
     if (mainWindow) {
       mainWindow.webContents.once('did-finish-load', () => {
@@ -1270,6 +1274,8 @@ app.on('open-url', (event, url) => {
 
 app.on('before-quit', () => {
   destroyTray()
+  // The raw .eml files written for forward-as-attachment are whole emails.
+  cleanupExportDir()
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.executeJavaScript(
       'window.__orbitMailFlush?.()',

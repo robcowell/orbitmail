@@ -1219,6 +1219,81 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('On-disk privacy: local mail is not readable by other users')
+  // -------------------------------------------------------------------------
+  {
+    // Electron creates ~/.config/orbit-mail as 0700, but everything made inside
+    // it followed the umask: the database landed 0644 and the data directories
+    // 0775, so on a shared machine another account could read message bodies,
+    // attachments and the encrypted credential blob.
+    const { statSync, mkdirSync, writeFileSync: write, chmodSync, existsSync: exists, utimesSync, readdirSync: readDir } =
+      await import('fs')
+    const { getDataDir, getAttachmentsDir } = await import('../electron/db')
+    const perms = await import('../electron/db/permissions')
+
+    const mode = (p: string) => statSync(p).mode & 0o777
+
+    const dataDir = getDataDir()
+    const attachmentsDir = getAttachmentsDir()
+    ok('the data directory is owner-only', mode(dataDir) === 0o700, mode(dataDir).toString(8))
+    ok('the attachments directory is owner-only',
+      mode(attachmentsDir) === 0o700, mode(attachmentsDir).toString(8))
+
+    const dbPath = join(dataDir, 'orbit-mail.db')
+    ok('the database is owner-only', mode(dbPath) === 0o600, mode(dbPath).toString(8))
+    // WAL mode means the sidecars hold the same content as the database.
+    for (const sidecar of ['-wal', '-shm']) {
+      const p = `${dbPath}${sidecar}`
+      if (!exists(p)) continue
+      ok(`the ${sidecar} sidecar is owner-only`, mode(p) === 0o600, mode(p).toString(8))
+    }
+
+    // An existing install is corrected in place, not only fresh ones.
+    chmodSync(dataDir, 0o775)
+    chmodSync(dbPath, 0o644)
+    perms.ensurePrivateDir(dataDir)
+    perms.restrictDatabaseFiles(dbPath)
+    ok('a loose directory from an older install is tightened',
+      mode(dataDir) === 0o700, mode(dataDir).toString(8))
+    ok('a loose database from an older install is tightened',
+      mode(dbPath) === 0o600, mode(dbPath).toString(8))
+
+    // Tightening only ever removes bits — a stricter choice by the user stands.
+    chmodSync(dataDir, 0o500)
+    perms.ensurePrivateDir(dataDir)
+    ok('an already-stricter mode is left alone', mode(dataDir) === 0o500, mode(dataDir).toString(8))
+    chmodSync(dataDir, 0o700)
+
+    // Raw .eml exports: a whole email each, in a directory removed on quit.
+    const temp = await import('../electron/services/temp-export')
+    const exportDir = temp.getExportDir()
+    ok('the export directory is owner-only', mode(exportDir) === 0o700, mode(exportDir).toString(8))
+
+    const exported = join(exportDir, 'probe.eml')
+    write(exported, 'From: someone\n\nbody', { mode: 0o600 })
+    ok('an exported message is owner-only', mode(exported) === 0o600, mode(exported).toString(8))
+
+    temp.cleanupExportDir()
+    ok('quitting removes the exports', !exists(exportDir))
+
+    // The sweep clears directories left by a crashed run — but only ours, and
+    // only ones old enough that no live copy of the app could still own them.
+    const stale = join(tmpdir(), 'orbit-mail-export-stale-probe')
+    const fresh = join(tmpdir(), 'orbit-mail-export-fresh-probe')
+    const foreign = join(tmpdir(), 'someone-elses-dir-probe')
+    for (const d of [stale, fresh, foreign]) mkdirSync(d, { recursive: true, mode: 0o700 })
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000)
+    utimesSync(stale, old, old)
+
+    temp.sweepStaleExportDirs()
+    ok('a stale export directory is removed', !exists(stale))
+    ok('a fresh one is left for the run that owns it', exists(fresh), fresh)
+    ok('directories that are not ours are untouched', exists(foreign), foreign)
+    for (const d of [fresh, foreign]) rmSync(d, { recursive: true, force: true })
+    void readDir
+  }
+
+  // -------------------------------------------------------------------------
   section('AI: message content is data, not instructions')
   // -------------------------------------------------------------------------
   {

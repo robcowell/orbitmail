@@ -185,11 +185,22 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 - **Unread counts** — recalculated from local message read state after fetch (kept in sync with the message list)
 - **Folder roles** — a folder's `type` (inbox/sent/drafts/trash/junk) decides where
   Delete, Archive and Junk send mail, so getting it wrong silently breaks delete.
-  It is resolved per account by `detectFolderTypes` (`imap-sync.ts`): the server's
-  SPECIAL-USE flag wins, and a folder that only *looks* like a role by name is
-  demoted to `custom` when another mailbox is flagged for that role. The English
-  name map (`FOLDER_NAME_MAP`) is the fallback for servers that advertise no
-  SPECIAL-USE. Types are re-evaluated on **every** sync — `upsertFolder` updates
+  It is resolved per account by `detectFolderTypes` (`imap-sync.ts`), which ranks
+  the evidence rather than mixing it: a SPECIAL-USE flag beats any name match,
+  and **depth breaks ties within a class** — shallowest wins, first-listed on a
+  draw. Everything that matched a role but did not win it drops to `custom`. The
+  English name map (`FOLDER_NAME_MAP`) is the fallback for servers that advertise
+  no SPECIAL-USE.
+
+  Depth matters because delegated and imported mailboxes get grafted into the
+  user's own tree, flags and all: an Exchange account carrying an old IMAP tree
+  under `INBOX/admin/…` offers a second `Sent Items`, also flagged `\Sent`, and
+  the empty stranger's copy used to win — Sent showed nothing, and sent mail
+  filed into it. Depth must not outrank a flag, though, or Gmail's nested
+  `[Gmail]/Bin` loses to a top-level user folder called "Deleted Items", which is
+  the bug the flag ordering fixed in the first place. Servers that namespace
+  everything under `INBOX.` are still fine: depth only compares rivals for the
+  same role, and it is measured with the server's own hierarchy delimiter. Types are re-evaluated on **every** sync — `upsertFolder` updates
   the stored type — because a folder mis-typed once would otherwise stay that way
   forever.
 
@@ -486,7 +497,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Unique-index dedupe | A duplicate `(folder_id, uid)` row (a pre-constraint DB) blocks `CREATE UNIQUE INDEX`; `dedupeMessagesByFolderUid` collapses each key to one row — keeping the one carrying AI analysis/sweep cache — so the index builds, and is a no-op on a healthy table. |
 | Attachment metadata | `toAttachmentMeta` preserves filename/type/size (including the size-from-`content.length` fallback) and returns no content Buffer, so the sync batch can drop the parsed buffers instead of retaining them. |
 | Attachment index | `attachments.message_id` has an index, and the planner uses it (`EXPLAIN QUERY PLAN` shows the index, not a `SCAN`) — so a message-id lookup and the delete cascade are not full scans. |
-| Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. |
+| Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. Depth breaks ties within a class — the account's own `Sent Items` beats a grafted `INBOX/admin/Sent Items` even when both are flagged, an unflagged lookalike deeper still is untouched, a flagged deep folder still beats a shallow name match, equally shallow rivals keep first-listed, and depth is measured with the server's delimiter (`.` as well as `/`). |
 | Delete durability | Deleting the newest message in a folder (which lowers the local max UID, so the next sync searches a range starting past the end) does not re-import it on the following syncs, does not duplicate the survivors, and does not wedge the watermark for mail that arrives afterwards. A move leaves the source and lands in the destination exactly once. |
 | Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). |
 

@@ -249,6 +249,12 @@ badge (Menu → Preferences → Applets → Grouped window list → "Show notifi
 badges"), which counts pending notifications, not mail; Cinnamon ignores the
 launcher-count signal entirely.
 
+**A message or conversation will not open**  
+The reader says why and offers **Try again** — the fetch is a local call to the
+app's own database, so a failure usually means a sync is mid-write or the
+message has since been removed on the server. If retrying keeps failing, hit
+**Refresh** to re-sync the folder.
+
 **Links in messages do not open**  
 Orbit Mail opens links in your default browser; check that a default browser is set in your desktop environment.
 

@@ -46,6 +46,16 @@ interface MailState {
   selectedMessageId: string | null
   selectedMessage: MessageDetail | null
   readerLoading: boolean
+  // Why the reader is empty when it should not be, and what to retry. Opening a
+  // conversation or a message can fail (the fetch is IPC, and the main process
+  // can be mid-sync or the row gone); without this the pane sat on "Loading
+  // conversation…" forever and the rejection vanished into a `void` call.
+  readerError: {
+    message: string
+    retry:
+      | { kind: 'thread'; accountId: string; threadId: string }
+      | { kind: 'message'; messageId: string }
+  } | null
   selectedMessageIds: string[]
   selectionAnchorId: string | null
   selectedFolderId: string | 'unified'
@@ -108,6 +118,7 @@ interface MailState {
   setSelectedMessageId: (id: string | null) => void
   setSelectedMessage: (msg: MessageDetail | null) => void
   setReaderLoading: (loading: boolean) => void
+  setReaderError: (error: MailState['readerError']) => void
   setSelectedMessageIds: (ids: string[]) => void
   setSelectionAnchorId: (id: string | null) => void
   setSelectedFolderId: (id: string | 'unified') => void
@@ -164,6 +175,7 @@ export const useMailStore = create<MailState>((set) => ({
   selectedMessageId: null,
   selectedMessage: null,
   readerLoading: false,
+  readerError: null,
   selectedMessageIds: [],
   selectionAnchorId: null,
   selectedFolderId: 'unified',
@@ -217,6 +229,7 @@ export const useMailStore = create<MailState>((set) => ({
   setSelectedMessageId: (id) => set({ selectedMessageId: id }),
   setSelectedMessage: (msg) => set({ selectedMessage: msg }),
   setReaderLoading: (loading) => set({ readerLoading: loading }),
+  setReaderError: (error) => set({ readerError: error }),
   setSelectedMessageIds: (ids) => set({ selectedMessageIds: ids }),
   setSelectionAnchorId: (id) => set({ selectionAnchorId: id }),
   setSelectedFolderId: (id) => set({ selectedFolderId: id }),
@@ -631,6 +644,7 @@ export async function toggleThreadedView(): Promise<void> {
   scheduleSaveUiPreferences({ threadedView })
 
   // Clear selection + both list backings so the switch doesn't show stale rows.
+  store.setReaderError(null)
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
   store.setSelectedThreadKeys([])
@@ -677,6 +691,7 @@ export async function toggleUnreadFilter(): Promise<void> {
   scheduleSaveUiPreferences({ unreadFilterByAccount })
 
   // Clear selection + list backings so the switch doesn't show stale rows.
+  store.setReaderError(null)
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
   store.setSelectedThreadKeys([])
@@ -744,12 +759,29 @@ export async function selectThread(accountId: string, threadId: string): Promise
   store.setSelectedThreadId(threadId)
   store.setSelectedThread(null)
   store.setThreadLoading(true)
+  store.setReaderError(null)
   // Clear any single-message (search) selection so the reader shows the thread.
   store.setSelectedMessageId(null)
   store.setSelectedMessage(null)
   store.setSelectedMessageIds([])
 
-  const messages = await window.orbitMail.messages.getThread(accountId, threadId)
+  let messages: MessageDetail[]
+  try {
+    messages = await window.orbitMail.messages.getThread(accountId, threadId)
+  } catch (err) {
+    // Leave the row selected and offer a retry rather than stranding the pane on
+    // "Loading conversation…" — this used to reject into a `void` call, so the
+    // spinner stayed up and nothing said why.
+    const failed = useMailStore.getState()
+    if (failed.selectedThreadId !== threadId) return
+    failed.setThreadLoading(false)
+    failed.setReaderError({
+      message: err instanceof Error ? err.message : 'Could not open this conversation',
+      retry: { kind: 'thread', accountId, threadId }
+    })
+    return
+  }
+
   const after = useMailStore.getState()
   if (after.selectedThreadId !== threadId) return // user moved on
   after.setSelectedThread(messages)
@@ -1554,6 +1586,7 @@ export async function selectMessage(messageId: string): Promise<void> {
   store.setSelectedMessageId(messageId)
   store.setSelectedMessageIds([messageId])
   store.setSelectionAnchorId(messageId)
+  store.setReaderError(null)
   scheduleSaveUiPreferences({ selectedMessageId: messageId })
 
   const summary =
@@ -1583,7 +1616,20 @@ export async function selectMessage(messageId: string): Promise<void> {
 
   if (wasUnread) patchMessageInList(messageId, { isRead: true })
 
-  const msg = await window.orbitMail.messages.get(messageId)
+  let msg: MessageDetail | null
+  try {
+    msg = await window.orbitMail.messages.get(messageId)
+  } catch (err) {
+    const failed = useMailStore.getState()
+    if (failed.selectedMessageId !== messageId) return
+    failed.setReaderLoading(false)
+    failed.setReaderError({
+      message: err instanceof Error ? err.message : 'Could not open this message',
+      retry: { kind: 'message', messageId }
+    })
+    return
+  }
+
   const afterGet = useMailStore.getState()
   // Only apply the body if this is still the active selection.
   if (afterGet.selectedMessageId === messageId) {
@@ -1657,6 +1703,18 @@ export async function toggleMessageSelection(messageId: string): Promise<void> {
 
 // Select the contiguous range between the current anchor and `messageId`
 // (Shift+click).
+// Re-run whichever open failed. The reader's Retry button calls this, so the
+// component never has to know whether a conversation or a message was pending.
+export async function retryReaderLoad(): Promise<void> {
+  const { readerError } = useMailStore.getState()
+  if (!readerError) return
+  if (readerError.retry.kind === 'thread') {
+    await selectThread(readerError.retry.accountId, readerError.retry.threadId)
+  } else {
+    await selectMessage(readerError.retry.messageId)
+  }
+}
+
 export async function selectMessageRange(messageId: string): Promise<void> {
   const store = useMailStore.getState()
   const list = displayedMessages(store)
@@ -1731,6 +1789,7 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
   store.setSelectedMessage(null)
   store.setSelectedMessageIds([])
   store.setSelectionAnchorId(null)
+  store.setReaderError(null)
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
   store.setSelectedThreadKeys([])

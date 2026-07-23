@@ -8,7 +8,8 @@ import {
   toggleThreadMessageStar,
   analyzeMessage,
   draftReply,
-  flagMessageAsTask
+  flagMessageAsTask,
+  retryReaderLoad
 } from '../../stores/mailStore'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
@@ -292,6 +293,7 @@ export function MessageView() {
   const selectionCount = useMailStore((s) => s.selectedMessageIds.length)
   const selectedThread = useMailStore((s) => s.selectedThread)
   const threadLoading = useMailStore((s) => s.threadLoading)
+  const readerError = useMailStore((s) => s.readerError)
   const readerLoading = useMailStore((s) => s.readerLoading)
   const setToast = useMailStore((s) => s.setToast)
   const aiAnalysis = useMailStore((s) =>
@@ -311,6 +313,19 @@ export function MessageView() {
     () => sanitizeEmailHtml(selectedMessage?.bodyHtml, { blockRemoteContent: remoteImages.blocked }),
     [selectedMessage?.id, selectedMessage?.bodyHtml, remoteImages.blocked]
   )
+
+  // A failed open takes priority over every empty state below: those all read as
+  // "nothing selected", which is the wrong story when a fetch just failed.
+  if (readerError) {
+    return (
+      <EmptyState
+        icon={<EnvelopeSimpleOpen size={48} weight="duotone" />}
+        title="Couldn’t open this"
+        description={readerError.message}
+        action={{ label: 'Try again', onClick: () => void retryReaderLoad() }}
+      />
+    )
+  }
 
   // Conversation mode: a thread is open (takes priority over single-message).
   if (selectedThread && selectedThread.length > 0) {

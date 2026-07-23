@@ -143,10 +143,17 @@ function MainApp() {
       scheduleRefreshMessages()
     })
 
+    // Main hit something nobody caught. Mail on disk is fine, but the process
+    // is in an unknown state, so say so rather than degrading silently.
+    const unsubError = window.orbitMail.app.onUnexpectedError((message) => {
+      useMailStore.getState().setToast(message)
+    })
+
     return () => {
       unsubSyncComplete()
       unsubStatus()
       unsubMessages()
+      unsubError()
       window.removeEventListener('online', updateOnline)
       window.removeEventListener('offline', updateOnline)
     }

@@ -24,6 +24,7 @@ import {
 import { initTray, destroyTray } from './tray'
 import { cleanupExportDir, sweepStaleExportDirs } from './services/temp-export'
 import { restrictExistingAttachments } from './services/attachment-permissions'
+import { isBenignSocketError, describeUnexpectedError } from './services/crash-report'
 import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
@@ -130,14 +131,34 @@ function notifyMessagesUpdated(): void {
   mainWindow?.webContents.send('sync:messagesUpdated')
 }
 
-process.on('uncaughtException', (err) => {
-  const code = err && typeof err === 'object' && 'code' in err ? String(err.code) : ''
-  if (code === 'ETIMEOUT' || err.message === 'Socket timeout') {
-    console.warn('[orbit-mail] Suppressed IMAP socket timeout:', err.message)
+// Told once per run, so a repeating background fault cannot spam the user.
+let reportedUnexpectedError = false
+
+function reportUnexpectedError(err: unknown, kind: string): void {
+  if (isBenignSocketError(err)) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('[orbit-mail] Suppressed IMAP socket timeout:', message)
     return
   }
-  console.error('[orbit-mail] Uncaught exception:', err)
-})
+
+  console.error(`[orbit-mail] ${kind}:`, err)
+
+  // After an uncaught error the process state is unknown — a sync may have
+  // stopped half way, a lane may still be held. Carrying on silently is a
+  // guess; killing the app would cost the user their session. Tell them, once,
+  // and let them pick the moment.
+  if (reportedUnexpectedError) return
+  reportedUnexpectedError = true
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('app:unexpectedError', describeUnexpectedError(err))
+  }
+}
+
+process.on('uncaughtException', (err) => reportUnexpectedError(err, 'Uncaught exception'))
+
+// Node turns an unhandled rejection into an uncaught exception, so this only
+// changes the label — but the label is what tells you where to look.
+process.on('unhandledRejection', (reason) => reportUnexpectedError(reason, 'Unhandled rejection'))
 
 // A packaged app is launched from a desktop entry, so dotenv's cwd lookup above
 // finds nothing. Give people running a build a place to put their own OAuth

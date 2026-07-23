@@ -361,6 +361,11 @@ export interface OrbitMailAPI {
   }
   app: {
     onNeedsAccount: (callback: () => void) => () => void
+    /**
+     * Something threw where nothing caught it. The process state is unknown
+     * afterwards, so the user is told once and left to choose when to restart.
+     */
+    onUnexpectedError: (callback: (message: string) => void) => () => void
     /** Whether OS-level encryption (safeStorage) is available for stored secrets. */
     getSecureStorageStatus: () => Promise<{ available: boolean }>
   }

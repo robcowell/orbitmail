@@ -17,6 +17,20 @@ export function getAttachmentsDir(): string {
   return ensurePrivateDir(join(getDataDir(), 'attachments'))
 }
 
+/**
+ * Tighten every directory we own, whether or not anything has used it yet.
+ *
+ * getAttachmentsDir() is otherwise reached only when an attachment is fetched,
+ * so an install could keep a world-readable attachments directory indefinitely
+ * — which is what the first profile checked after the permissions fix actually
+ * did: database corrected to 0600, attachments still 0775. Startup must not
+ * depend on the user happening to open an attachment.
+ */
+export function restrictDataDirectories(): void {
+  getDataDir()
+  getAttachmentsDir()
+}
+
 function initTables(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -412,6 +426,7 @@ export function getDb() {
     sqliteInstance.pragma('journal_mode = WAL')
     // After WAL is on, so the -wal and -shm sidecars exist to be restricted.
     restrictDatabaseFiles(dbPath)
+    restrictDataDirectories()
     sqliteInstance.pragma('foreign_keys = ON')
     // Performance pragmas. Safe under WAL: NORMAL synchronous keeps durability
     // for committed transactions while skipping fsync on every write; the cache,

@@ -1,6 +1,6 @@
 # Orbit Mail — Developer Guide
 
-Technical documentation for building, configuring, and contributing to Orbit Mail. For end-user installation and usage, see [README.md](README.md).
+Technical documentation for the architecture, internals and contribution workflow. For using the app see [README.md](README.md); for installing it or building your own copy, including OAuth app registration, see [INSTALL.md](INSTALL.md).
 
 ## Requirements
 

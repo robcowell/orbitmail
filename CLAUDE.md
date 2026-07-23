@@ -54,7 +54,8 @@ The docs and what each is for:
 
 | File | Audience | Update when |
 |------|----------|-------------|
-| `README.md` | someone deciding whether to use or trust the app | user-visible behaviour, install/setup steps, limitations, privacy or security posture |
+| `README.md` | someone deciding whether to use or trust the app — **plain language, no internals** | user-visible behaviour, limitations, privacy or security posture as a *user* experiences it |
+| `INSTALL.md` | someone installing it, or building their own copy | install/build steps, OAuth app registration, updating and removing |
 | `DEVELOPERS.md` | **authoritative deep reference** | architecture, schema, sync model, security controls, scripts, test coverage, packaging |
 | `TODO.md` | backlog and decisions | anything fixed, deferred, or decided against — record decisions, not just tasks |
 | `CLAUDE.md` | this file, for agents | conventions and traps that are non-obvious from the code |

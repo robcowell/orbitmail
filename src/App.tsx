@@ -16,7 +16,8 @@ import {
   subscribeSyncCompleteRefresh,
   saveUiPreferencesNow,
   deleteSelectedMessages,
-  deleteThread
+  deleteThread,
+  deleteSelectedThreads
 } from './stores/mailStore'
 import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
@@ -190,7 +191,10 @@ function MainApp() {
         }
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (store.selectedThreadId && store.selectedThread?.length) {
+        if (store.selectedThreadKeys.length > 1) {
+          e.preventDefault()
+          deleteSelectedThreads().catch(() => {})
+        } else if (store.selectedThreadId && store.selectedThread?.length) {
           e.preventDefault()
           deleteThread(store.selectedThread[0].accountId, store.selectedThreadId).catch(() => {})
         } else if (store.selectedMessageIds.length || store.selectedMessageId) {

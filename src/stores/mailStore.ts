@@ -38,6 +38,11 @@ interface MailState {
   selectedThreadId: string | null
   selectedThread: MessageDetail[] | null
   threadLoading: boolean
+  // Multi-selected conversation rows, as `${accountId} ${threadId}` keys. The
+  // lead row stays in selectedThreadId (it drives the reader); these drive bulk
+  // actions and the row highlight, mirroring selectedMessageIds in the flat list.
+  selectedThreadKeys: string[]
+  threadAnchorKey: string | null
   selectedMessageId: string | null
   selectedMessage: MessageDetail | null
   readerLoading: boolean
@@ -98,6 +103,8 @@ interface MailState {
   setSelectedThreadId: (id: string | null) => void
   setSelectedThread: (thread: MessageDetail[] | null) => void
   setThreadLoading: (loading: boolean) => void
+  setSelectedThreadKeys: (keys: string[]) => void
+  setThreadAnchorKey: (key: string | null) => void
   setSelectedMessageId: (id: string | null) => void
   setSelectedMessage: (msg: MessageDetail | null) => void
   setReaderLoading: (loading: boolean) => void
@@ -152,6 +159,8 @@ export const useMailStore = create<MailState>((set) => ({
   selectedThreadId: null,
   selectedThread: null,
   threadLoading: false,
+  selectedThreadKeys: [],
+  threadAnchorKey: null,
   selectedMessageId: null,
   selectedMessage: null,
   readerLoading: false,
@@ -203,6 +212,8 @@ export const useMailStore = create<MailState>((set) => ({
   setSelectedThreadId: (id) => set({ selectedThreadId: id }),
   setSelectedThread: (thread) => set({ selectedThread: thread }),
   setThreadLoading: (loading) => set({ threadLoading: loading }),
+  setSelectedThreadKeys: (keys) => set({ selectedThreadKeys: keys }),
+  setThreadAnchorKey: (key) => set({ threadAnchorKey: key }),
   setSelectedMessageId: (id) => set({ selectedMessageId: id }),
   setSelectedMessage: (msg) => set({ selectedMessage: msg }),
   setReaderLoading: (loading) => set({ readerLoading: loading }),
@@ -393,6 +404,10 @@ function removeThreadAndAdvance(accountId: string, threadId: string): void {
   const next = wasSelected ? successorThread(accountId, threadId) : null
 
   removeThreadFromList(accountId, threadId)
+  const key = expandKey(accountId, threadId)
+  if (store.selectedThreadKeys.includes(key)) {
+    store.setSelectedThreadKeys(store.selectedThreadKeys.filter((k) => k !== key))
+  }
   if (!wasSelected) return
 
   if (next) {
@@ -583,6 +598,8 @@ export async function toggleThreadedView(): Promise<void> {
   // Clear selection + both list backings so the switch doesn't show stale rows.
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
+  store.setSelectedThreadKeys([])
+  store.setThreadAnchorKey(null)
   store.setSelectedMessageId(null)
   store.setSelectedMessage(null)
   store.setSelectedMessageIds([])
@@ -627,6 +644,8 @@ export async function toggleUnreadFilter(): Promise<void> {
   // Clear selection + list backings so the switch doesn't show stale rows.
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
+  store.setSelectedThreadKeys([])
+  store.setThreadAnchorKey(null)
   store.setSelectedMessageId(null)
   store.setSelectedMessage(null)
   store.setSelectedMessageIds([])
@@ -684,6 +703,9 @@ export async function toggleThreadExpanded(accountId: string, threadId: string):
 // background. `selectedThread` drives the reader.
 export async function selectThread(accountId: string, threadId: string): Promise<void> {
   const store = useMailStore.getState()
+  // A plain click collapses any multi-selection down to this one row.
+  store.setSelectedThreadKeys([expandKey(accountId, threadId)])
+  store.setThreadAnchorKey(expandKey(accountId, threadId))
   store.setSelectedThreadId(threadId)
   store.setSelectedThread(null)
   store.setThreadLoading(true)
@@ -758,6 +780,148 @@ export function patchThreadMessage(
     recomputeThreadAggregate(target.accountId, store.selectedThreadId)
   }
   return before
+}
+
+// Shift-click: select every conversation between the anchor and this row. The
+// flat list has had this since multi-select landed; conversation rows went
+// straight to selectThread, so bulk actions were impossible in the default view.
+export function selectThreadRange(accountId: string, threadId: string): void {
+  const store = useMailStore.getState()
+  const list = store.threads
+  const key = expandKey(accountId, threadId)
+  // Anchor: the stored one, else the row currently leading, else this row.
+  const lead = list.find((t) => t.threadId === store.selectedThreadId)
+  const anchor = store.threadAnchorKey ?? (lead ? threadKey(lead) : key)
+
+  const fromIndex = list.findIndex((t) => threadKey(t) === anchor)
+  const toIndex = list.findIndex((t) => threadKey(t) === key)
+  if (fromIndex === -1 || toIndex === -1) {
+    void selectThread(accountId, threadId)
+    return
+  }
+
+  const [lo, hi] = fromIndex <= toIndex ? [fromIndex, toIndex] : [toIndex, fromIndex]
+  const keys = list.slice(lo, hi + 1).map(threadKey)
+  if (keys.length <= 1) {
+    void selectThread(accountId, threadId)
+    return
+  }
+
+  // The clicked row leads: it drives the reader, the rest stay highlighted. The
+  // anchor is re-applied after, because selectThread moves it to the lead row —
+  // which would make the next shift-click measure from the wrong end and the
+  // range could never be shrunk back.
+  void selectThreadKeepingSelection(accountId, threadId, keys, anchor)
+  store.setThreadAnchorKey(anchor)
+}
+
+// Ctrl/Cmd-click: add or remove one conversation without disturbing the rest.
+export function toggleThreadSelection(accountId: string, threadId: string): void {
+  const store = useMailStore.getState()
+  const key = expandKey(accountId, threadId)
+  const current = store.selectedThreadKeys.length
+    ? store.selectedThreadKeys
+    : store.selectedThreadId
+      ? store.threads.filter((t) => t.threadId === store.selectedThreadId).map(threadKey)
+      : []
+
+  if (current.includes(key)) {
+    const next = current.filter((k) => k !== key)
+    store.setSelectedThreadKeys(next)
+    if (next.length === 0) {
+      store.setSelectedThreadId(null)
+      store.setSelectedThread(null)
+      store.setThreadAnchorKey(null)
+    } else if (store.selectedThreadId === threadId) {
+      // The lead row left the selection; hand the reader to another member.
+      const lead = store.threads.find((t) => next.includes(threadKey(t)))
+      if (lead) void selectThreadKeepingSelection(lead.accountId, lead.threadId, next)
+    }
+    return
+  }
+
+  const next = [...current, key]
+  store.setSelectedThreadKeys(next)
+  store.setThreadAnchorKey(key)
+  void selectThreadKeepingSelection(accountId, threadId, next)
+}
+
+// selectThread collapses the selection by design; ctrl-click needs the opposite.
+async function selectThreadKeepingSelection(
+  accountId: string,
+  threadId: string,
+  keys: string[],
+  anchorKey?: string
+): Promise<void> {
+  await selectThread(accountId, threadId)
+  // selectThread awaits the conversation fetch, so a second click can land while
+  // this one is in flight. Re-applying the keys unconditionally would resurrect
+  // the superseded selection — only restore them if this click still leads.
+  const after = useMailStore.getState()
+  if (after.selectedThreadId !== threadId) return
+  after.setSelectedThreadKeys(keys)
+  if (anchorKey) after.setThreadAnchorKey(anchorKey)
+}
+
+// Delete every selected conversation in one batch — the same server call the
+// single-thread delete uses, with all the rows resolved up front.
+export async function deleteSelectedThreads(): Promise<void> {
+  const store = useMailStore.getState()
+  const keys = store.selectedThreadKeys
+  if (keys.length <= 1) {
+    const key = keys[0]
+    if (key) {
+      const [accountId, threadId] = key.split(' ')
+      await deleteThread(accountId, threadId)
+      return
+    }
+    const row = store.threads.find((t) => t.threadId === store.selectedThreadId)
+    if (row) await deleteThread(row.accountId, row.threadId)
+    return
+  }
+
+  const selected = store.threads.filter((t) => keys.includes(threadKey(t)))
+  if (selected.length === 0) return
+
+  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const threads = await Promise.all(
+    selected.map((t) => resolveThreadMessages(t.accountId, t.threadId))
+  )
+  const messages = threads.flat()
+  if (messages.length === 0) return
+
+  const items = messages.map((m) => {
+    const currentFolder = folders.find((f) => f.id === m.folderId)
+    const trash =
+      currentFolder?.type === 'trash' ? null : findAccountFolder(folders, m.accountId, 'trash')
+    return { id: m.id, targetFolderId: trash?.id ?? null }
+  })
+
+  // Advance past the whole run: the successor of the last selected row.
+  const last = selected[selected.length - 1]
+  const next = successorThread(last.accountId, last.threadId)
+  for (const t of selected) removeThreadFromList(t.accountId, t.threadId)
+  store.setSelectedThreadKeys([])
+  store.setThreadAnchorKey(null)
+  if (next && !keys.includes(threadKey(next))) {
+    void selectThread(next.accountId, next.threadId)
+  } else {
+    store.setSelectedThread(null)
+    store.setSelectedThreadId(null)
+  }
+  store.setToast(`Deleted ${selected.length} conversations`)
+
+  try {
+    await withPendingRemoval(
+      items.map((i) => i.id),
+      keys,
+      () => window.orbitMail.messages.deleteMany(items)
+    )
+    await refreshFoldersUnread()
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Delete failed')
+    await refreshMessages()
+  }
 }
 
 export function selectAdjacentThread(direction: 1 | -1): void {
@@ -1284,6 +1448,8 @@ export async function selectMessage(messageId: string): Promise<void> {
   // Selecting a single message (e.g. a search result) supersedes any open thread.
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
+  store.setSelectedThreadKeys([])
+  store.setThreadAnchorKey(null)
   store.setSelectedMessageId(messageId)
   store.setSelectedMessageIds([messageId])
   store.setSelectionAnchorId(messageId)
@@ -1466,6 +1632,8 @@ export async function selectFolder(folderId: string | 'unified'): Promise<void> 
   store.setSelectionAnchorId(null)
   store.setSelectedThreadId(null)
   store.setSelectedThread(null)
+  store.setSelectedThreadKeys([])
+  store.setThreadAnchorKey(null)
   store.setThreadOffset(0)
   store.setMessageOffset(0)
   store.setExpandedThreadKeys([])

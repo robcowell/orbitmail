@@ -15,6 +15,8 @@ import {
   selectMessageRange,
   toggleMessageSelection,
   selectThread,
+  selectThreadRange,
+  toggleThreadSelection,
   selectAdjacentThread,
   toggleThreadExpanded,
   loadMoreMessages,
@@ -131,9 +133,12 @@ interface ThreadRowProps {
   participantsLabel: string
   formattedDate: string
   isSelected: boolean
+  // True when this row is part of a multi-row selection but is not the lead —
+  // it is highlighted and included in bulk actions, but the reader shows the lead.
+  isInSelection: boolean
   expandable: boolean
   isExpanded: boolean
-  onSelect: (accountId: string, threadId: string) => void
+  onSelect: (event: React.MouseEvent, accountId: string, threadId: string) => void
   onToggleExpand: (accountId: string, threadId: string) => void
   onContextMenu: (event: React.MouseEvent, thread: ThreadSummary) => void
 }
@@ -143,6 +148,7 @@ const ThreadRow = memo(function ThreadRow({
   participantsLabel,
   formattedDate,
   isSelected,
+  isInSelection,
   expandable,
   isExpanded,
   onSelect,
@@ -152,7 +158,8 @@ const ThreadRow = memo(function ThreadRow({
   const className = [
     'message-row',
     thread.hasUnread ? 'unread' : '',
-    isSelected ? 'selected' : '',
+    isSelected || isInSelection ? 'selected' : '',
+    isSelected && isInSelection ? 'active' : '',
     isExpanded ? 'expanded' : ''
   ]
     .filter(Boolean)
@@ -161,7 +168,10 @@ const ThreadRow = memo(function ThreadRow({
   return (
     <div
       className={className}
-      onClick={() => onSelect(thread.accountId, thread.threadId)}
+      onMouseDown={(event) => {
+        if (event.shiftKey) event.preventDefault()
+      }}
+      onClick={(event) => onSelect(event, thread.accountId, thread.threadId)}
       onContextMenu={(event) => onContextMenu(event, thread)}
     >
       {expandable ? (
@@ -232,6 +242,7 @@ export function MessageList() {
   const messages = useMailStore((s) => s.messages)
   const messageTotal = useMailStore((s) => s.messageTotal)
   const selectedThreadId = useMailStore((s) => s.selectedThreadId)
+  const selectedThreadKeys = useMailStore((s) => s.selectedThreadKeys)
   const searchQuery = useMailStore((s) => s.searchQuery)
   const searchResults = useMailStore((s) => s.searchResults)
   const searchLoading = useMailStore((s) => s.searchLoading)
@@ -318,6 +329,11 @@ export function MessageList() {
   )
 
   const selectedIdSet = useMemo(() => new Set(selectedMessageIds), [selectedMessageIds])
+  // Only highlight a multi-row selection; a lone key is just the open thread.
+  const selectedThreadKeySet = useMemo(
+    () => new Set(selectedThreadKeys.length > 1 ? selectedThreadKeys : []),
+    [selectedThreadKeys]
+  )
   const expandedSet = useMemo(() => new Set(expandedThreadKeys), [expandedThreadKeys])
 
   const showThreads = !isSearching && threadedView
@@ -372,10 +388,15 @@ export function MessageList() {
     void selectMessage(messageId)
   }, [])
 
-  const handleThreadClick = useCallback((accountId: string, threadId: string) => {
-    containerRef.current?.focus()
-    void selectThread(accountId, threadId)
-  }, [])
+  const handleThreadClick = useCallback(
+    (event: React.MouseEvent, accountId: string, threadId: string) => {
+      containerRef.current?.focus()
+      if (event.shiftKey) selectThreadRange(accountId, threadId)
+      else if (event.metaKey || event.ctrlKey) toggleThreadSelection(accountId, threadId)
+      else void selectThread(accountId, threadId)
+    },
+    []
+  )
 
   const handleToggleExpand = useCallback((accountId: string, threadId: string) => {
     void toggleThreadExpanded(accountId, threadId)
@@ -497,6 +518,7 @@ export function MessageList() {
           participantsLabel={row.participants}
           formattedDate={row.formattedDate}
           isSelected={selectedThreadId === row.thread.threadId}
+          isInSelection={selectedThreadKeySet.has(key)}
           expandable={row.thread.messageCount > 1}
           isExpanded={isExpanded}
           onSelect={handleThreadClick}

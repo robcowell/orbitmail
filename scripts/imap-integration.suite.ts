@@ -1276,6 +1276,35 @@ async function main(): Promise<void> {
     ok('an already-stricter mode is left alone', mode(dataDir) === 0o500, mode(dataDir).toString(8))
     chmodSync(dataDir, 0o700)
 
+    // Files downloaded before attachments were written 0600 keep their old mode.
+    // The 0700 directory means they are not reachable in place, but a copy of
+    // one — a backup, an rsync — would carry 0664 with it.
+    const { restrictExistingAttachments } = await import('../electron/services/attachment-permissions')
+    const loose = join(attachmentsDir, 'old-attachment.pdf')
+    const stricter = join(attachmentsDir, 'user-locked.pdf')
+    write(loose, 'pretend pdf')
+    write(stricter, 'pretend pdf')
+    chmodSync(loose, 0o664)
+    chmodSync(stricter, 0o400)
+
+    const first = restrictExistingAttachments()
+    ok('the sweep tightens a world-readable attachment',
+      mode(loose) === 0o600, mode(loose).toString(8))
+    ok('a file the user made stricter is left alone',
+      mode(stricter) === 0o400, mode(stricter).toString(8))
+    ok('it reports what it did', first.tightened >= 1 && first.scanned >= 2,
+      `scanned=${first.scanned} tightened=${first.tightened}`)
+
+    // Guarded: a large attachment store must not be walked on every launch.
+    chmodSync(loose, 0o664)
+    const second = restrictExistingAttachments()
+    ok('a second run does nothing', second.scanned === 0 && second.tightened === 0,
+      `scanned=${second.scanned}`)
+    ok('so a file loosened afterwards is not re-tightened',
+      mode(loose) === 0o664, mode(loose).toString(8))
+    rmSync(loose, { force: true })
+    rmSync(stricter, { force: true })
+
     // Raw .eml exports: a whole email each, in a directory removed on quit.
     const temp = await import('../electron/services/temp-export')
     const exportDir = temp.getExportDir()

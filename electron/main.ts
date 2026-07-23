@@ -23,6 +23,7 @@ import {
 } from './services/attachment-allowlist'
 import { initTray, destroyTray } from './tray'
 import { cleanupExportDir, sweepStaleExportDirs } from './services/temp-export'
+import { restrictExistingAttachments } from './services/attachment-permissions'
 import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
@@ -1250,6 +1251,18 @@ if (!gotSingleInstanceLock) {
       // Export directories left by a run that crashed before it could clean up.
       const swept = sweepStaleExportDirs()
       if (swept > 0) console.log(`[orbit-mail] removed ${swept} stale export dir(s)`)
+
+      // One-time: attachment files downloaded before they were written 0600.
+      try {
+        const { scanned, tightened } = restrictExistingAttachments()
+        if (tightened > 0) {
+          console.log(
+            `[orbit-mail] tightened permissions on ${tightened} of ${scanned} attachment file(s)`
+          )
+        }
+      } catch (err) {
+        console.warn('[orbit-mail] attachment permission sweep failed:', err)
+      }
     }
     if (mainWindow) {
       mainWindow.webContents.once('did-finish-load', () => {

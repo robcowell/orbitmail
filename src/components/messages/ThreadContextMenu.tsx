@@ -4,11 +4,14 @@ import { ContextMenu } from '../ui/ContextMenu'
 import { useMailStore } from '../../stores/mailStore'
 import {
   archiveThread,
+  archiveSelectedThreads,
   copyThreadToFolder,
   deleteThread,
+  deleteSelectedThreads,
   markThreadRead,
   markThreadUnread,
   moveThreadToFolder,
+  moveSelectedThreadsToFolder,
   selectThread,
   setThreadFlagColor
 } from '../../stores/mailStore'
@@ -29,6 +32,14 @@ export function ThreadContextMenu({ thread, x, y, onClose }: ThreadContextMenuPr
   const folders = useMailStore((s) => s.folders)
   const selectedFolderId = useMailStore((s) => s.selectedFolderId)
   const setToast = useMailStore((s) => s.setToast)
+  const selectedThreadKeys = useMailStore((s) => s.selectedThreadKeys)
+
+  // Right-clicking inside a multi-selection acts on the whole selection;
+  // right-clicking outside it acts on that row alone, as the click would.
+  const inSelection =
+    selectedThreadKeys.length > 1 &&
+    selectedThreadKeys.includes(`${thread.accountId} ${thread.threadId}`)
+  const selectionCount = inSelection ? selectedThreadKeys.length : 1
 
   const run = (action: () => void | Promise<void>, successMessage?: string) => {
     void Promise.resolve(action())
@@ -57,7 +68,8 @@ export function ThreadContextMenu({ thread, x, y, onClose }: ThreadContextMenuPr
         isStarred: thread.isStarred,
         flagColor: thread.flagColor,
         accountId,
-        excludeFolderId: selectedFolderId && selectedFolderId !== 'unified' ? selectedFolderId : undefined
+        excludeFolderId: selectedFolderId && selectedFolderId !== 'unified' ? selectedFolderId : undefined,
+        selectionCount
       },
       {
         open: () => selectThread(accountId, threadId),
@@ -66,14 +78,18 @@ export function ThreadContextMenu({ thread, x, y, onClose }: ThreadContextMenuPr
         markUnread: () => markThreadUnread(accountId, threadId),
         mute: () => window.orbitMail.preferences.muteSender(extractSenderEmail(thread.from)),
         block: () => window.orbitMail.preferences.blockSender(extractSenderEmail(thread.from)),
-        del: () => deleteThread(accountId, threadId),
+        del: () => (inSelection ? deleteSelectedThreads() : deleteThread(accountId, threadId)),
         setFlag: (color) => setThreadFlagColor(accountId, threadId, color),
-        archive: () => archiveThread(accountId, threadId),
-        move: (folderId) => moveThreadToFolder(accountId, threadId, folderId),
+        archive: () => (inSelection ? archiveSelectedThreads() : archiveThread(accountId, threadId)),
+        move: (folderId) =>
+          inSelection
+            ? moveSelectedThreadsToFolder(folderId)
+            : moveThreadToFolder(accountId, threadId, folderId),
         copy: (folderId) => copyThreadToFolder(accountId, threadId, folderId),
         print: () => printThreadById(accountId, threadId)
       },
-      run
+      run,
+      'conversations'
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folders, selectedFolderId, thread])

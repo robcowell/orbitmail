@@ -38,6 +38,10 @@ export interface MailMenuTarget {
   accountId: string
   // Current folder to omit from the "Move to" list (undefined = omit none).
   excludeFolderId?: string
+  // How many rows the destructive/move entries will act on. Above one, the
+  // labels say so — a menu that reads "Delete" while wiping nine conversations
+  // is a nasty surprise.
+  selectionCount?: number
 }
 
 // The action to run for each menu entry. Message- and thread-level callers wire
@@ -79,8 +83,13 @@ export function buildMailMenuItems(
   folders: Folder[],
   target: MailMenuTarget,
   actions: MailMenuActions,
-  run: RunFn
+  run: RunFn,
+  // Plural noun for the rows acted on — "conversations" or "messages".
+  noun: 'conversations' | 'messages' = 'messages'
 ): ContextMenuItem[] {
+  const count = target.selectionCount ?? 1
+  const bulk = count > 1
+
   const flagItems: ContextMenuItem[] = [
     ...FLAG_COLORS.map((entry) => ({
       id: `flag-${entry.id}`,
@@ -185,7 +194,7 @@ export function buildMailMenuItems(
     },
     {
       id: 'delete',
-      label: 'Delete',
+      label: bulk ? `Delete ${count} ${noun}` : 'Delete',
       icon: <Trash size={16} weight="duotone" />,
       onClick: () => run(actions.del)
     },
@@ -203,13 +212,13 @@ export function buildMailMenuItems(
     },
     {
       id: 'archive',
-      label: 'Archive',
+      label: bulk ? `Archive ${count} ${noun}` : 'Archive',
       icon: <Archive size={16} weight="duotone" />,
       onClick: () => run(actions.archive)
     },
     {
       id: 'move-to',
-      label: 'Move to',
+      label: bulk ? `Move ${count} ${noun} to` : 'Move to',
       submenu: moveItems.length
         ? moveItems
         : [{ id: 'move-empty', label: 'No folders', disabled: true, onClick: () => {} }]

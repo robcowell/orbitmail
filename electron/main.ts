@@ -745,61 +745,69 @@ function registerIpc(): void {
     notifyMessagesUpdated()
   })
 
-  // Batch delete/move: resolve each item's server op, run them, then do a single
-  // reconciliation poll + notify instead of one full poll per message.
-  ipcMain.handle(
-    'messages:deleteMany',
-    async (_, items: { id: string; targetFolderId: string | null }[]) => {
-      const accounts = listAccounts()
-      let deleted = 0
-      let failed = 0
+  // Batch relocate: each item moves to its target folder, or is deleted outright
+  // when the target is null. One reconciliation poll + notify covers the whole
+  // batch instead of one full poll per message.
+  //
+  // `deleteMany` and `moveMany` are the same operation — the two channels exist
+  // so a delete call site and an archive/move call site each read honestly.
+  const relocateMany = async (items: { id: string; targetFolderId: string | null }[]) => {
+    const accounts = listAccounts()
+    let deleted = 0
+    let failed = 0
 
-      for (const item of items) {
-        try {
-          const msg = getMessage(item.id)
-          if (!msg) {
-            failed++
-            continue
-          }
-          const account = accounts.find((a) => a.id === msg.accountId)
-          const sourceFolder = getFolderById(msg.folderId)
-          if (!account || !sourceFolder) {
-            failed++
-            continue
-          }
-
-          if (item.targetFolderId) {
-            const targetFolder = getFolderById(item.targetFolderId)
-            if (!targetFolder) {
-              failed++
-              continue
-            }
-            await moveMessageOnServer(
-              account.id,
-              account.provider,
-              sourceFolder.imapPath,
-              targetFolder.imapPath,
-              msg.uid
-            )
-          } else {
-            await deleteMessageOnServer(
-              account.id,
-              account.provider,
-              sourceFolder.imapPath,
-              msg.uid
-            )
-          }
-          deleteMessage(item.id)
-          deleted++
-        } catch {
+    for (const item of items) {
+      try {
+        const msg = getMessage(item.id)
+        if (!msg) {
           failed++
+          continue
         }
-      }
+        const account = accounts.find((a) => a.id === msg.accountId)
+        const sourceFolder = getFolderById(msg.folderId)
+        if (!account || !sourceFolder) {
+          failed++
+          continue
+        }
 
-      await pollForNewMessages({ announce: false })
-      notifyMessagesUpdated()
-      return { deleted, failed }
+        if (item.targetFolderId) {
+          const targetFolder = getFolderById(item.targetFolderId)
+          if (!targetFolder) {
+            failed++
+            continue
+          }
+          await moveMessageOnServer(
+            account.id,
+            account.provider,
+            sourceFolder.imapPath,
+            targetFolder.imapPath,
+            msg.uid
+          )
+        } else {
+          await deleteMessageOnServer(
+            account.id,
+            account.provider,
+            sourceFolder.imapPath,
+            msg.uid
+          )
+        }
+        deleteMessage(item.id)
+        deleted++
+      } catch {
+        failed++
+      }
     }
+
+    await pollForNewMessages({ announce: false })
+    notifyMessagesUpdated()
+    return { deleted, failed }
+  }
+
+  ipcMain.handle('messages:deleteMany', (_, items: { id: string; targetFolderId: string | null }[]) =>
+    relocateMany(items)
+  )
+  ipcMain.handle('messages:moveMany', (_, items: { id: string; targetFolderId: string | null }[]) =>
+    relocateMany(items)
   )
 
   ipcMain.handle('messages:move', async (_, messageId: string, targetFolderId: string) => {

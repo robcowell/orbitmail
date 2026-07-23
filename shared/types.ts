@@ -314,6 +314,11 @@ export interface OrbitMailAPI {
     deleteMany: (
       items: { id: string; targetFolderId: string | null }[]
     ) => Promise<{ deleted: number; failed: number }>
+    // Same batch relocation as deleteMany — each message goes to its target
+    // folder — under a name that reads honestly at an archive/move call site.
+    moveMany: (
+      items: { id: string; targetFolderId: string | null }[]
+    ) => Promise<{ deleted: number; failed: number }>
     move: (messageId: string, targetFolderId: string) => Promise<void>
     copy: (messageId: string, targetFolderId: string) => Promise<void>
   }

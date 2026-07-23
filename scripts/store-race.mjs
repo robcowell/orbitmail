@@ -102,7 +102,8 @@ const backend = {
   db: [...ROWS],
   threads: [...THREADS],
   pendingMove: null,
-  deleteManyCalls: []
+  deleteManyCalls: [],
+  moveManyCalls: []
 }
 
 function installWindowStub() {
@@ -118,6 +119,10 @@ function installWindowStub() {
         getThread: async (_accountId, threadId) => [threadMessage(threadId)],
         deleteMany: async (items) => {
           backend.deleteManyCalls.push(items)
+          return { deleted: items.length, failed: 0 }
+        },
+        moveMany: async (items) => {
+          backend.moveManyCalls.push(items)
           return { deleted: items.length, failed: 0 }
         },
         get: async (id) => {
@@ -136,7 +141,9 @@ function installWindowStub() {
       folders: {
         list: async () => [
           { id: 'f1', accountId: 'a1', imapPath: 'INBOX', name: 'Inbox', type: 'inbox', unreadCount: 0, isVirtualView: false },
-          { id: 'f2', accountId: 'a1', imapPath: 'Trash', name: 'Trash', type: 'trash', unreadCount: 0, isVirtualView: false }
+          { id: 'f2', accountId: 'a1', imapPath: 'Trash', name: 'Trash', type: 'trash', unreadCount: 0, isVirtualView: false },
+          { id: 'f3', accountId: 'a1', imapPath: 'Archive', name: 'Archive', type: 'custom', unreadCount: 0, isVirtualView: false },
+          { id: 'f4', accountId: 'a1', imapPath: 'Projects', name: 'Projects', type: 'custom', unreadCount: 0, isVirtualView: false }
         ]
       },
       preferences: { get: async () => ({}), saveUi: async () => {} },
@@ -299,6 +306,84 @@ async function main() {
   ok('a lone selection deletes just that conversation',
     backend.deleteManyCalls.length === 1 && backend.deleteManyCalls[0].length === 1,
     `${backend.deleteManyCalls[0]?.length} item(s)`)
+
+  // -------------------------------------------------------------------------
+  section('Conversation view: archive and move act on the selection too')
+  // -------------------------------------------------------------------------
+  backend.threads = [...THREADS]
+  await store.refreshMessages()
+  await store.selectThread('a1', 't1')
+  store.selectThreadRange('a1', 't3')
+  await tick()
+  backend.moveManyCalls = []
+  await store.archiveSelectedThreads()
+  ok('archive batches the selection into one moveMany',
+    backend.moveManyCalls.length === 1 && backend.moveManyCalls[0].length === 3,
+    `${backend.moveManyCalls.length} call(s), ${backend.moveManyCalls[0]?.length} item(s)`)
+  ok('every message is aimed at the archive folder',
+    backend.moveManyCalls[0]?.every((i) => i.targetFolderId === 'f3'),
+    JSON.stringify(backend.moveManyCalls[0]))
+  ok('archive does not go through the delete channel', backend.deleteManyCalls.length === 1)
+  ok('the archived rows leave the list',
+    state().threads.map((t) => t.threadId).join(',') === 't4',
+    state().threads.map((t) => t.threadId).join(','))
+
+  backend.threads = [...THREADS]
+  await store.refreshMessages()
+  await store.selectThread('a1', 't2')
+  store.selectThreadRange('a1', 't4')
+  await tick()
+  backend.moveManyCalls = []
+  await store.moveSelectedThreadsToFolder('f4')
+  ok('move batches the selection into one moveMany',
+    backend.moveManyCalls.length === 1 && backend.moveManyCalls[0].length === 3,
+    `${backend.moveManyCalls[0]?.length} item(s)`)
+  ok('every message is aimed at the chosen folder',
+    backend.moveManyCalls[0]?.every((i) => i.targetFolderId === 'f4'),
+    JSON.stringify(backend.moveManyCalls[0]))
+  ok('the moved rows leave the list',
+    state().threads.map((t) => t.threadId).join(',') === 't1',
+    state().threads.map((t) => t.threadId).join(','))
+
+  // -------------------------------------------------------------------------
+  section('Flat list: archive and move act on a multi-selection')
+  // -------------------------------------------------------------------------
+  state().setThreadedView(false)
+  backend.db = [...ROWS]
+  await store.refreshMessages()
+  state().setSelectedMessageIds(['m1', 'm2'])
+  state().setSelectedMessageId('m1')
+  backend.moveManyCalls = []
+  await store.archiveSelectedMessages()
+  ok('both selected messages are archived in one call',
+    backend.moveManyCalls.length === 1 && backend.moveManyCalls[0].length === 2,
+    `${backend.moveManyCalls[0]?.length} item(s)`)
+  ok('they leave the list',
+    state().messages.map((m) => m.id).join(',') === 'm3',
+    state().messages.map((m) => m.id).join(','))
+
+  backend.db = [...ROWS]
+  await store.refreshMessages()
+  state().setSelectedMessageIds(['m2', 'm3'])
+  state().setSelectedMessageId('m2')
+  backend.moveManyCalls = []
+  await store.moveSelectedMessagesToFolder('f4')
+  ok('a multi-selection moves in one call, aimed at the folder',
+    backend.moveManyCalls.length === 1 &&
+      backend.moveManyCalls[0].length === 2 &&
+      backend.moveManyCalls[0].every((i) => i.targetFolderId === 'f4'),
+    JSON.stringify(backend.moveManyCalls[0]))
+
+  // Messages already in the destination are skipped rather than round-tripped.
+  backend.db = [...ROWS]
+  await store.refreshMessages()
+  state().setSelectedMessageIds(['m1', 'm2'])
+  state().setSelectedMessageId('m1')
+  backend.moveManyCalls = []
+  await store.moveSelectedMessagesToFolder('f1')
+  ok('moving to the folder they are already in does nothing',
+    backend.moveManyCalls.length === 0 && state().messages.length === 3,
+    `${backend.moveManyCalls.length} call(s), ${state().messages.length} rows`)
 
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`

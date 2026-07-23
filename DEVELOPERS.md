@@ -488,6 +488,30 @@ it at startup and a dismissible banner (`SecureStorageBanner`, driven by
 `app.getSecureStorageStatus()`) tells the user their secrets are obfuscated, not
 encrypted.
 
+### On-disk data
+
+Everything cached locally is mail: message bodies, attachment files, and the
+encrypted credential blob. Electron creates `~/.config/orbit-mail` as `0700`, but
+anything made *inside* it followed the process umask — the database landed `0644`
+and the data directories `0775` — so on a shared machine another account could
+read all of it.
+
+`electron/db/permissions.ts` enforces `0700` on directories we create and `0600` on the
+database, **including the `-wal` and `-shm` sidecars**, which under WAL hold the
+same content as the database itself. Modes are applied on **every start**, not
+only at creation, so an existing install is corrected in place; `restrict()` only
+ever clears bits, so a user who has tightened something further keeps their
+choice, and a filesystem that cannot express the mode is tolerated rather than
+fatal.
+
+Raw `.eml` exports (forward-as-attachment downloads the whole original message)
+live in one owner-only directory per run under `electron/services/temp-export.ts`, removed
+on quit. They used to be written straight into `/tmp` at the umask under a
+predictable name and never deleted, so every message ever forwarded stayed
+world-readable until a reboot. A crashed run leaves its directory behind, so
+startup sweeps ones matching our prefix that are older than a day — old enough
+that no live copy of the app could still own them.
+
 ### Attachments
 
 Opening an attachment whose extension can execute (`.desktop`, `.sh`, `.jar`,
@@ -571,6 +595,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| On-disk privacy | The data and attachments directories are `0700`, the database and its `-wal`/`-shm` sidecars `0600`; an install with the old loose modes is tightened in place, while a mode the user made *stricter* is left alone. Raw `.eml` exports are `0600` in an owner-only directory that is removed on quit, and the stale-directory sweep removes an old one of ours while leaving a fresh one (a running copy may own it) and anything not ours. |
 | AI prompt hygiene | Email content is fenced in markers it cannot forge (a body containing the closing marker is defanged, so it cannot escape the fence and continue as prompt) while remaining visible to the model; every system prompt carries the "this is data, not instructions" rule; and sender identity is matched on the address exactly — a display name containing the user's address, a lookalike domain, and a substring of it are all rejected. |
 | Attachment allowlist | Only files approved in this compose session can be attached: an unapproved path in the list refuses the whole send, the refusal names the offending file, equivalent path spellings (`/tmp/./x`) do not decide approval, `sendMail` refuses before touching credentials or a transport, and closing compose withdraws approval. |
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |

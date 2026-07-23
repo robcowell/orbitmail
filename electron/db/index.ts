@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { existsSync, mkdirSync } from 'fs'
+import { ensurePrivateDir, restrictDatabaseFiles } from './permissions'
 import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from './schema'
@@ -10,15 +10,11 @@ let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null
 let sqliteInstance: Database.Database | null = null
 
 export function getDataDir(): string {
-  const dir = join(app.getPath('userData'), 'data')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return dir
+  return ensurePrivateDir(join(app.getPath('userData'), 'data'))
 }
 
 export function getAttachmentsDir(): string {
-  const dir = join(getDataDir(), 'attachments')
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-  return dir
+  return ensurePrivateDir(join(getDataDir(), 'attachments'))
 }
 
 function initTables(db: Database.Database): void {
@@ -414,6 +410,8 @@ export function getDb() {
     const dbPath = join(getDataDir(), 'orbit-mail.db')
     sqliteInstance = new Database(dbPath)
     sqliteInstance.pragma('journal_mode = WAL')
+    // After WAL is on, so the -wal and -shm sidecars exist to be restricted.
+    restrictDatabaseFiles(dbPath)
     sqliteInstance.pragma('foreign_keys = ON')
     // Performance pragmas. Safe under WAL: NORMAL synchronous keeps durability
     // for committed transactions while skipping fsync on every write; the cache,

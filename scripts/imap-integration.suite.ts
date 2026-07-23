@@ -1219,6 +1219,87 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Accounts: adding an address again must not switch its provider')
+  // -------------------------------------------------------------------------
+  {
+    // Accounts are keyed by address, so a re-add updates in place — that is how
+    // re-authenticating works. But the same match let a *different* provider
+    // overwrite the row: adding an address as manual IMAP replaced the OAuth
+    // account's credentials (its refresh token unrecoverable) and left its
+    // already-synced mail attached to an account that now behaved as plain IMAP.
+    const email = 'switcheroo@example.com'
+
+    const oauth = db.saveAccount('gmail', {
+      email,
+      displayName: 'OAuth Rob',
+      accessToken: 'access-1',
+      refreshToken: 'refresh-1',
+      expiresAt: Date.now() + 3_600_000
+    })
+    ok('the OAuth account is created', oauth.provider === 'gmail', oauth.provider)
+
+    const clash = await rejects(async () =>
+      db.saveManualAccount('imap', {
+        email,
+        displayName: 'Manual Rob',
+        imapHost: 'imap.example.com',
+        imapPort: 143,
+        imapSecurity: 'starttls',
+        smtpHost: 'smtp.example.com',
+        smtpPort: 587,
+        smtpSecurity: 'starttls',
+        username: email,
+        password: 'hunter2'
+      })
+    )
+    ok('adding the same address as IMAP is refused', !!clash, clash?.message)
+    ok('the refusal names both providers and the way out',
+      !!clash && /already added as Gmail/.test(clash.message) && /Remove/.test(clash.message),
+      clash?.message)
+
+    const afterClash = db.listAccounts().find((a) => a.email === email)
+    ok('the original account is untouched',
+      afterClash?.provider === 'gmail' && afterClash?.displayName === 'OAuth Rob',
+      `${afterClash?.provider} / ${afterClash?.displayName}`)
+    const creds = db.getAccountCredentials(oauth.id)
+    ok('its OAuth credentials survive',
+      creds?.authType === 'oauth' && creds.refreshToken === 'refresh-1',
+      creds?.authType)
+
+    // The legitimate case still works: same provider, new credentials.
+    const reauthed = db.saveAccount('gmail', {
+      email,
+      displayName: 'OAuth Rob (renewed)',
+      accessToken: 'access-2',
+      refreshToken: 'refresh-2',
+      expiresAt: Date.now() + 3_600_000
+    })
+    ok('re-authenticating updates in place', reauthed.id === oauth.id, `${reauthed.id === oauth.id}`)
+    const renewed = db.getAccountCredentials(oauth.id)
+    ok('the new token is stored',
+      renewed?.authType === 'oauth' && renewed.refreshToken === 'refresh-2',
+      renewed?.authType === 'oauth' ? renewed.refreshToken : String(renewed?.authType))
+
+    // And the guard is per address, not global.
+    const other = db.saveManualAccount('imap', {
+      email: 'someone-else@example.com',
+      displayName: 'Other',
+      imapHost: 'imap.example.com',
+      imapPort: 143,
+      imapSecurity: 'starttls',
+      smtpHost: 'smtp.example.com',
+      smtpPort: 587,
+      smtpSecurity: 'starttls',
+      username: 'someone-else@example.com',
+      password: 'hunter2'
+    })
+    ok('a different address is unaffected', other.provider === 'imap', other.provider)
+
+    db.removeAccount(oauth.id)
+    db.removeAccount(other.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Tray: the unread count is carried by the icon itself')
   // -------------------------------------------------------------------------
   {

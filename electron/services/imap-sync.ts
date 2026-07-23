@@ -1448,10 +1448,16 @@ export async function deleteMessageOnServer(
   accountId: string,
   provider: Provider,
   folderPath: string,
-  uid: number
+  uid: number,
+  // POP3 identifies messages by UIDL, not by our numeric stand-in for it. The
+  // caller has the message row, so it supplies the real one.
+  serverUid?: string | null
 ): Promise<void> {
   if (provider === 'pop3') {
-    await deletePop3MessageOnServer(accountId, uid)
+    if (!serverUid) {
+      throw new Error('Cannot delete this POP3 message: its server id was never recorded')
+    }
+    await deletePop3MessageOnServer(accountId, serverUid)
     return
   }
 

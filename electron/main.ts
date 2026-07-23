@@ -37,6 +37,7 @@ import {
   countThreads,
   getThread,
   getMessage,
+  getMessageServerUid,
   setMessageRead,
   setMessageStarred,
   setMessageFlag,
@@ -775,7 +776,13 @@ function registerIpc(): void {
     const account = accounts.find((a) => a.id === msg.accountId)
     if (!account) return
 
-    await deleteMessageOnServer(account.id, account.provider, folder.imapPath, msg.uid)
+    await deleteMessageOnServer(
+      account.id,
+      account.provider,
+      folder.imapPath,
+      msg.uid,
+      getMessageServerUid(messageId)
+    )
     deleteMessage(messageId)
     notifyMessagesUpdated()
   })
@@ -823,7 +830,8 @@ function registerIpc(): void {
             account.id,
             account.provider,
             sourceFolder.imapPath,
-            msg.uid
+            msg.uid,
+            getMessageServerUid(item.id)
           )
         }
         deleteMessage(item.id)

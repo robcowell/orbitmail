@@ -38,6 +38,12 @@ function formatAddressList(
   return addrs.map((a) => formatAddress(a)).join(', ')
 }
 
+/**
+ * A numeric stand-in for POP3's UIDL, because the `uid` column is an integer
+ * (IMAP's model). It is *not* an identity: 32 bits of hash collide at around 1%
+ * for 10k messages. Identity is `server_uid`, the UIDL itself — this only has to
+ * fill the column and keep the (folder_id, uid) index happy.
+ */
 function hashUid(serverUid: string, msgNum: number): number {
   let hash = 0
   const input = `${serverUid}:${msgNum}`
@@ -55,7 +61,7 @@ function createPop3Client(accountId: string): Pop3Command {
 
 export async function estimatePop3NewMessageCount(accountId: string): Promise<number> {
   const folder = upsertFolder(accountId, 'INBOX', 'INBOX', 'inbox')
-  const knownUids = getFolderUidSet(folder.id)
+  const knownServerUids = getFolderServerUidSet(folder.id)
   const pop3 = createPop3Client(accountId)
 
   try {
@@ -63,9 +69,8 @@ export async function estimatePop3NewMessageCount(accountId: string): Promise<nu
     const entries = uidl ?? []
     let newCount = 0
 
-    for (const [msgNumStr, serverUid] of entries.slice(-SYNC_BATCH_SIZE)) {
-      const uid = hashUid(serverUid, Number(msgNumStr))
-      if (!knownUids.has(uid)) newCount++
+    for (const [, serverUid] of entries.slice(-SYNC_BATCH_SIZE)) {
+      if (!knownServerUids.has(serverUid)) newCount++
     }
 
     return newCount
@@ -81,6 +86,7 @@ export async function syncPop3Account(
   const pop3 = createPop3Client(accountId)
   const folder = upsertFolder(accountId, 'INBOX', 'INBOX', 'inbox')
   const syncDays = getAccountSyncDays(accountId)
+  const knownServerUids = getFolderServerUidSet(folder.id)
   let newCount = 0
 
   try {
@@ -91,7 +97,7 @@ export async function syncPop3Account(
     for (const [msgNumStr, serverUid] of batch) {
       const msgNum = Number(msgNumStr)
       const uid = hashUid(serverUid, msgNum)
-      if (hasMessageUid(folder.id, uid)) continue
+      if (knownServerUids.has(serverUid)) continue
 
       const raw = await pop3.RETR(msgNum)
       if (!raw) continue
@@ -120,6 +126,7 @@ export async function syncPop3Account(
         folderId: folder.id,
         accountId,
         uid,
+        serverUid,
         messageId: parsed.messageId,
         inReplyTo,
         references,
@@ -163,16 +170,21 @@ export async function syncPop3Account(
   return newCount
 }
 
+/**
+ * Delete by UIDL. This used to search for the first message whose hashed UIDL
+ * matched the local `uid`, so a hash collision deleted *the wrong message* from
+ * the server — irreversibly, since POP3 has no trash.
+ */
 export async function deletePop3MessageOnServer(
   accountId: string,
-  uid: number
+  serverUid: string
 ): Promise<void> {
   const pop3 = createPop3Client(accountId)
   try {
     const uidl = await pop3.UIDL()
-    for (const [msgNumStr, serverUid] of uidl ?? []) {
+    for (const [msgNumStr, candidate] of uidl ?? []) {
       const msgNum = Number(msgNumStr)
-      if (hashUid(serverUid, msgNum) === uid) {
+      if (candidate === serverUid) {
         await pop3.DELE(msgNum)
         break
       }

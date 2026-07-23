@@ -76,6 +76,9 @@ export const messages = sqliteTable(
     // search scans ~10x less data than raw body_html and matches content, not
     // markup. Populated on upsert; backfilled in the background for old rows.
     searchText: text('search_text'),
+    // POP3 only: the server's UIDL string, which is the protocol's actual
+    // message identity. `uid` is a 32-bit hash of it and can collide.
+    serverUid: text('server_uid'),
     aiAnalysis: text('ai_analysis'),
     aiAnalysisAt: integer('ai_analysis_at'),
     // Cached per-message sweep extraction: JSON array of { task, priority }.

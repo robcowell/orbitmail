@@ -1426,6 +1426,26 @@ export function hasMessageUid(folderId: string, uid: number): boolean {
   return Boolean(row)
 }
 
+/**
+ * POP3 message identity, by the protocol's own UIDL rather than our 32-bit hash
+ * of it. The hash collides — ~1% at 10k messages — and a collision made a new
+ * message look already-synced, or pointed a delete at the wrong message.
+ */
+export function getFolderServerUidSet(folderId: string): Set<string> {
+  const rows = getRawSqlite()
+    .prepare('SELECT server_uid FROM messages WHERE folder_id = ? AND server_uid IS NOT NULL')
+    .all(folderId) as Array<{ server_uid: string }>
+  return new Set(rows.map((r) => r.server_uid))
+}
+
+/** The UIDL a POP3 message was stored under, for a server-side delete. */
+export function getMessageServerUid(messageId: string): string | null {
+  const row = getRawSqlite()
+    .prepare('SELECT server_uid FROM messages WHERE id = ?')
+    .get(messageId) as { server_uid: string | null } | undefined
+  return row?.server_uid ?? null
+}
+
 export function getFolderUidSet(folderId: string): Set<number> {
   const db = getDb()
   const rows = db
@@ -1455,6 +1475,8 @@ export interface UpsertMessageData {
   hasAttachments: boolean
   bodyHtml?: string | null
   bodyText?: string | null
+  /** POP3 only: the UIDL string, the protocol's real message identity. */
+  serverUid?: string | null
 }
 
 export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boolean } {
@@ -1475,6 +1497,7 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
     db.update(messages)
       .set({
         messageId: data.messageId,
+        serverUid: data.serverUid ?? null,
         inReplyTo: data.inReplyTo,
         references: data.references,
         threadId: data.threadId,
@@ -1500,6 +1523,7 @@ export function upsertMessage(data: UpsertMessageData): { id: string; isNew: boo
       folderId: data.folderId,
       accountId: data.accountId,
       uid: data.uid,
+      serverUid: data.serverUid ?? null,
       messageId: data.messageId,
       inReplyTo: data.inReplyTo,
       references: data.references,

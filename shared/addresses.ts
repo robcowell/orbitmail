@@ -33,13 +33,21 @@ export function splitAddressList(list: string): string[] {
   return parts.map((part) => part.trim()).filter((part) => part.length > 0)
 }
 
+// The mailbox part of an address, lowercased: `Ann <a@x>` → `a@x`. Everything
+// that decides *who* an address is must compare this, never the raw header —
+// the display name is attacker-controlled, so `"you@yours" <them@theirs>`
+// contains your address without being from you.
+export function extractAddress(address: string): string {
+  const angle = address.match(/<([^>]*)>/)
+  const mailbox = (angle ? angle[1] : address).trim().toLowerCase()
+  return mailbox || address.trim().toLowerCase()
+}
+
 // Dedupe key for an address: the mailbox part when there is one, so the same
 // person written two ways (`a@x` in one message, `Ann <a@x>` in the next) is one
 // participant rather than two.
 function addressKey(address: string): string {
-  const angle = address.match(/<([^>]*)>/)
-  const mailbox = (angle ? angle[1] : address).trim().toLowerCase()
-  return mailbox || address.trim().toLowerCase()
+  return extractAddress(address)
 }
 
 // Display names across one or more raw address lists, first-seen order, one name

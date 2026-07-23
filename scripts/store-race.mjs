@@ -108,6 +108,9 @@ const backend = {
   deleteManyCalls: [],
   moveManyCalls: [],
   messagesPerThread: 1,
+  // Make the reader's two fetches reject, to exercise the failure paths.
+  getThreadFails: false,
+  getFails: false,
   // Flipped on to make the server reject the next flag/star write.
   writesFail: false
 }
@@ -122,7 +125,10 @@ function installWindowStub() {
         count: async () => backend.db.length,
         listThreads: async () => [...backend.threads],
         countThreads: async () => backend.threads.length,
-        getThread: async (_accountId, threadId) => threadMessages(threadId),
+        getThread: async (_accountId, threadId) => {
+          if (backend.getThreadFails) throw new Error('thread fetch failed')
+          return threadMessages(threadId)
+        },
         toggleStar: async () => {
           if (backend.writesFail) throw new Error('server rejected the star')
         },
@@ -138,6 +144,7 @@ function installWindowStub() {
           return { deleted: items.length, failed: 0 }
         },
         get: async (id) => {
+          if (backend.getFails) throw new Error('message fetch failed')
           const row = backend.db.find((m) => m.id === id)
           if (!row) return null
           return { ...row, cc: '', references: null, bodyHtml: null, bodyText: null, attachments: [] }
@@ -467,6 +474,61 @@ async function main() {
   ok('and a rejected write restores it', row('m1')?.isStarred === true,
     String(row('m1')?.isStarred))
   backend.writesFail = false
+
+  // -------------------------------------------------------------------------
+  section('Reader: a failed open reports itself and can be retried')
+  // -------------------------------------------------------------------------
+  // Both opens awaited an IPC call with no catch, and callers invoke them as
+  // `void selectThread(...)`. A rejection left threadLoading/readerLoading true,
+  // so the pane sat on "Loading conversation…" forever with nothing said.
+  state().setThreadedView(true)
+  backend.threads = [...THREADS]
+  await store.refreshMessages()
+
+  backend.getThreadFails = true
+  await store.selectThread('a1', 't1')
+  ok('a failed conversation open stops loading',
+    state().threadLoading === false, `threadLoading=${state().threadLoading}`)
+  ok('it records why, for the reader to show',
+    state().readerError?.message === 'thread fetch failed', state().readerError?.message)
+  ok('it remembers what to retry',
+    state().readerError?.retry?.kind === 'thread' &&
+      state().readerError?.retry?.threadId === 't1',
+    JSON.stringify(state().readerError?.retry))
+  ok('the row stays selected so the user has not lost their place',
+    state().selectedThreadId === 't1', String(state().selectedThreadId))
+
+  backend.getThreadFails = false
+  await store.retryReaderLoad()
+  ok('retrying clears the error', state().readerError === null)
+  ok('and the conversation opens', (state().selectedThread ?? []).length > 0,
+    `${(state().selectedThread ?? []).length} message(s)`)
+
+  // A single message open fails the same way.
+  state().setThreadedView(false)
+  backend.db = [...ROWS]
+  await store.refreshMessages()
+  backend.getFails = true
+  await store.selectMessage('m2')
+  ok('a failed message open stops loading',
+    state().readerLoading === false, `readerLoading=${state().readerLoading}`)
+  ok('it records the message to retry',
+    state().readerError?.retry?.kind === 'message' &&
+      state().readerError?.retry?.messageId === 'm2',
+    JSON.stringify(state().readerError?.retry))
+
+  backend.getFails = false
+  await store.retryReaderLoad()
+  ok('retrying opens the message', state().selectedMessage?.id === 'm2' && !state().readerError,
+    `${state().selectedMessage?.id} error=${state().readerError?.message ?? 'none'}`)
+
+  // A stale error must not outlive the thing it was about.
+  backend.getFails = true
+  await store.selectMessage('m3')
+  ok('the error is set again', !!state().readerError)
+  backend.getFails = false
+  await store.selectMessage('m1')
+  ok('selecting something else clears it', state().readerError === null)
 
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`

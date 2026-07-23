@@ -1248,6 +1248,18 @@ async function main(): Promise<void> {
       ok(`the ${sidecar} sidecar is owner-only`, mode(p) === 0o600, mode(p).toString(8))
     }
 
+    // The gap this originally shipped with: getAttachmentsDir() is only reached
+    // when an attachment is fetched, so on a real profile the database was
+    // corrected to 0600 while the attachments directory stayed 0775. Startup
+    // must tighten everything we own, not just what has been used.
+    chmodSync(attachmentsDir, 0o775)
+    chmodSync(dataDir, 0o775)
+    const { restrictDataDirectories } = await import('../electron/db')
+    restrictDataDirectories()
+    ok('startup tightens the attachments directory even if nothing used it',
+      mode(attachmentsDir) === 0o700, mode(attachmentsDir).toString(8))
+    ok('and the data directory with it', mode(dataDir) === 0o700, mode(dataDir).toString(8))
+
     // An existing install is corrected in place, not only fresh ones.
     chmodSync(dataDir, 0o775)
     chmodSync(dbPath, 0o644)

@@ -498,8 +498,11 @@ read all of it.
 
 `electron/db/permissions.ts` enforces `0700` on directories we create and `0600` on the
 database, **including the `-wal` and `-shm` sidecars**, which under WAL hold the
-same content as the database itself. Modes are applied on **every start**, not
-only at creation, so an existing install is corrected in place; `restrict()` only
+same content as the database itself. Modes are applied on **every start** via `restrictDataDirectories()`, not only at
+creation and not only to directories something has used — `getAttachmentsDir()`
+is otherwise reached only when an attachment is fetched, so the first profile
+checked after this shipped had a `0600` database beside a `0775` attachments
+directory. Existing installs are corrected in place; `restrict()` only
 ever clears bits, so a user who has tightened something further keeps their
 choice, and a filesystem that cannot express the mode is tolerated rather than
 fatal.

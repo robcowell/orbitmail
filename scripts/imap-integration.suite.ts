@@ -787,6 +787,44 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Preferences: shared state is not handed out, and no-ops do not write')
+  // -------------------------------------------------------------------------
+  {
+    const prefs = await import('../electron/services/preferences-service')
+
+    // getAppState used to return the cached object itself, so a caller mutating
+    // what it got changed in-memory state without persisting it — memory and
+    // disk disagreeing until some later write made the drift permanent.
+    prefs.muteSender('victim@example.com')
+    const handed = prefs.getAppState()
+    handed.mutedSenders?.push('never-asked-for@example.com')
+    handed.ui.darkMode = !handed.ui.darkMode
+    const after = prefs.getAppState()
+    ok('mutating what getAppState returned does not change the state',
+      !after.mutedSenders?.includes('never-asked-for@example.com'),
+      after.mutedSenders?.join(', '))
+    ok('nor its nested ui object', after.ui.darkMode !== handed.ui.darkMode)
+
+    // Everything shares one blob, so a UI save rewrites the sender lists too.
+    // The debounced save fires on selection changes that often change nothing.
+    prefs.patchUiPreferences({ selectedMessageId: 'msg-1' })
+    const baseline = prefs.appStateWriteCount()
+    prefs.patchUiPreferences({ selectedMessageId: 'msg-1' })
+    prefs.patchUiPreferences({ selectedMessageId: 'msg-1' })
+    ok('saving unchanged preferences writes nothing',
+      prefs.appStateWriteCount() === baseline,
+      `${prefs.appStateWriteCount() - baseline} extra write(s)`)
+
+    prefs.patchUiPreferences({ selectedMessageId: 'msg-2' })
+    ok('a real change still writes', prefs.appStateWriteCount() === baseline + 1)
+
+    // And the sender lists survive a UI-only save, since they share the row.
+    ok('a UI save does not lose the sender lists',
+      prefs.getAppState().mutedSenders?.includes('victim@example.com'),
+      prefs.getAppState().mutedSenders?.join(', '))
+  }
+
+  // -------------------------------------------------------------------------
   section('Remote images: the sender allowlist persists and normalizes')
   // -------------------------------------------------------------------------
   {

@@ -395,7 +395,9 @@ async function main(): Promise<void> {
     // while a legacy user folder named "Deleted Items" claimed `trash` — so
     // "delete" moved mail to an ordinary label, which on Gmail keeps every other
     // label, leaving the message in All Mail, search and thread views.
-    const { detectFolderType, detectFolderTypes } = await import('../electron/services/imap-sync')
+    const { detectFolderType, detectFolderTypes, resolveRoleMailbox } = await import(
+      '../electron/services/imap-sync'
+    )
 
     ok('a string special-use is honoured',
       detectFolderType('Bin', '\\Trash') === 'trash',
@@ -475,6 +477,45 @@ async function main(): Promise<void> {
     ok('a flagged deep folder still beats a shallow name match',
       gmail.get('[Gmail]/Bin') === 'trash' && gmail.get('Deleted Items') === 'custom',
       `${gmail.get('[Gmail]/Bin')} / ${gmail.get('Deleted Items')}`)
+
+    // The real klivian shape: only the *grafted* mailbox is flagged, because it
+    // brought its flags with it. A flag from somebody else's mailbox is not
+    // evidence about ours, so the account's own top-level folder still wins.
+    const graftedFlaggedOnly = detectFolderTypes([
+      { name: 'INBOX', path: 'INBOX', specialUse: '\\Inbox' },
+      { name: 'Sent Items', path: 'INBOX/admin/Sent Items', specialUse: '\\Sent' },
+      { name: 'Sent Items', path: 'Sent Items' }
+    ])
+    ok('our unflagged Sent beats a grafted mailbox’s flagged one',
+      graftedFlaggedOnly.get('Sent Items') === 'sent',
+      String(graftedFlaggedOnly.get('Sent Items')))
+    ok('and the grafted one is demoted',
+      graftedFlaggedOnly.get('INBOX/admin/Sent Items') === 'custom',
+      String(graftedFlaggedOnly.get('INBOX/admin/Sent Items')))
+
+    // One level under INBOX is the Courier-style namespace, not a graft — those
+    // servers put every folder there and it is the account's own.
+    const namespaced = detectFolderTypes([
+      { name: 'INBOX', path: 'INBOX', delimiter: '.' },
+      { name: 'Sent', path: 'INBOX.Sent', delimiter: '.', specialUse: '\\Sent' },
+      { name: 'Trash', path: 'INBOX.Trash', delimiter: '.' }
+    ])
+    ok('a folder one level under INBOX still holds its role',
+      namespaced.get('INBOX.Sent') === 'sent' && namespaced.get('INBOX.Trash') === 'trash',
+      `${namespaced.get('INBOX.Sent')} / ${namespaced.get('INBOX.Trash')}`)
+
+    // Send-filing must agree with the sidebar — it used to take the first
+    // mailbox that looked Sent, which is the grafted one on this account.
+    const mailboxesForSend = [
+      { name: 'INBOX', path: 'INBOX', specialUse: '\\Inbox' },
+      { name: 'Sent Items', path: 'INBOX/admin/Sent Items', specialUse: '\\Sent' },
+      { name: 'Sent Items', path: 'Sent Items' }
+    ]
+    ok('send-filing resolves the same mailbox the folder list does',
+      resolveRoleMailbox(mailboxesForSend, 'sent')?.path === 'Sent Items',
+      String(resolveRoleMailbox(mailboxesForSend, 'sent')?.path))
+    ok('a role with no candidate resolves to nothing',
+      resolveRoleMailbox(mailboxesForSend, 'junk') === undefined)
 
     // Servers using '.' as the hierarchy delimiter must measure depth with it.
     const dotted = detectFolderTypes([

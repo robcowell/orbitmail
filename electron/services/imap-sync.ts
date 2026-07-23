@@ -506,8 +506,41 @@ interface TypedMailbox {
 // grafted under the user's own tree (`INBOX/admin/Sent Items`), so depth is what
 // separates "my Sent" from "a copy of somebody else's".
 function mailboxDepth(mb: TypedMailbox): number {
+  return mailboxSegments(mb).length
+}
+
+function mailboxSegments(mb: TypedMailbox): string[] {
   const delimiter = mb.delimiter && mb.delimiter.length === 1 ? mb.delimiter : '/'
-  return mb.path.split(delimiter).length
+  return mb.path.split(delimiter)
+}
+
+// A mailbox living *two or more* levels under INBOX is somebody else's mailbox
+// grafted into ours — a delegate, or an old account imported wholesale
+// (`INBOX/admin/Sent Items`). It brings its own SPECIAL-USE flags with it, so a
+// flag is not evidence that it is *our* Sent folder.
+//
+// One level under INBOX is left alone: servers in the Courier tradition
+// namespace everything that way (`INBOX.Sent`), and there the nested folder is
+// the account's own.
+function isGraftedMailbox(mb: TypedMailbox): boolean {
+  const segments = mailboxSegments(mb)
+  return segments.length >= 3 && segments[0].toUpperCase() === 'INBOX'
+}
+
+interface RoleCandidate {
+  path: string
+  flagged: boolean
+  grafted: boolean
+  depth: number
+}
+
+// Ranked, most significant first: ours before a grafted mailbox's, a server flag
+// before a name guess, then the shallower path. Equal on all three keeps the
+// incumbent, so a stable server listing gives a stable role.
+function betterCandidate(candidate: RoleCandidate, held: RoleCandidate): boolean {
+  if (candidate.grafted !== held.grafted) return !candidate.grafted
+  if (candidate.flagged !== held.flagged) return candidate.flagged
+  return candidate.depth < held.depth
 }
 
 // Type every mailbox in one pass, so the account's *own* folder wins each role
@@ -525,7 +558,7 @@ export function detectFolderTypes<T extends TypedMailbox>(
 ): Map<string, FolderType> {
   const types = new Map<string, FolderType>()
   // Per role, the best candidate seen so far and how it was identified.
-  const winners = new Map<FolderType, { path: string; flagged: boolean; depth: number }>()
+  const winners = new Map<FolderType, RoleCandidate>()
 
   for (const mb of mailboxes) {
     const fromFlags = specialUseFlags(mb.specialUse)
@@ -535,14 +568,15 @@ export function detectFolderTypes<T extends TypedMailbox>(
     types.set(mb.path, role ?? 'custom')
     if (!role) continue
 
-    const candidate = { path: mb.path, flagged: !!fromFlags, depth: mailboxDepth(mb) }
+    const candidate: RoleCandidate = {
+      path: mb.path,
+      flagged: !!fromFlags,
+      grafted: isGraftedMailbox(mb),
+      depth: mailboxDepth(mb)
+    }
     const held = winners.get(role)
     // First candidate wins ties, so a stable server listing gives a stable role.
-    const better =
-      !held ||
-      (candidate.flagged && !held.flagged) ||
-      (candidate.flagged === held.flagged && candidate.depth < held.depth)
-    if (better) winners.set(role, candidate)
+    if (!held || betterCandidate(candidate, held)) winners.set(role, candidate)
   }
 
   // Everything that matched a role but did not win it is an ordinary folder.
@@ -554,6 +588,18 @@ export function detectFolderTypes<T extends TypedMailbox>(
   }
 
   return types
+}
+
+// The one mailbox that holds a role, by the same ranking the folder list uses.
+// Send-filing and the post-send Sent sync each used to pick "the first mailbox
+// that looks Sent", which on an account carrying a grafted mailbox meant filing
+// sent copies into somebody else's folder — and disagreeing with the sidebar.
+export function resolveRoleMailbox<T extends TypedMailbox>(
+  mailboxes: T[],
+  role: FolderType
+): T | undefined {
+  const types = detectFolderTypes(mailboxes)
+  return mailboxes.find((mb) => types.get(mb.path) === role)
 }
 
 function formatAddress(addr: { address?: string; name?: string } | undefined): string {
@@ -1468,9 +1514,7 @@ export async function appendToSentFolder(
     let path = sentPathCache.get(accountId)
     if (!path) {
       const mailboxes = await client.list()
-      const sentMb = mailboxes.find(
-        (mb) => mb.specialUse?.includes('\\Sent') || FOLDER_NAME_MAP[mb.name] === 'sent'
-      )
+      const sentMb = resolveRoleMailbox(mailboxes, 'sent')
       path = sentMb?.path ?? 'Sent'
       sentPathCache.set(accountId, path)
     }
@@ -1492,16 +1536,14 @@ export async function syncSentFolder(accountId: string, provider: Provider): Pro
 
   await withImapClient(accountId, provider, async (client) => {
     const mailboxes = await client.list()
-    const sentMb = mailboxes.find(
-      (mb) => mb.specialUse?.includes('\\Sent') || FOLDER_NAME_MAP[mb.name] === 'sent'
-    )
+    const sentMb = resolveRoleMailbox(mailboxes, 'sent')
     if (!sentMb || sentMb.flags?.has('\\Noselect')) return
 
     const folder = upsertFolder(
       accountId,
       sentMb.path,
       sentMb.name,
-      detectFolderType(sentMb.name, sentMb.specialUse),
+      'sent',
       isVirtualViewFolder(provider, sentMb.path)
     )
     await syncFolder(client, accountId, folder.id, sentMb.path)

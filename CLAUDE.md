@@ -93,9 +93,18 @@ Two habits that prevent the worst of it:
 - `npm run build` — **this is the verification gate.** It compiles main, preload, and renderer via electron-vite/esbuild. Run it after changes to confirm they're sound.
 - `npm run dist` / `dist:deb` / `dist:appimage` — package (runs `icons` + `build` + electron-builder). Packages contain **no** OAuth credentials (rule 5); they are resolved at runtime, so there is nothing to rebuild after editing `.env`.
 
-There is **no unit-test framework and no linter** in this repo. Verification = `npm run build` passes.
+There is **no unit-test framework and no linter** in this repo. Verification = `npm run build` passes, plus two test commands.
 
-The one exception is `npm run test:imap` — a growing suite of checks against a real GreenMail server in Docker, inside a windowless Electron main process (the DB needs `app.getPath`, and `better-sqlite3` is built for Electron's ABI). It covers the sync layer (STARTTLS, sync, UIDVALIDITY rebuild, IDLE reconnect, send, lane contention), the security controls (OAuth loopback `state`, credential handling, attachment classification), account-data hygiene (removal deletes AI tasks; freelist reclaim), and pure-logic invariants (launcher badge signal, IPC contract, docs-match-code). It runs in CI on every push. Run it locally after touching anything in `electron/services/`. Details in DEVELOPERS.md → Integration tests.
+`npm run test:store` — renderer-store checks under plain node (~1s, no Docker,
+no Electron). `scripts/store-race.mjs` bundles `mailStore.ts` with esbuild, stubs
+`window.orbitMail`, and drives the exported actions, which is the only way to
+reach renderer logic: the main-process suite must not import renderer code. It
+covers the optimistic-UI invariants — a refresh landing mid-delete must not
+resurrect the row, a rejected op must release the hold so the rollback restores
+it, and the selection advances to the next row down. Run it after touching
+`src/stores/`. Details in DEVELOPERS.md → Store tests.
+
+The larger one is `npm run test:imap` — a growing suite of checks against a real GreenMail server in Docker, inside a windowless Electron main process (the DB needs `app.getPath`, and `better-sqlite3` is built for Electron's ABI). It covers the sync layer (STARTTLS, sync, UIDVALIDITY rebuild, IDLE reconnect, send, lane contention), the security controls (OAuth loopback `state`, credential handling, attachment classification), account-data hygiene (removal deletes AI tasks; freelist reclaim), and pure-logic invariants (launcher badge signal, IPC contract, docs-match-code). It runs in CI on every push. Run it locally after touching anything in `electron/services/`. Details in DEVELOPERS.md → Integration tests.
 
 **Do not treat `tsc -b` as a pass/fail gate.** The source does not cleanly pass a standalone `tsc -b` even on `main` (target/lib and third-party typing mismatches that esbuild transpiles past). Use `npm run build`.
 

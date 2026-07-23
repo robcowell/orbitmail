@@ -415,6 +415,7 @@ each other.
 | `npm run icons` | Regenerate PNG icons from `build/icon.svg` |
 | `npm run install:desktop` | Install a dev `.desktop` launcher |
 | `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
+| `npm run test:store` | Renderer-store checks under plain node (see below) — no Docker, no Electron |
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
 | `npm run dist:deb` | Debian package only |
 | `npm run dist:appimage` | AppImage only |
@@ -490,6 +491,30 @@ Notes for anyone extending it:
 - On failure the runner prints GreenMail's last 40 log lines before removing the
   container — on CI that is the only view of the server side.
 - CI deliberately does not run `tsc -b`; see the note in the workflow.
+
+## Store tests (renderer)
+
+```bash
+npm run test:store   # plain node — no Docker, no Electron, ~1s
+```
+
+`scripts/store-race.mjs` bundles `src/stores/mailStore.ts` with esbuild, stubs
+`window.orbitMail`, and drives the exported actions directly. The store is the
+one piece of app logic the GreenMail suite cannot reach — it lives in the
+renderer and only talks to the main process through IPC — and it is where the
+optimistic-UI invariants live.
+
+| Area | What it asserts |
+|------|-----------------|
+| Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| Rollback | A rejected delete releases the hold *before* the caller's rollback refresh, so the row comes back rather than staying invisible until the next folder switch. |
+| Selection advance | Deleting mid-list selects the row below; deleting the last row falls back to the row above. |
+
+The stub is deliberately thin — it is the IPC surface the store touches, nothing
+more — so adding a check usually means adding one more method to it. Extend this
+rather than the GreenMail suite for anything renderer-side: it needs no
+container, and the renderer bundle must not be pulled into the main-process
+suite (`tsconfig.node.json` and `tsconfig.web.json` are separate contexts).
 
 ## Building & packaging
 

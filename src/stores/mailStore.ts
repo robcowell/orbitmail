@@ -330,6 +330,37 @@ function successorThread(accountId: string, threadId: string): ThreadSummary | n
   return list[idx + 1] ?? list[idx - 1] ?? null
 }
 
+// Rows whose removal is optimistic in the UI but not yet done in the DB.
+//
+// The main process only deletes the local row *after* the IMAP round-trip
+// returns, so for the whole duration of a delete/archive/move the list says
+// "gone" and SQLite still says "here". Any refresh in that window — the
+// `sync:messagesUpdated` debounce, the sync-complete subscription, a background
+// poll or an IDLE push, none of which know an op is in flight — reloads the page
+// from SQLite and the row comes back. These sets hold the ids out of any page
+// applied while the op is in flight; `withPendingRemoval` releases them once it
+// has settled, by which time the local row is really gone.
+const pendingRemovedIds = new Set<string>()
+const pendingRemovedThreadKeys = new Set<string>()
+
+// Run the server half of a removal with its rows held out of the list. Releasing
+// in `finally` means a failure releases them *before* the caller's catch runs its
+// rollback refresh, so a rejected delete puts the row back.
+async function withPendingRemoval<T>(
+  ids: string[],
+  threadKeys: string[],
+  op: () => Promise<T>
+): Promise<T> {
+  ids.forEach((id) => pendingRemovedIds.add(id))
+  threadKeys.forEach((key) => pendingRemovedThreadKeys.add(key))
+  try {
+    return await op()
+  } finally {
+    ids.forEach((id) => pendingRemovedIds.delete(id))
+    threadKeys.forEach((key) => pendingRemovedThreadKeys.delete(key))
+  }
+}
+
 // Drop rows from the visible list and carry the selection to the successor, so
 // delete / archive / move can be fired repeatedly without re-picking a row. Rows
 // that were not selected are removed without disturbing the open reader.
@@ -457,16 +488,31 @@ function mergeThreadList(current: ThreadSummary[], next: ThreadSummary[]): Threa
   return changed ? merged : current
 }
 
-function applyThreadPage(threads: ThreadSummary[], total: number, offset: number): void {
+// A page can be read from SQLite before an in-flight removal reaches it and be
+// applied after — so rows are filtered against the pending set as it stood when
+// the query was issued *and* as it stands now. The counts drop with them, matching
+// the optimistic accounting in removeMessagesFromList.
+function applyThreadPage(
+  threads: ThreadSummary[],
+  total: number,
+  offset: number,
+  pendingAtRequest: Set<string>
+): void {
   const store = useMailStore.getState()
+  const visible = threads.filter((t) => {
+    const key = threadKey(t)
+    return !pendingAtRequest.has(key) && !pendingRemovedThreadKeys.has(key)
+  })
+  const held = threads.length - visible.length
   if (offset === 0) {
-    const merged = mergeThreadList(store.threads, threads)
+    const merged = mergeThreadList(store.threads, visible)
     if (merged !== store.threads) store.setThreads(merged)
   } else {
-    store.appendThreads(threads)
+    store.appendThreads(visible)
   }
   store.setThreadOffset(offset + threads.length)
-  if (store.threadTotal !== total) store.setThreadTotal(total)
+  const adjusted = Math.max(0, total - held)
+  if (store.threadTotal !== adjusted) store.setThreadTotal(adjusted)
 }
 
 // Resolve the per-account filter key for a folder view: the folder's owning
@@ -484,29 +530,41 @@ function unreadOnlyForFolder(folderId: string | 'unified'): boolean {
 
 async function loadFolderThreads(folderId: string | 'unified', offset = 0): Promise<void> {
   const unreadOnly = unreadOnlyForFolder(folderId)
+  const pendingAtRequest = new Set(pendingRemovedThreadKeys)
   const [threads, total] = await Promise.all([
     window.orbitMail.messages.listThreads(folderId, THREAD_PAGE_SIZE, offset, unreadOnly),
     window.orbitMail.messages.countThreads(folderId, unreadOnly)
   ])
-  applyThreadPage(threads, total, offset)
+  applyThreadPage(threads, total, offset, pendingAtRequest)
 }
 
-function applyMessagePage(messages: MessageSummary[], total: number, offset: number): void {
+function applyMessagePage(
+  messages: MessageSummary[],
+  total: number,
+  offset: number,
+  pendingAtRequest: Set<string>
+): void {
   const store = useMailStore.getState()
-  if (offset === 0) store.setMessages(messages)
-  else store.appendMessages(messages)
+  const visible = messages.filter(
+    (m) => !pendingAtRequest.has(m.id) && !pendingRemovedIds.has(m.id)
+  )
+  const held = messages.length - visible.length
+  if (offset === 0) store.setMessages(visible)
+  else store.appendMessages(visible)
   store.setMessageOffset(offset + messages.length)
-  if (store.messageTotal !== total) store.setMessageTotal(total)
+  const adjusted = Math.max(0, total - held)
+  if (store.messageTotal !== adjusted) store.setMessageTotal(adjusted)
 }
 
 // Flat (unthreaded) list of every message in the folder, newest first.
 async function loadFolderMessages(folderId: string | 'unified', offset = 0): Promise<void> {
   const unreadOnly = unreadOnlyForFolder(folderId)
+  const pendingAtRequest = new Set(pendingRemovedIds)
   const [messages, total] = await Promise.all([
     window.orbitMail.messages.list(folderId, MESSAGE_PAGE_SIZE, offset, unreadOnly),
     window.orbitMail.messages.count(folderId, unreadOnly)
   ])
-  applyMessagePage(messages, total, offset)
+  applyMessagePage(messages, total, offset, pendingAtRequest)
 }
 
 // Load the current folder's list in whichever mode is active.
@@ -745,7 +803,11 @@ export async function deleteThread(accountId: string, threadId: string): Promise
   store.setToast(messages.length === 1 ? 'Deleted' : `Deleted ${messages.length} messages`)
 
   try {
-    await window.orbitMail.messages.deleteMany(items)
+    await withPendingRemoval(
+      items.map((i) => i.id),
+      [expandKey(accountId, threadId)],
+      () => window.orbitMail.messages.deleteMany(items)
+    )
     await refreshFoldersUnread()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Delete failed')
@@ -804,7 +866,12 @@ export async function archiveThread(accountId: string, threadId: string): Promis
   store.setToast(moves.length === 1 ? 'Message archived' : `Archived ${moves.length} messages`)
 
   try {
-    await Promise.all(moves.map((mv) => window.orbitMail.messages.move(mv.id, mv.targetFolderId)))
+    await withPendingRemoval(
+      moves.map((mv) => mv.id),
+      [expandKey(accountId, threadId)],
+      () =>
+        Promise.all(moves.map((mv) => window.orbitMail.messages.move(mv.id, mv.targetFolderId)))
+    )
     await refreshFoldersUnread()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Archive failed')
@@ -897,7 +964,11 @@ export async function moveThreadToFolder(
   )
 
   try {
-    await Promise.all(messages.map((m) => window.orbitMail.messages.move(m.id, targetFolderId)))
+    await withPendingRemoval(
+      messages.map((m) => m.id),
+      [expandKey(accountId, threadId)],
+      () => Promise.all(messages.map((m) => window.orbitMail.messages.move(m.id, targetFolderId)))
+    )
     await refreshFoldersUnread()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Move failed')
@@ -1440,11 +1511,11 @@ export async function moveMessageToTrash(messageId: string): Promise<void> {
   )
 
   try {
-    if (trash) {
-      await window.orbitMail.messages.move(messageId, trash.id)
-    } else {
-      await window.orbitMail.messages.delete(messageId)
-    }
+    await withPendingRemoval([messageId], [], () =>
+      trash
+        ? window.orbitMail.messages.move(messageId, trash.id)
+        : window.orbitMail.messages.delete(messageId)
+    )
   } catch (err) {
     // Server rejected the delete/move — restore the true state and report why.
     store.setToast(err instanceof Error ? err.message : 'Delete failed')
@@ -1499,7 +1570,9 @@ export async function deleteSelectedMessages(): Promise<void> {
 
   const label = destinations.length === 1 ? destinations[0] : 'Trash'
   try {
-    const { deleted, failed } = await window.orbitMail.messages.deleteMany(items)
+    const { deleted, failed } = await withPendingRemoval(ids, [], () =>
+      window.orbitMail.messages.deleteMany(items)
+    )
     store.setToast(
       failed > 0
         ? `${deleted} moved to ${label}, ${failed} failed`
@@ -1534,7 +1607,9 @@ export async function archiveMessage(messageId: string): Promise<void> {
   store.setToast('Message archived')
 
   try {
-    await window.orbitMail.messages.move(messageId, archive.id)
+    await withPendingRemoval([messageId], [], () =>
+      window.orbitMail.messages.move(messageId, archive.id)
+    )
     await refreshFoldersUnread()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Archive failed')
@@ -1585,7 +1660,9 @@ export async function moveMessageToJunk(messageId: string): Promise<void> {
   store.setToast('Message moved to Junk')
 
   try {
-    await window.orbitMail.messages.move(messageId, junk.id)
+    await withPendingRemoval([messageId], [], () =>
+      window.orbitMail.messages.move(messageId, junk.id)
+    )
     await refreshFoldersUnread()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Move failed')
@@ -1605,7 +1682,9 @@ export async function moveMessageToFolder(
   store.setToast(`Message moved to ${target?.name ?? 'folder'}`)
 
   try {
-    await window.orbitMail.messages.move(messageId, targetFolderId)
+    await withPendingRemoval([messageId], [], () =>
+      window.orbitMail.messages.move(messageId, targetFolderId)
+    )
     await refreshFoldersUnread()
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Move failed')

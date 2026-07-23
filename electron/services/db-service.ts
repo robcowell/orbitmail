@@ -31,6 +31,33 @@ import { collectDisplayNames, extractName } from '../../shared/addresses'
 
 export type { TokenData, ManualAccountCredentials, AccountCredentials }
 
+const PROVIDER_LABELS: Record<Provider, string> = {
+  gmail: 'Gmail',
+  o365: 'Office 365',
+  imap: 'IMAP',
+  pop3: 'POP3'
+}
+
+// Accounts are keyed by address, so re-adding one updates it in place — that is
+// how re-authenticating and changing a password work. Switching *provider* is a
+// different thing: it replaces the stored credentials (an OAuth refresh token
+// cannot be recovered afterwards) and silently changes how the account's
+// existing mail is treated, since Gmail's label folders and search behave
+// differently from plain IMAP. Refuse it and let the user remove the account
+// deliberately, which is the path that also cleans up its mail.
+function assertProviderUnchanged(
+  email: string,
+  existing: { provider: string } | undefined,
+  provider: Provider
+): void {
+  if (!existing || existing.provider === provider) return
+  const from = PROVIDER_LABELS[existing.provider as Provider] ?? existing.provider
+  const to = PROVIDER_LABELS[provider] ?? provider
+  throw new Error(
+    `${email} is already added as ${from}. Remove that account first to add it as ${to}.`
+  )
+}
+
 export function saveAccount(
   provider: Provider,
   tokenData: TokenData
@@ -41,6 +68,8 @@ export function saveAccount(
     .from(accounts)
     .where(eq(accounts.email, tokenData.email))
     .get()
+
+  assertProviderUnchanged(tokenData.email, existing, provider)
 
   if (existing) {
     db.update(accounts)
@@ -90,6 +119,8 @@ export function saveManualAccount(
     .from(accounts)
     .where(eq(accounts.email, creds.email))
     .get()
+
+  assertProviderUnchanged(creds.email, existing, provider)
 
   if (existing) {
     db.update(accounts)

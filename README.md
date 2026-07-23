@@ -249,6 +249,14 @@ badge (Menu → Preferences → Applets → Grouped window list → "Show notifi
 badges"), which counts pending notifications, not mail; Cinnamon ignores the
 launcher-count signal entirely.
 
+**"… is already added as Gmail. Remove that account first"**  
+An address can only be set up one way at a time. Adding it again with the same
+method updates it (that is how you re-authenticate or change a password), but
+switching between OAuth and manual IMAP/POP3 would replace the stored
+credentials — an OAuth sign-in cannot be recovered afterwards — and change how
+the mail already synced for it is treated. Remove the account first if that is
+what you want; removing it also clears its cached mail.
+
 **A message or conversation will not open**  
 The reader says why and offers **Try again** — the fetch is a local call to the
 app's own database, so a failure usually means a sync is mid-write or the

@@ -119,15 +119,21 @@ export function ComposeWindow() {
     setAttachments((current) => current.filter((a) => a.path !== path))
   }
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()
     setDragging(false)
-    const drafts: AttachmentDraft[] = []
-    for (const file of Array.from(e.dataTransfer.files)) {
-      const path = window.orbitMail.compose.getPathForFile(file)
-      if (path) drafts.push({ path, name: file.name, size: file.size })
+    // Main resolves and approves each dropped file, and hands back the draft it
+    // stat'd itself — the renderer never names a path.
+    try {
+      const drafts = await Promise.all(
+        Array.from(e.dataTransfer.files).map((file) =>
+          window.orbitMail.compose.attachDroppedFile(file)
+        )
+      )
+      addDrafts(drafts.filter((d): d is AttachmentDraft => d !== null))
+    } catch {
+      setToast('Could not attach those files')
     }
-    addDrafts(drafts)
   }
 
   const handleSend = async () => {

@@ -344,7 +344,10 @@ export interface OrbitMailAPI {
     send: (payload: ComposePayload) => Promise<void>
     pickAttachments: () => Promise<AttachmentDraft[]>
     statAttachments: (paths: string[]) => Promise<AttachmentDraft[]>
-    getPathForFile: (file: File) => string
+    // Resolves a dropped File to a path *and* approves it for attachment; the
+    // renderer never gets to name a file itself. Returns null for anything that
+    // is not a real dropped file.
+    attachDroppedFile: (file: File) => Promise<AttachmentDraft | null>
     close: () => Promise<void>
     onOpen: (callback: (payload: Partial<ComposePayload>) => void) => () => void
   }

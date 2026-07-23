@@ -16,6 +16,11 @@ import type {
   Provider
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
+import {
+  approveAttachmentPath,
+  isAttachmentApproved,
+  clearApprovedAttachments
+} from './services/attachment-allowlist'
 import { initTray, destroyTray } from './tray'
 import { updateAppBadge } from './app-badge'
 import {
@@ -271,6 +276,9 @@ async function prepareComposePayload(
   ) {
     try {
       const rawPath = await exportMessageRawToTemp(payload.originalMessageId)
+      // Main wrote this file, so main approves it. Paths that arrived in the
+      // renderer's payload are deliberately not approved here.
+      approveAttachmentPath(rawPath)
       return {
         ...finalPayload,
         attachmentPaths: [rawPath, ...(payload.attachmentPaths ?? [])]
@@ -467,6 +475,9 @@ async function createComposeWindow(payload?: Partial<ComposePayload>): Promise<v
 
   composeWindow.on('closed', () => {
     composeWindow = null
+    // Approval is per compose session: a file chosen for one message should not
+    // still be attachable from the next one.
+    clearApprovedAttachments()
   })
 
   composeWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -902,11 +913,29 @@ function registerIpc(): void {
       properties: ['openFile', 'multiSelections']
     })
     if (result.canceled) return []
+    // The user picked these in an OS dialog, so they are approved to attach.
+    for (const filePath of result.filePaths) approveAttachmentPath(filePath)
     return result.filePaths.map(pathToAttachmentDraft).filter(Boolean) as AttachmentDraft[]
   })
 
+  // A real drag-and-drop. The preload resolves the path with webUtils, which
+  // returns nothing for a File the renderer constructs, so this cannot be used
+  // to name an arbitrary file.
+  ipcMain.handle('compose:attachDroppedFile', (_, path: string) => {
+    if (typeof path !== 'string' || path.length === 0) return null
+    const draft = pathToAttachmentDraft(path)
+    if (!draft) return null
+    approveAttachmentPath(path)
+    return draft
+  })
+
+  // Only describes files already approved: the renderer can call this with any
+  // path, and file size and existence are worth something to an attacker.
   ipcMain.handle('compose:statAttachments', (_, paths: string[]) =>
-    paths.map(pathToAttachmentDraft).filter(Boolean) as AttachmentDraft[]
+    paths
+      .filter((path) => isAttachmentApproved(path))
+      .map(pathToAttachmentDraft)
+      .filter(Boolean) as AttachmentDraft[]
   )
 
   ipcMain.handle('compose:close', () => {

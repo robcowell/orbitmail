@@ -16,6 +16,7 @@ import { appendToSentFolder, getAccountSmtpConfig } from './imap-sync'
 import { smtpTransportOptions } from './account-credentials'
 import { resolveGoogleAccessToken } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
+import { assertAttachmentsApproved } from './attachment-allowlist'
 
 async function ensureFreshToken(
   accountId: string,
@@ -89,6 +90,10 @@ export async function sendMail(
   payload: ComposePayload,
   provider: Provider
 ): Promise<void> {
+  // Before any credential or transport work: a payload naming a file the user
+  // never chose must do nothing at all, not fail halfway through a send.
+  assertAttachmentsApproved(payload.attachmentPaths)
+
   let transport: nodemailer.Transporter
   let fromAddress: string
 

@@ -195,6 +195,14 @@ the control, and the README says so.
 - **Background poll** — POP3 every 20s; IDLE-capable IMAP accounts every 90s (IDLE already push-syncs their inboxes), plus one immediate catch-up sync shortly after launch. Accounts sync in parallel.
 - **IMAP IDLE** — inbox folders on supported accounts for near-realtime delivery, including live flag changes and expunge (deletion) pushes
 - **Server-side reconciliation** — sync detects messages expunged on the server and removes them from the local cache; flag changes propagate in both directions (`imap-idle.ts`, `imap-sync.ts`)
+- **Connection pool** — an unusable client is closed before it is replaced
+  (`reclaimClient`): `usable` goes false when a protocol error is seen, which is
+  *before* `close` fires and, on a half-open TCP connection, perhaps never — so
+  overwriting the reference leaked the socket and the server-side connection slot.
+  Gmail allows 15 IMAP connections per account and the app budgets two, so a
+  steady leak is how an account starts refusing new ones. It uses `close()`, not
+  `logout()`: the client is already unusable, so a polite LOGOUT has nobody to
+  talk to and could hang the lane on a dead socket.
 - **Connection pool** — one reused IMAP client per account (`imap-pool.ts`) with a
   per-account operation mutex and 30s idle-close, so a batch of server ops shares a
   single connection instead of reconnecting each time. Kept separate from the IDLE
@@ -639,6 +647,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| IMAP pool | A usable client is kept and not closed; an unusable one is not reused *and* its socket is closed; a `close()` that throws does not propagate; no client is simply no client. |
 | Uncaught errors | The IMAP socket timeouts the handler exists for are still suppressed (by code, by either spelling of it, and by message), while a real fault, a lookalike message and a non-error are not; the message shown to the user names the fault, says what to do, survives an empty message, and is truncated rather than filling the screen. |
 | Preferences | Mutating what `getAppState()` returned does not change the stored state, nor its nested `ui` object; saving unchanged preferences performs no write while a real change still does; and a UI-only save does not lose the sender lists that share the row. |
 | Bulk delete | A batch delete removes the rows, cascades their attachment rows, unlinks only those files (leaving a surviving message's alone), recounts folder unread once and correctly, reports how many rows it removed, and treats unknown ids and an empty list as no-ops. |

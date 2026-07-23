@@ -787,6 +787,31 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('IMAP pool: an unusable client is closed, not just dropped')
+  // -------------------------------------------------------------------------
+  {
+    // `usable` goes false when a protocol error is seen — before `close` fires,
+    // and on a half-open TCP connection perhaps never. Overwriting the
+    // reference leaked the socket and the server-side connection slot; Gmail
+    // allows 15 per account and this app budgets 2.
+    const { reclaimClient } = await import('../electron/services/imap-pool')
+
+    let closes = 0
+    const healthy = { usable: true, close: () => { closes++ } }
+    ok('a usable client is kept', reclaimClient(healthy) === true)
+    ok('and is not closed', closes === 0, `${closes} close(s)`)
+
+    const dead = { usable: false, close: () => { closes++ } }
+    ok('an unusable client is not reused', reclaimClient(dead) === false)
+    ok('and its socket is closed', closes === 1, `${closes} close(s)`)
+
+    const stubborn = { usable: false, close: () => { throw new Error('already gone') } }
+    ok('a close that throws does not propagate', reclaimClient(stubborn) === false)
+
+    ok('no client is simply no client', reclaimClient(null) === false)
+  }
+
+  // -------------------------------------------------------------------------
   section('Uncaught errors: suppress the known noise, surface the rest')
   // -------------------------------------------------------------------------
   {

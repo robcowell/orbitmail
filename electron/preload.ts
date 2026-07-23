@@ -83,7 +83,14 @@ const api: OrbitMailAPI = {
     send: (payload) => ipcRenderer.invoke('compose:send', payload),
     pickAttachments: () => ipcRenderer.invoke('compose:pickAttachments'),
     statAttachments: (paths: string[]) => ipcRenderer.invoke('compose:statAttachments', paths),
-    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+    // webUtils yields a path only for a genuine dropped file — a File the
+    // renderer constructs resolves to '' — so this is the one route by which a
+    // drag-and-drop can approve a path without trusting the renderer's word.
+    attachDroppedFile: async (file: File) => {
+      const path = webUtils.getPathForFile(file)
+      if (!path) return null
+      return ipcRenderer.invoke('compose:attachDroppedFile', path)
+    },
     close: () => ipcRenderer.invoke('compose:close'),
     onOpen: (callback) => {
       const handler = (_: unknown, payload: Partial<ComposePayload>) => callback(payload)

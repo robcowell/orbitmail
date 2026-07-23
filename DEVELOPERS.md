@@ -475,6 +475,23 @@ Opening an attachment whose extension can execute (`.desktop`, `.sh`, `.jar`,
 and keyed by attachment id, so two parts sharing a filename cannot overwrite
 each other.
 
+**Outgoing attachments are allowlisted** (`attachment-allowlist.ts`). `sendMail`
+used to `readFileSync` whatever `attachmentPaths` the renderer supplied — and the
+renderer is the process that renders untrusted email HTML, so script execution
+there meant a file-exfiltration primitive: attach `~/.ssh/id_rsa` or
+`orbit-mail.db` and mail it out. The sanitizer, CSP and context isolation are
+what prevent that execution; this limits the damage if they fail.
+
+A path is approved only by the OS file dialog, by a genuine drag-and-drop
+(resolved in the preload with `webUtils.getPathForFile`, which returns nothing
+for a `File` the renderer constructs — so the renderer never names a path), or by
+main itself, for the raw `.eml` it writes for forward-as-attachment. Paths
+arriving in a `compose.open` payload are deliberately *not* approved, since the
+renderer can call that freely. `sendMail` asserts before any credential or
+transport work, so a bad payload does nothing at all; `compose:statAttachments`
+answers only for approved paths, since size and existence are worth something on
+their own. Approval is cleared when the compose window closes.
+
 ## Scripts
 
 | Command | Description |
@@ -532,6 +549,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| Attachment allowlist | Only files approved in this compose session can be attached: an unapproved path in the list refuses the whole send, the refusal names the offending file, equivalent path spellings (`/tmp/./x`) do not decide approval, `sendMail` refuses before touching credentials or a transport, and closing compose withdraws approval. |
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
 | Task-orphan cleanup | The one-time migration for tasks left by pre-fix deletions removes a per-folder orphan (folder gone), leaves a unified task whose source message is merely missing (could be a valid todo that aged out of the cache), and is idempotent. |

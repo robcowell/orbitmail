@@ -1219,6 +1219,45 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Tray: the unread count is carried by the icon itself')
+  // -------------------------------------------------------------------------
+  {
+    // The launcher badge is invisible where the panel ignores LauncherEntry
+    // (Cinnamon), so the tray carries the count instead. Electron's Tray has no
+    // text label on Linux, so the number is baked into pre-rendered icons and
+    // this mapping decides which file is shown — including the clamp that keeps
+    // a two-digit count from becoming an illegible smudge at panel size.
+    const { trayIconFile, trayTooltip } = await import('../electron/tray')
+    const { existsSync } = await import('fs')
+
+    ok('no unread mail shows the plain icon', trayIconFile(0) === 'tray.png', trayIconFile(0))
+    ok('a single-digit count shows that number',
+      trayIconFile(1) === 'tray-1.png' && trayIconFile(9) === 'tray-9.png')
+    ok('ten or more collapses to 9+',
+      trayIconFile(10) === 'tray-9plus.png' && trayIconFile(4021) === 'tray-9plus.png')
+    ok('a fractional count floors rather than inventing a file',
+      trayIconFile(3.7) === 'tray-3.png', trayIconFile(3.7))
+    ok('junk falls back to the plain icon',
+      trayIconFile(-1) === 'tray.png' && trayIconFile(NaN) === 'tray.png')
+
+    // Every file the mapping can name must actually ship.
+    const reachable = new Set(
+      [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 250].map((n) => trayIconFile(n))
+    )
+    const missing = Array.from(reachable).filter(
+      (file) => !existsSync(join(process.cwd(), 'build/icons/tray', file))
+    )
+    ok('every reachable tray icon exists in build/icons/tray',
+      missing.length === 0, missing.join(', ') || `${reachable.size} checked`)
+
+    // The exact number survives in the tooltip, where "9+" would lose it.
+    ok('the tooltip keeps the real number past nine',
+      trayTooltip(42) === 'Orbit Mail — 42 unread messages', trayTooltip(42))
+    ok('the tooltip is singular for one', trayTooltip(1).endsWith('1 unread message'), trayTooltip(1))
+    ok('an empty inbox gets a plain tooltip', trayTooltip(0) === 'Orbit Mail', trayTooltip(0))
+  }
+
+  // -------------------------------------------------------------------------
   section('OAuth: the loopback listener accepts only our own callback')
   // -------------------------------------------------------------------------
   {

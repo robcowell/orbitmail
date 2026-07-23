@@ -19,7 +19,11 @@ export function getAppIconPath(): string | undefined {
 
 export function configureLinuxDesktopIntegration(): void {
   if (process.platform !== 'linux') return
-  app.commandLine.appendSwitch('class', 'orbit-mail')
+  // No `--class` switch here: it claimed to set WM_CLASS to "orbit-mail", but
+  // `app.setName('Orbit Mail')` runs before the window is created and wins, so
+  // the window has always announced "orbit mail", "Orbit Mail". Keeping the
+  // switch only made the desktop files look correct when they were not — see
+  // the StartupWMClass check in the suite, which pins them to the real name.
   // Electron wants the *.desktop file name here, suffix included — its docs for
   // the Linux badge/progress APIs say to "specify the `*.desktop` file name".
   // Stripping it, as this used to, pointed libunity at an entry that does not

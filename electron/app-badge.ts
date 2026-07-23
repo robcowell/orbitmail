@@ -4,6 +4,7 @@ import { promisify } from 'util'
 import { totalUnreadCount } from '../shared/folders'
 import { listAccounts, listFolders } from './services/db-service'
 import { LINUX_DESKTOP_ENTRY_ID } from './app-icon'
+import { updateTrayUnread } from './tray'
 
 const execFileAsync = promisify(execFile)
 
@@ -75,6 +76,9 @@ export function updateAppBadge(mainWindow: BrowserWindow | null): void {
   }
 
   void updateUnityLauncherBadge(count)
+
+  // The surface that actually shows on desktops ignoring LauncherEntry.
+  updateTrayUnread(count)
 
   const title = count > 0 ? `Orbit Mail (${count})` : 'Orbit Mail'
   mainWindow?.setTitle(title)

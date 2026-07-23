@@ -197,6 +197,17 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   applet's own window-count or *notification* badge — not to Orbit Mail. The
   window title is the reliable surface on those desktops.
 
+  **The tray is the surface that works everywhere.** `tray.ts` registers a
+  StatusNotifierItem (Mint bridges these to the panel with `xapp-sn-watcher`),
+  and `updateAppBadge` drives it alongside the title and the launcher signal.
+  Electron's `Tray` has no text label on Linux — `setTitle` is macOS-only — so
+  the number is *in the image*: `npm run icons` pre-renders `build/icons/tray/`
+  (`tray.png`, `tray-1.png` … `tray-9.png`, `tray-9plus.png`) and `trayIconFile`
+  picks one, clamping past nine because two digits are a smudge at 22px. The
+  exact count survives in the tooltip. The image is only swapped when the count
+  crosses into a different icon, since redrawing on every sync makes some panels
+  flicker.
+
   Attribution depends on `StartupWMClass` matching the window's real `WM_CLASS`,
   which Chromium derives from the name `main.ts` passes to `app.setName()` on
   Linux: **`Orbit Mail`**, not the package name. It read `orbit-mail` in both the
@@ -466,7 +477,7 @@ each other.
 | `npm run dev` | Start development server with hot reload |
 | `npm run build` | Build main, preload, and renderer for production |
 | `npm run preview` | Preview production build |
-| `npm run icons` | Regenerate PNG icons from `build/icon.svg` |
+| `npm run icons` | Regenerate PNG icons from `build/icon.svg`, including the numbered tray icons in `build/icons/tray/` |
 | `npm run install:desktop` | Install a dev `.desktop` launcher |
 | `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
 | `npm run test:store` | Renderer-store checks under plain node (see below) — no Docker, no Electron |
@@ -512,6 +523,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once, shares its Message-ID with the delivered copy, and does not carry `Bcc` in its headers. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning, and ordinary documents are not. |
 | OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
+| Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |

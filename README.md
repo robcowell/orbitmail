@@ -34,7 +34,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 - Light and dark mode
 - Snappy UI — optimistic read/star/flag/move actions, an instantly-painting reader, and a virtualized message list that stays smooth on large folders
 - Desktop notifications for new mail — showing the receiving account, sender name, and subject (truncated to fit)
-- Unread count in the window title, and on the taskbar / launcher on desktops that implement the Unity `LauncherEntry` API (Unity, KDE, GNOME with Dash-to-Dock). **Cinnamon does not** — its window-list applet ignores those signals, so there the title is the count you get
+- Unread count in three places: the window title, a **system tray icon** that shows the number on the icon itself (up to 9+, with the exact figure in its tooltip), and the taskbar / launcher on desktops implementing the Unity `LauncherEntry` API (Unity, KDE, GNOME with Dash-to-Dock). **Cinnamon ignores that last one** — its window-list applet has no support for those signals — which is why the tray icon exists
 - `mailto:` link handler — opens compose when enabled in preferences (not registered as the system default automatically)
 - Persistent UI state — selected folder/message, collapsed accounts, dark mode, window size
 - Offline-friendly — cached mail remains readable; status bar shows offline state

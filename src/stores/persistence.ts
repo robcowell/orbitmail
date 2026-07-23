@@ -45,12 +45,17 @@ export function scheduleSaveUiPreferences(patch?: Partial<UiPreferences>): void 
   }, 250)
 }
 
-export function saveUiPreferencesNow(): void {
+/**
+ * Persist immediately, and **return the promise**. Quit awaits this: it used to
+ * be fire-and-forget, so even a main process that waited for the flush call to
+ * return could still exit before the IPC behind it had landed.
+ */
+export async function saveUiPreferencesNow(): Promise<void> {
   if (saveTimer) {
     clearTimeout(saveTimer)
     saveTimer = null
   }
-  void window.orbitMail.preferences.saveUi(getUiSnapshot())
+  await window.orbitMail.preferences.saveUi(getUiSnapshot())
 }
 
 export function exposeFlushHook(): void {
@@ -59,6 +64,8 @@ export function exposeFlushHook(): void {
 
 declare global {
   interface Window {
-    __orbitMailFlush?: () => void
+    // Returns a promise so `executeJavaScript` resolves only once the write has
+    // actually happened, not merely once it has been asked for.
+    __orbitMailFlush?: () => Promise<void>
   }
 }

@@ -1285,16 +1285,46 @@ app.on('open-url', (event, url) => {
   }
 })
 
-app.on('before-quit', () => {
-  destroyTray()
-  // The raw .eml files written for forward-as-attachment are whole emails.
-  cleanupExportDir()
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.executeJavaScript(
-      'window.__orbitMailFlush?.()',
-      true
-    )
+// Quitting waits for the renderer to persist its UI state — which folder and
+// message were open, dark mode, the collapsed accounts. This used to fire the
+// flush and carry on quitting, so the last change before quit was routinely
+// lost: change a setting, quit, and it was as if you had not.
+let quitFlushed = false
+
+app.on('before-quit', (event) => {
+  const teardown = (): void => {
+    destroyTray()
+    // The raw .eml files written for forward-as-attachment are whole emails.
+    cleanupExportDir()
   }
+
+  if (quitFlushed || !mainWindow || mainWindow.isDestroyed()) {
+    teardown()
+    return
+  }
+
+  event.preventDefault()
+  quitFlushed = true
+
+  let finished = false
+  const finish = (): void => {
+    if (finished) return
+    finished = true
+    teardown()
+    app.quit()
+  }
+
+  // __orbitMailFlush returns the save's promise, so this resolves once the
+  // write has happened rather than once it has been requested.
+  mainWindow.webContents
+    .executeJavaScript('window.__orbitMailFlush?.()', true)
+    .catch(() => {
+      // A renderer that cannot flush must not keep the app open.
+    })
+    .finally(finish)
+
+  // A wedged renderer must never hold the app hostage.
+  setTimeout(finish, 2000)
 })
 
 app.on('window-all-closed', () => {

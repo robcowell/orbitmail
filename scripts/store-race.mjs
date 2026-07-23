@@ -117,7 +117,12 @@ const backend = {
   releaseGetThread: null,
   getFails: false,
   // Flipped on to make the server reject the next flag/star write.
-  writesFail: false
+  writesFail: false,
+  // Preference saves, and a gate for holding one open mid-flight.
+  savedUi: [],
+  completedSaves: 0,
+  holdSaveUi: false,
+  releaseSaveUi: null
 }
 
 function installWindowStub() {
@@ -176,7 +181,15 @@ function installWindowStub() {
           { id: 'f4', accountId: 'a1', imapPath: 'Projects', name: 'Projects', type: 'custom', unreadCount: 0, isVirtualView: false }
         ]
       },
-      preferences: { get: async () => ({}), saveUi: async () => {} },
+      preferences: {
+        get: async () => ({}),
+        saveUi: async (ui) => {
+          backend.savedUi.push(ui)
+          if (backend.holdSaveUi) await new Promise((r) => { backend.releaseSaveUi = r })
+          backend.completedSaves++
+          return ui
+        }
+      },
       ai: { getCachedAnalysis: async () => null }
     }
   }
@@ -194,8 +207,18 @@ async function main() {
     logLevel: 'silent'
   })
 
+  await build({
+    entryPoints: [join(root, 'src/stores/persistence.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'persistence.cjs'),
+    logLevel: 'silent'
+  })
+
   installWindowStub()
-  const store = createRequire(import.meta.url)(outfile)
+  const require = createRequire(import.meta.url)
+  const store = require(outfile)
   const state = () => store.useMailStore.getState()
 
   // -------------------------------------------------------------------------
@@ -585,6 +608,33 @@ async function main() {
   await deletingT4
   ok('a delete that lands late does not steal the reader',
     state().selectedThreadId === 't1', `selected=${state().selectedThreadId}`)
+
+  // -------------------------------------------------------------------------
+  section('Preferences: the quit flush can be waited on')
+  // -------------------------------------------------------------------------
+  // Quit calls window.__orbitMailFlush and waits for what it returns. That only
+  // means anything if the flush resolves when the write has *happened* — it used
+  // to fire the IPC and return immediately, so the last change before quit was
+  // routinely lost.
+  const persistence = require(join(outDir, 'persistence.cjs'))
+  persistence.exposeFlushHook()
+  ok('the flush hook is exposed for main to call', typeof window.__orbitMailFlush === 'function')
+
+  backend.holdSaveUi = true
+  backend.completedSaves = 0
+  const flushing = window.__orbitMailFlush()
+  ok('it returns something awaitable', typeof flushing?.then === 'function')
+
+  let settled = false
+  void flushing.then(() => { settled = true })
+  await tick()
+  ok('it has not resolved while the write is in flight', settled === false)
+
+  backend.releaseSaveUi?.()
+  await flushing
+  ok('it resolves once the write completes', backend.completedSaves === 1,
+    `${backend.completedSaves} completed`)
+  backend.holdSaveUi = false
 
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`

@@ -75,26 +75,52 @@ function readRawState(): PersistedAppState {
   }
 }
 
+let cachedState: PersistedAppState | null = null
+// What is actually on disk, so an unchanged save can skip the write.
+let persistedJson: string | null = null
+let writes = 0
+
 function writeRawState(state: PersistedAppState): void {
-  const db = getRawSqlite()
-  db.prepare(
-    `INSERT INTO app_preferences (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).run(PREFERENCES_KEY, JSON.stringify(state))
+  const json = JSON.stringify(state)
+  // Everything lives in one blob, so selecting a message rewrites the sender
+  // allowlists too. The debounced UI save fires on selection changes that often
+  // change nothing at all, so compare before writing.
+  if (json === persistedJson) return
+
+  getRawSqlite()
+    .prepare(
+      `INSERT INTO app_preferences (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    )
+    .run(PREFERENCES_KEY, json)
+  persistedJson = json
+  writes++
 }
 
-let cachedState: PersistedAppState | null = null
-
+/**
+ * The persisted state.
+ *
+ * Returns a **copy**: this used to hand out the cached object itself, so a
+ * caller mutating what it got — pushing to `mutedSenders`, say — silently
+ * changed the in-memory state without persisting it, leaving memory and disk
+ * disagreeing until the next write made the drift permanent.
+ */
 export function getAppState(): PersistedAppState {
   if (!cachedState) {
     cachedState = readRawState()
+    persistedJson = JSON.stringify(cachedState)
   }
-  return cachedState
+  return structuredClone(cachedState)
 }
 
 export function saveAppState(state: PersistedAppState): void {
-  cachedState = state
+  cachedState = structuredClone(state)
   writeRawState(state)
+}
+
+/** Test seam: how many times state has actually reached the database. */
+export function appStateWriteCount(): number {
+  return writes
 }
 
 export function patchAppState(patch: Partial<PersistedAppState>): PersistedAppState {

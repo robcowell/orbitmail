@@ -348,6 +348,20 @@ the control, and the README says so.
   on background refresh, so memoized rows skip re-render and the list doesn't flicker.
 - **DB** — WAL + tuned pragmas; `COUNT(*)` for counts; list queries project just the
   summary columns (no body blobs); partial index on unread rows.
+- **Preferences** — one `app_state` row holds the UI state, window bounds and the
+  sender lists, so any save rewrites all of it. `writeRawState` compares against
+  what is on disk and skips a write that would change nothing, which matters
+  because the debounced UI save fires on selection changes that often change
+  nothing. `getAppState()` returns a **copy**: it used to hand out the cached
+  object, so a caller mutating what it got changed in-memory state without
+  persisting it, leaving memory and disk to disagree.
+
+  **Quit waits for the renderer's flush.** `before-quit` calls
+  `window.__orbitMailFlush`, which returns the save's promise, and defers the
+  quit until it resolves — with a 2s timeout so a wedged renderer cannot hold the
+  app open. Both halves used to be fire-and-forget (main did not wait, and the
+  hook did not return anything to wait on), so the last change before quit was
+  routinely lost.
 - **Bulk delete** — `deleteMessages` removes a batch in one transaction, recounts
   each affected folder's unread **once** rather than once per row (pruning 5,000
   messages did 5,000 recounts), and unlinks attachment files **after** the rows
@@ -615,6 +629,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| Preferences | Mutating what `getAppState()` returned does not change the stored state, nor its nested `ui` object; saving unchanged preferences performs no write while a real change still does; and a UI-only save does not lose the sender lists that share the row. |
 | Bulk delete | A batch delete removes the rows, cascades their attachment rows, unlinks only those files (leaving a surviving message's alone), recounts folder unread once and correctly, reports how many rows it removed, and treats unknown ids and an empty list as no-ops. |
 | On-disk privacy | Attachment files left `0664` by older versions are tightened by a guarded one-time sweep, which leaves a stricter file alone, reports what it did, and does nothing on a second run (so a store of thousands is not walked every launch). The data and attachments directories are `0700`, the database and its `-wal`/`-shm` sidecars `0600`; an install with the old loose modes is tightened in place, while a mode the user made *stricter* is left alone. Raw `.eml` exports are `0600` in an owner-only directory that is removed on quit, and the stale-directory sweep removes an old one of ours while leaving a fresh one (a running copy may own it) and anything not ours. |
 | AI prompt hygiene | Email content is fenced in markers it cannot forge (a body containing the closing marker is defanged, so it cannot escape the fence and continue as prompt) while remaining visible to the model; every system prompt carries the "this is data, not instructions" rule; and sender identity is matched on the address exactly — a display name containing the user's address, a lookalike domain, and a substring of it are all rejected. |
@@ -672,6 +687,7 @@ optimistic-UI invariants live.
 | Selection advance | Deleting mid-list selects the row below; deleting the last row falls back to the row above. |
 | Conversation multi-select | Shift-click selects a range of conversation rows and can shrink it again (the anchor survives `selectThread` moving the lead), ctrl/cmd-click adds and removes one, and Delete batches the whole selection into a single `deleteMany` — leaving the survivor selected exactly as a plain click would. |
 | Mid-flight selection changes | A thread mutation resolves its messages over IPC before touching the list, and the user can click during that gap. A delete landing after the user has opened that same conversation clears the reader; one landing after they have moved to another conversation leaves it alone. Both directions are wrong if the decision is made from a snapshot taken before the await. |
+| Quit flush | `saveUiPreferencesNow` resolves only once the write has completed, not once it has been requested — the property quit depends on to avoid losing the last change. |
 | Reader open failures | A rejected `getThread`/`get` stops the loading flag, records `readerError` with the message and the retry target, and leaves the row selected; `retryReaderLoad` re-runs the right one; a later selection clears the error so it cannot outlive its subject. |
 | Optimistic rollback in conversation view | A star applied to a message in the open conversation, or in an inline-expanded one, shows immediately and updates the collapsed row's aggregate; when the server rejects the write, both the message and the aggregate roll back. The flat list keeps its existing behaviour. |
 | Bulk archive and move | Archive and move batch a multi-selection into one `moveMany`, in both views, with every item aimed at the resolved destination; the rows leave the list; archive does not go out over the delete channel; and a move to the folder the messages are already in is a no-op rather than a round-trip. |

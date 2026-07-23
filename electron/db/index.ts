@@ -76,6 +76,7 @@ function initTables(db: Database.Database): void {
       body_html TEXT,
       body_text TEXT,
       search_text TEXT,
+      server_uid TEXT,
       ai_analysis TEXT,
       ai_analysis_at INTEGER,
       sweep_cache TEXT,
@@ -218,6 +219,9 @@ function migrateSchema(db: Database.Database): void {
   }
   if (!messageNames.has('search_text')) {
     db.exec('ALTER TABLE messages ADD COLUMN search_text TEXT')
+  }
+  if (!messageNames.has('server_uid')) {
+    db.exec('ALTER TABLE messages ADD COLUMN server_uid TEXT')
   }
 
   // These depend on the thread_id column above existing, so they must run after

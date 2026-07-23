@@ -279,6 +279,22 @@ the control, and the README says so.
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
 
+### POP3 identity
+
+POP3 has no UIDs — a message is identified by its **UIDL** string — but the
+`messages.uid` column is an integer, modelled on IMAP. That integer is a 32-bit
+hash of the UIDL, and hashes collide: roughly 1% at 10k messages. Every decision
+used to be made on it, so a collision made new mail look already-synced and
+pointed `DELE` at whichever message happened to hash the same. POP3 has no
+trash, so that deletion is unrecoverable.
+
+The UIDL is now stored in `messages.server_uid` and is what POP3 identity means:
+`getFolderServerUidSet` decides what is already synced, and
+`deletePop3MessageOnServer` takes the UIDL itself. The hash stays only to fill
+the integer column and keep the `(folder_id, uid)` index happy. A message synced
+before this column existed has no `server_uid`, so a server-side delete of it
+**refuses** rather than guessing — a wrong guess deletes someone's mail.
+
 ### Threading
 
 - Each message stores `in_reply_to`, `references`, and a derived `thread_id`
@@ -647,6 +663,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| POP3 identity | The UIDL is stored rather than only hashed; known messages are recognised by UIDL and an unseen one is not mistaken for a known one; a message resolves to its own UIDL for a delete and never another's; and a message synced before the column existed refuses to be deleted server-side rather than guessing. |
 | IMAP pool | A usable client is kept and not closed; an unusable one is not reused *and* its socket is closed; a `close()` that throws does not propagate; no client is simply no client. |
 | Uncaught errors | The IMAP socket timeouts the handler exists for are still suppressed (by code, by either spelling of it, and by message), while a real fault, a lookalike message and a non-error are not; the message shown to the user names the fault, says what to do, survives an empty message, and is truncated rather than filling the screen. |
 | Preferences | Mutating what `getAppState()` returned does not change the stored state, nor its nested `ui` object; saving unchanged preferences performs no write while a real change still does; and a UI-only save does not lose the sender lists that share the row. |

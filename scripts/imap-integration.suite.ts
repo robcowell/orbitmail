@@ -787,6 +787,59 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('POP3: identity is the UIDL, not a hash of it')
+  // -------------------------------------------------------------------------
+  {
+    // POP3 has no UIDs, so a 32-bit hash of the UIDL filled the integer column.
+    // It collides — ~1% at 10k messages — and every decision was made on it: a
+    // collision made new mail look already-synced, and pointed DELE at whichever
+    // message hashed the same. POP3 has no trash, so that is unrecoverable.
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+    const folder = db.upsertFolder(account.id, 'Pop3Ident', 'Pop3Ident', 'inbox')
+
+    const first = db.upsertMessage({
+      folderId: folder.id, accountId: account.id, uid: 4242,
+      serverUid: 'UIDL-AAA', from: 'a@x', to: 'me@x', subject: 'First',
+      snippet: '', date: 1000, isRead: false, isStarred: false, hasAttachments: false
+    })
+    // A second message that hashes to the same integer — the collision case.
+    const second = db.upsertMessage({
+      folderId: folder.id, accountId: account.id, uid: 9999,
+      serverUid: 'UIDL-BBB', from: 'b@x', to: 'me@x', subject: 'Second',
+      snippet: '', date: 2000, isRead: false, isStarred: false, hasAttachments: false
+    })
+
+    ok('the UIDL is stored, not just hashed away',
+      (raw.prepare('SELECT server_uid FROM messages WHERE id = ?').get(first.id) as { server_uid: string }).server_uid === 'UIDL-AAA')
+
+    const known = db.getFolderServerUidSet(folder.id)
+    ok('known messages are recognised by UIDL',
+      known.has('UIDL-AAA') && known.has('UIDL-BBB'), Array.from(known).join(', '))
+    ok('an unseen UIDL is not mistaken for a known one', !known.has('UIDL-CCC'))
+
+    ok('a message resolves to its own UIDL for a server-side delete',
+      db.getMessageServerUid(second.id) === 'UIDL-BBB', String(db.getMessageServerUid(second.id)))
+    ok('and never to another message’s',
+      db.getMessageServerUid(first.id) !== db.getMessageServerUid(second.id))
+
+    // A message with no recorded UIDL must refuse rather than guess.
+    const legacy = db.upsertMessage({
+      folderId: folder.id, accountId: account.id, uid: 7,
+      from: 'c@x', to: 'me@x', subject: 'Pre-upgrade', snippet: '',
+      date: 3000, isRead: false, isStarred: false, hasAttachments: false
+    })
+    ok('a message synced before this has no server id', db.getMessageServerUid(legacy.id) === null)
+    const refused = await rejects(() =>
+      sync.deleteMessageOnServer(account.id, 'pop3', 'INBOX', 7, null)
+    )
+    ok('deleting it refuses instead of guessing at one',
+      !!refused && /server id was never recorded/.test(refused.message), refused?.message)
+
+    raw.prepare('DELETE FROM messages WHERE folder_id = ?').run(folder.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('IMAP pool: an unusable client is closed, not just dropped')
   // -------------------------------------------------------------------------
   {

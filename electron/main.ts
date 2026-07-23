@@ -16,6 +16,7 @@ import type {
   Provider
 } from '../shared/types'
 import { configureLinuxDesktopIntegration, getAppIconPath } from './app-icon'
+import { initTray, destroyTray } from './tray'
 import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
@@ -1172,6 +1173,8 @@ if (!gotSingleInstanceLock) {
     // stays here since it's cheap.
     initSyncFromPersistence()
     createMainWindow()
+    // Tray before the first badge update, so that update paints the count.
+    initTray(() => mainWindow)
     updateAppBadge(mainWindow)
     configureMailtoProtocolClient(getAppState().handleMailtoLinks === true)
     handleMailtoArgv(process.argv)
@@ -1237,6 +1240,7 @@ app.on('open-url', (event, url) => {
 })
 
 app.on('before-quit', () => {
+  destroyTray()
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.executeJavaScript(
       'window.__orbitMailFlush?.()',

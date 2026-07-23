@@ -787,6 +787,113 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('mbox export: escaped, byte-exact, and streamed')
+  // -------------------------------------------------------------------------
+  {
+    // An mbox splits messages on lines beginning "From ", so a body containing
+    // one silently becomes two messages in every reader — including on import
+    // back. The old writer also decoded sources as UTF-8, mangling any body
+    // that was not.
+    const { escapeMboxBody, mboxFromLine, mboxEntry } = await import('../electron/services/mbox')
+
+    const body = Buffer.from('Hi\nFrom the desk of Bob\nBye\n', 'latin1')
+    const escaped = escapeMboxBody(body).toString('latin1')
+    ok('a From line inside a body is escaped',
+      escaped.includes('\n>From the desk of Bob'), JSON.stringify(escaped))
+    ok('the rest of the body is untouched',
+      escaped.startsWith('Hi\n') && escaped.endsWith('Bye\n'))
+
+    ok('a From line at the very start is escaped too',
+      escapeMboxBody(Buffer.from('From nowhere\n', 'latin1')).toString('latin1') === '>From nowhere\n')
+
+    // mboxrd: reversible, so an already-escaped line gains another marker
+    // rather than becoming indistinguishable from a real one.
+    ok('an already-escaped line gains a marker',
+      escapeMboxBody(Buffer.from('\n>From x\n', 'latin1')).toString('latin1') === '\n>>From x\n')
+    ok('a word merely starting with From is left alone',
+      !escapeMboxBody(Buffer.from('\nFrommage is cheese\n', 'latin1')).toString('latin1').includes('>'))
+
+    // Bytes are bytes: the old writer round-tripped through UTF-8.
+    const eightBit = Buffer.from([0x48, 0x69, 0x0a, 0xa3, 0xff, 0xfe, 0x0a])
+    ok('8-bit content survives byte for byte',
+      escapeMboxBody(eightBit).equals(eightBit), escapeMboxBody(eightBit).toString('hex'))
+
+    const line = mboxFromLine(new Date(Date.UTC(2026, 6, 23, 15, 4, 5)))
+    ok('the From line uses an asctime date',
+      line === 'From MAILER-DAEMON Thu Jul 23 15:04:05 2026\n', JSON.stringify(line))
+    ok('an unusable date does not produce Invalid Date',
+      !/Invalid/.test(mboxFromLine(new Date(NaN))), mboxFromLine(new Date(NaN)))
+
+    const entry = mboxEntry(Buffer.from('Subject: x\n\nbody', 'latin1'), new Date(0))
+    const asText = entry.toString('latin1')
+    ok('an entry starts with its separator', asText.startsWith('From MAILER-DAEMON '))
+    ok('and ends with a blank line, even when the source did not end in one',
+      asText.endsWith('body\n\n'), JSON.stringify(asText.slice(-12)))
+  }
+
+  // End to end against a real server: a message whose body contains a From line
+  // must still be one message in the file, and its bytes must survive.
+  {
+    const { exportMailboxToMbox } = await import('../electron/services/folder-actions')
+    const { readFileSync: readBytes, statSync: statFile, unlinkSync: rm } = await import('fs')
+    const box = 'MboxExport'
+    const client = rawClient()
+    await client.connect()
+    await client.mailboxCreate(box).catch(() => {})
+    const folder = db.upsertFolder(account.id, box, box, 'custom')
+
+    await client.append(
+      box,
+      Buffer.from(
+        [
+          'From: Sender <s@example.com>',
+          `To: Me <${EMAIL}>`,
+          'Subject: Contains a From line',
+          'Message-ID: <mbox-escape@example.com>',
+          `Date: ${new Date().toUTCString()}`,
+          '',
+          'Hello,',
+          'From the desk of Bob, a line that would split this message.',
+          'Regards',
+          ''
+        ].join('\r\n')
+      ),
+      ['\\Seen']
+    )
+    await client.append(
+      box,
+      Buffer.from(
+        [
+          'From: Other <o@example.com>',
+          `To: Me <${EMAIL}>`,
+          'Subject: Second',
+          'Message-ID: <mbox-second@example.com>',
+          `Date: ${new Date().toUTCString()}`,
+          '',
+          'Plain body',
+          ''
+        ].join('\r\n')
+      ),
+      ['\\Seen']
+    )
+    await client.logout()
+
+    const out = join(tmpdir(), 'orbit-mbox-export-probe.mbox')
+    const count = await exportMailboxToMbox(folder.id, out)
+    ok('both messages exported', count === 2, String(count))
+
+    const text = readBytes(out).toString('latin1')
+    const separators = text.split('\n').filter((l) => l.startsWith('From MAILER-DAEMON ')).length
+    ok('the file has one separator per message, not one per From line',
+      separators === 2, `${separators} separators`)
+    ok('the body’s From line is escaped in the file',
+      text.includes('>From the desk of Bob'), 'escaped')
+    ok('the export is owner-only', (statFile(out).mode & 0o777) === 0o600,
+      (statFile(out).mode & 0o777).toString(8))
+    rm(out)
+  }
+
+  // -------------------------------------------------------------------------
   section('POP3: identity is the UIDL, not a hash of it')
   // -------------------------------------------------------------------------
   {

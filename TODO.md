@@ -17,7 +17,6 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 - *(medium)* **POP3 UID is a 32-bit hash** (`pop3-sync.ts:41-48`, duplicated in `attachment-fetch.ts:191`) — ~1% collision chance at 10k messages. A collision silently skips a new message, or makes `DELE` delete the *wrong* message from the server.
 - *(medium)* **Out-of-window POP3 messages re-download forever** (`pop3-sync.ts:91-101`) — the UID-skip check runs before the window check and windowed-out messages are never stored, so up to 200 full `RETR`+parse cycles run every 20s.
 - *(medium)* **mbox export is lossy** (`folder-actions.ts:120-137`) — no `>From ` quoting (silently splits messages in every reader), whole folder materialized twice in memory, `toString('utf8')` corrupts 8-bit content.
-- *(low)* Bulk delete/prune paths are non-transactional and re-count folder unread per row; attachment files are unlinked before their DB rows.
 - *(low)* **Interactive IMAP ops still pay a cold reconnect.** `IDLE_CLOSE_MS` is 30s (`imap-pool.ts:16`), so a click after half a minute of inactivity waits for TCP + TLS + authentication, and an OAuth token refresh on Gmail. Raising it trades one longer-lived connection per account (Gmail allows 15; the app uses 2) for interactive latency. Measure before tuning.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
 - *(low)* The global `uncaughtException` handler logs and continues in an undefined state (`main.ts:114`); `void reconcileAllAccountsFlags(...)` at `imap-sync.ts:884` is the one `void` call site missing a `.catch()`.
@@ -116,6 +115,8 @@ does. Preserving that needs prefix or trigram tokenisation.
 - **Reply All** — replies to the sender plus all other To/Cc recipients (self and the original sender de-duplicated), exposed as a visible button in the single-message and thread reader headers and the toolbar, alongside the existing right-click context-menu entry.
 
 - **AI reply drafts** — tone-steered (Brief / Neutral / Detailed) reply drafts grounded in the whole conversation, opened in the composer for editing.
+
+- **Bulk delete is transactional, and ordered safely** (#94) — `deleteMessages` removes a batch in one transaction, recounts each affected folder's unread once instead of once per row (a 5,000-message prune did 5,000 recounts), and unlinks attachment files *after* the rows are gone. The old order left rows pointing at deleted files if a crash landed in between — an attachment the reader offers and cannot open; the new order leaves files with no rows, which is wasted space and nothing more. `clearFolderMessages` follows the same rule, and the per-message file helper it shared with the old path is gone. Not addressed: files orphaned by crashes *before* this change stay on disk, with no sweep to reclaim them.
 
 ## Security & correctness audit (2026-07-21)
 

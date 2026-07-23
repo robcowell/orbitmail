@@ -267,6 +267,59 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Bulk delete: one transaction, and files only after their rows')
+  // -------------------------------------------------------------------------
+  {
+    // Deleting row-by-row unlinked each message's attachment files *before*
+    // removing the row, so a crash in between left rows offering an attachment
+    // that no longer existed. It also recounted folder unread once per row.
+    const { existsSync: exists, writeFileSync: write } = await import('fs')
+    const raw = (await import('../electron/db')).getRawSqlite()
+    const folder = db.upsertFolder(account.id, 'BulkDelete', 'BulkDelete', 'custom')
+
+    const ins = raw.prepare(
+      `INSERT INTO messages (id, folder_id, account_id, uid, from_addr, to_addr, subject, snippet, date, is_read)
+       VALUES (@id, @f, @a, @uid, 'a@x', 'b@x', @subj, '', @date, @read)`
+    )
+    const insAtt = raw.prepare(
+      `INSERT INTO attachments (id, message_id, filename, mime_type, size, local_path)
+       VALUES (@id, @m, @name, 'application/pdf', 10, @path)`
+    )
+
+    const files: string[] = []
+    for (let i = 1; i <= 4; i++) {
+      ins.run({ id: `bulk-${i}`, f: folder.id, a: account.id, uid: 8000 + i, subj: `Bulk ${i}`, date: 1000 + i, read: i > 2 ? 1 : 0 })
+      const path = join((await import('../electron/db')).getAttachmentsDir(), `bulk-att-${i}.pdf`)
+      write(path, 'x')
+      files.push(path)
+      insAtt.run({ id: `bulk-att-${i}`, m: `bulk-${i}`, name: `bulk-${i}.pdf`, path })
+    }
+    db.recalculateFolderUnread(folder.id)
+    const unreadBefore = db.listFolders(account.id).find((f) => f.id === folder.id)?.unreadCount
+    ok('the fixture starts with two unread', unreadBefore === 2, String(unreadBefore))
+
+    const removed = db.deleteMessages(['bulk-1', 'bulk-2', 'bulk-3'])
+    ok('it reports how many rows it removed', removed === 3, String(removed))
+    ok('the rows are gone',
+      db.listMessages(folder.id, 50, 0).map((m) => m.id).join(',') === 'bulk-4',
+      db.listMessages(folder.id, 50, 0).map((m) => m.id).join(','))
+    ok('their attachment rows cascade',
+      (raw.prepare('SELECT COUNT(*) AS n FROM attachments WHERE message_id LIKE ?').get('bulk-%') as { n: number }).n === 1)
+    ok('their attachment files are unlinked',
+      !exists(files[0]) && !exists(files[1]) && !exists(files[2]))
+    ok('the surviving message keeps its file', exists(files[3]))
+
+    const unreadAfter = db.listFolders(account.id).find((f) => f.id === folder.id)?.unreadCount
+    ok('folder unread is recounted once, and correctly', unreadAfter === 0, String(unreadAfter))
+
+    // Ids that are not there are skipped rather than counted or thrown over.
+    ok('unknown ids are ignored', db.deleteMessages(['does-not-exist']) === 0)
+    ok('an empty list is a no-op', db.deleteMessages([]) === 0)
+
+    db.deleteMessages(['bulk-4'])
+  }
+
+  // -------------------------------------------------------------------------
   section('DB maintenance: reclaim freelist space when it grows large')
   // -------------------------------------------------------------------------
   {

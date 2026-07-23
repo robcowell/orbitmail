@@ -1,5 +1,5 @@
 import { writeFileSync } from 'fs'
-import type { AccountInfo, Provider } from '../../shared/types'
+import type { Account, AccountInfo, Provider } from '../../shared/types'
 import { accountUnreadCount } from '../../shared/folders'
 import {
   clearFolderMessages,

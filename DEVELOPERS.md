@@ -279,6 +279,26 @@ the control, and the README says so.
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
 
+### Mailbox export (mbox)
+
+An mbox file separates messages with a line beginning `From `, so any line
+*inside* a message that begins the same way splits it in every reader — and on
+import back. `mbox.ts` escapes them mboxrd-style (`>*From ` gains one more `>`),
+which is reversible: mboxo escapes only a bare `From `, leaving a body that
+genuinely contains `>From ` indistinguishable from an escaped one.
+
+Everything is done in `Buffer`s. The old writer decoded each source with
+`toString('utf8')`, so a body in ISO-8859-1, or any raw 8-bit byte, came out as
+mojibake. Line scanning goes through `latin1` precisely because it maps bytes 1:1
+in both directions. The `From ` line carries an asctime date (`Thu Jul 23
+15:04:05 2026`), which is the format mbox specifies — `toUTCString()` produces
+commas and a timezone that some readers reject.
+
+Export streams message by message to an owner-only file. It previously used
+`fetchAll` (every source in memory), pushed each into an array (again), and
+`join`ed the lot into one string (a third copy) before writing — three copies of
+a mailbox that can be gigabytes.
+
 ### POP3 identity
 
 POP3 has no UIDs — a message is identified by its **UIDL** string — but the
@@ -663,6 +683,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| mbox export | `From ` lines inside a body are escaped, at the start of a body too, already-escaped lines gain a marker (mboxrd, so it is reversible), and a word merely starting with "From" is untouched; 8-bit content survives byte for byte; the separator carries an asctime date and copes with an unusable one; and an end-to-end export of a message *containing* a From line produces one separator per message, not one per line, in an owner-only file. |
 | POP3 identity | The UIDL is stored rather than only hashed; known messages are recognised by UIDL and an unseen one is not mistaken for a known one; a message resolves to its own UIDL for a delete and never another's; and a message synced before the column existed refuses to be deleted server-side rather than guessing. |
 | IMAP pool | A usable client is kept and not closed; an unusable one is not reused *and* its socket is closed; a `close()` that throws does not propagate; no client is simply no client. |
 | Uncaught errors | The IMAP socket timeouts the handler exists for are still suppressed (by code, by either spelling of it, and by message), while a real fault, a lookalike message and a non-error are not; the message shown to the user names the fault, says what to do, survives an empty message, and is truncated rather than filling the screen. |

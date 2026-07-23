@@ -1,4 +1,6 @@
-import { writeFileSync } from 'fs'
+import { closeSync, openSync, writeSync } from 'fs'
+import { mboxEntry } from './mbox'
+import { PRIVATE_FILE_MODE } from '../db/permissions'
 import type { Account, AccountInfo, Provider } from '../../shared/types'
 import { accountUnreadCount } from '../../shared/folders'
 import {
@@ -119,23 +121,23 @@ export async function exportMailboxToMbox(
 
   try {
     const lock = await client.getMailboxLock(folder.imapPath)
+    // Streamed message by message: fetchAll held every source in memory, the
+    // parts array held them again, and join() built the whole mailbox as one
+    // more string — three copies of a folder that can be gigabytes.
+    // Owner-only, like everything else that is a copy of the user's mail.
+    const handle = openSync(destinationPath, 'w', PRIVATE_FILE_MODE)
     try {
-      const messages = await client.fetchAll({ all: true }, { uid: true, source: true }, { uid: true })
-      const parts: string[] = []
-
-      for (const msg of messages) {
+      for await (const msg of client.fetch(
+        { all: true },
+        { uid: true, source: true, internalDate: true },
+        { uid: true }
+      )) {
         if (!msg.source) continue
-        const fromLine = `From MAILER-DAEMON ${new Date(msg.internalDate ?? Date.now()).toUTCString()}`
-        parts.push(fromLine)
-        parts.push(msg.source.toString('utf8'))
-        if (!parts[parts.length - 1].endsWith('\n')) {
-          parts.push('')
-        }
+        writeSync(handle, mboxEntry(msg.source, msg.internalDate ?? new Date()))
         exported++
       }
-
-      writeFileSync(destinationPath, parts.join('\n'), 'utf8')
     } finally {
+      closeSync(handle)
       lock.release()
     }
   } finally {

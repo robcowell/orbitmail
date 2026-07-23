@@ -186,21 +186,28 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
 - **Folder roles** — a folder's `type` (inbox/sent/drafts/trash/junk) decides where
   Delete, Archive and Junk send mail, so getting it wrong silently breaks delete.
   It is resolved per account by `detectFolderTypes` (`imap-sync.ts`), which ranks
-  the evidence rather than mixing it: a SPECIAL-USE flag beats any name match,
-  and **depth breaks ties within a class** — shallowest wins, first-listed on a
-  draw. Everything that matched a role but did not win it drops to `custom`. The
-  English name map (`FOLDER_NAME_MAP`) is the fallback for servers that advertise
-  no SPECIAL-USE.
+  candidates rather than mixing the evidence. Most significant first:
 
-  Depth matters because delegated and imported mailboxes get grafted into the
-  user's own tree, flags and all: an Exchange account carrying an old IMAP tree
-  under `INBOX/admin/…` offers a second `Sent Items`, also flagged `\Sent`, and
-  the empty stranger's copy used to win — Sent showed nothing, and sent mail
-  filed into it. Depth must not outrank a flag, though, or Gmail's nested
-  `[Gmail]/Bin` loses to a top-level user folder called "Deleted Items", which is
-  the bug the flag ordering fixed in the first place. Servers that namespace
-  everything under `INBOX.` are still fine: depth only compares rivals for the
-  same role, and it is measured with the server's own hierarchy delimiter. Types are re-evaluated on **every** sync — `upsertFolder` updates
+  1. **Ours before a grafted mailbox's.** A folder two or more levels under
+     `INBOX` (`INBOX/admin/Sent Items`) is a delegate or an imported account
+     living inside our tree. It brings its own SPECIAL-USE flags, so a flag there
+     says nothing about *our* Sent folder. One level under `INBOX` is left alone —
+     Courier-style servers namespace everything that way and it is the account's
+     own.
+  2. **A SPECIAL-USE flag before a name guess.** This ordering is what makes
+     Gmail's nested `[Gmail]/Bin` outrank a top-level user folder called "Deleted
+     Items", so depth must never be allowed to outrank a flag.
+  3. **Shallowest path**, measured with the server's own hierarchy delimiter.
+  4. First-listed on a draw, so a stable server listing gives a stable role.
+
+  Everything that matched a role but did not win it drops to `custom`.
+  `FOLDER_NAME_MAP` is the fallback for servers advertising no SPECIAL-USE.
+
+  `resolveRoleMailbox` applies the same ranking to a raw mailbox list, and
+  send-filing (`appendToSentFolder`) and the post-send sync use it. They each
+  used to take "the first mailbox that looks Sent", so on an account with a
+  grafted mailbox they filed sent copies into somebody else's folder *and*
+  disagreed with the sidebar. Types are re-evaluated on **every** sync — `upsertFolder` updates
   the stored type — because a folder mis-typed once would otherwise stay that way
   forever.
 
@@ -497,7 +504,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Unique-index dedupe | A duplicate `(folder_id, uid)` row (a pre-constraint DB) blocks `CREATE UNIQUE INDEX`; `dedupeMessagesByFolderUid` collapses each key to one row — keeping the one carrying AI analysis/sweep cache — so the index builds, and is a no-op on a healthy table. |
 | Attachment metadata | `toAttachmentMeta` preserves filename/type/size (including the size-from-`content.length` fallback) and returns no content Buffer, so the sync batch can drop the parsed buffers instead of retaining them. |
 | Attachment index | `attachments.message_id` has an index, and the planner uses it (`EXPLAIN QUERY PLAN` shows the index, not a `SCAN`) — so a message-id lookup and the delete cascade are not full scans. |
-| Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. Depth breaks ties within a class — the account's own `Sent Items` beats a grafted `INBOX/admin/Sent Items` even when both are flagged, an unflagged lookalike deeper still is untouched, a flagged deep folder still beats a shallow name match, equally shallow rivals keep first-listed, and depth is measured with the server's delimiter (`.` as well as `/`). |
+| Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. The account's own `Sent Items` beats a grafted `INBOX/admin/Sent Items` when both are flagged *and* when only the grafted one is; a folder one level under `INBOX` keeps its role (Courier namespacing); an unflagged lookalike deeper still is untouched; a flagged deep folder still beats a shallow name match; equally shallow rivals keep first-listed; depth is measured with the server's delimiter (`.` as well as `/`); and `resolveRoleMailbox` — which send-filing uses — returns the same mailbox the folder list does. |
 | Delete durability | Deleting the newest message in a folder (which lowers the local max UID, so the next sync searches a range starting past the end) does not re-import it on the following syncs, does not duplicate the survivors, and does not wedge the watermark for mail that arrives afterwards. A move leaves the source and lands in the destination exactly once. |
 | Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). |
 

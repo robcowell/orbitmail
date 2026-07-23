@@ -57,7 +57,7 @@ The docs and what each is for:
 | `README.md` | someone deciding whether to use or trust the app — **plain language, no internals** | user-visible behaviour, limitations, privacy or security posture as a *user* experiences it |
 | `INSTALL.md` | someone installing it, or building their own copy | install/build steps, OAuth app registration, updating and removing |
 | `DEVELOPERS.md` | **authoritative deep reference** | architecture, schema, sync model, security controls, scripts, test coverage, packaging |
-| `TODO.md` | backlog and decisions | anything fixed, deferred, or decided against — record decisions, not just tasks |
+| `TODO.md` | backlog and decisions | anything fixed, deferred, or decided against — record decisions, not just tasks. **Outstanding work stays at the top**, completed work under `# Done` with its reasoning intact |
 | `CLAUDE.md` | this file, for agents | conventions and traps that are non-obvious from the code |
 
 Specific triggers — if the change does any of these, the docs move too:

@@ -58,10 +58,51 @@ const ROWS = [
   summaryRow('m3', 3, 1000, 'Three')
 ]
 
+// Conversation rows, for the threaded view. Each is a one-message thread here —
+// enough to exercise selection and bulk actions without modelling replies.
+function threadRow(threadId, date, subject) {
+  return {
+    threadId,
+    accountId: 'a1',
+    latestMessageId: `${threadId}-m`,
+    from: 'Sender <s@example.com>',
+    subject,
+    snippet: '',
+    date,
+    isStarred: false,
+    flagColor: null,
+    hasAttachments: false,
+    messageCount: 1,
+    hasUnread: false,
+    participants: ['Sender']
+  }
+}
+
+const THREADS = [
+  threadRow('t1', 5000, 'Thread one'),
+  threadRow('t2', 4000, 'Thread two'),
+  threadRow('t3', 3000, 'Thread three'),
+  threadRow('t4', 2000, 'Thread four')
+]
+
+function threadMessage(threadId) {
+  return {
+    ...summaryRow(`${threadId}-m`, 90, 1000, `Message of ${threadId}`),
+    threadId,
+    cc: '',
+    references: null,
+    bodyHtml: null,
+    bodyText: null,
+    attachments: []
+  }
+}
+
 // The stubbed IPC surface, standing in for the main process + SQLite.
 const backend = {
   db: [...ROWS],
-  pendingMove: null
+  threads: [...THREADS],
+  pendingMove: null,
+  deleteManyCalls: []
 }
 
 function installWindowStub() {
@@ -72,8 +113,13 @@ function installWindowStub() {
       messages: {
         list: async () => [...backend.db],
         count: async () => backend.db.length,
-        listThreads: async () => [],
-        countThreads: async () => 0,
+        listThreads: async () => [...backend.threads],
+        countThreads: async () => backend.threads.length,
+        getThread: async (_accountId, threadId) => [threadMessage(threadId)],
+        deleteMany: async (items) => {
+          backend.deleteManyCalls.push(items)
+          return { deleted: items.length, failed: 0 }
+        },
         get: async (id) => {
           const row = backend.db.find((m) => m.id === id)
           if (!row) return null
@@ -188,6 +234,71 @@ async function main() {
   backend.db = backend.db.filter((m) => m.id !== 'm3')
   backend.pendingMove.resolve()
   await advancingLast
+
+  // -------------------------------------------------------------------------
+  section('Conversation view: rows multi-select like flat rows')
+  // -------------------------------------------------------------------------
+  // Thread rows went straight to selectThread, so shift-click had nothing to
+  // extend and bulk actions were impossible in the default (threaded) view.
+  state().setThreadedView(true)
+  await store.refreshMessages()
+  ok('the thread list loaded', state().threads.length === 4, `${state().threads.length} rows`)
+
+  await store.selectThread('a1', 't1')
+  ok('a plain click selects one conversation',
+    state().selectedThreadKeys.join(',') === 'a1 t1', state().selectedThreadKeys.join(','))
+
+  store.selectThreadRange('a1', 't3')
+  await tick()
+  ok('shift-click selects the whole range',
+    state().selectedThreadKeys.join(',') === 'a1 t1,a1 t2,a1 t3',
+    state().selectedThreadKeys.join(','))
+  ok('the clicked row leads the selection', state().selectedThreadId === 't3',
+    String(state().selectedThreadId))
+
+  store.selectThreadRange('a1', 't1')
+  await tick()
+  ok('dragging the range back up shrinks it',
+    state().selectedThreadKeys.join(',') === 'a1 t1', state().selectedThreadKeys.join(','))
+
+  await store.selectThread('a1', 't1')
+  store.toggleThreadSelection('a1', 't3')
+  await tick()
+  ok('ctrl-click adds a non-adjacent conversation',
+    state().selectedThreadKeys.join(',') === 'a1 t1,a1 t3', state().selectedThreadKeys.join(','))
+  store.toggleThreadSelection('a1', 't3')
+  await tick()
+  ok('ctrl-clicking it again removes it',
+    state().selectedThreadKeys.join(',') === 'a1 t1', state().selectedThreadKeys.join(','))
+
+  // -------------------------------------------------------------------------
+  section('Conversation view: Delete acts on every selected conversation')
+  // -------------------------------------------------------------------------
+  await store.selectThread('a1', 't1')
+  store.selectThreadRange('a1', 't3')
+  await tick()
+  backend.deleteManyCalls = []
+  await store.deleteSelectedThreads()
+  ok('one batched delete call covers the selection',
+    backend.deleteManyCalls.length === 1 && backend.deleteManyCalls[0].length === 3,
+    `${backend.deleteManyCalls.length} call(s), ${backend.deleteManyCalls[0]?.length} item(s)`)
+  ok('every selected row leaves the list',
+    state().threads.map((t) => t.threadId).join(',') === 't4',
+    state().threads.map((t) => t.threadId).join(','))
+  // The survivor is selected exactly as a plain click would leave it — one key,
+  // not the stale run and not an empty selection with a populated reader.
+  ok('the selection is exactly the survivor',
+    state().selectedThreadKeys.join(',') === 'a1 t4', state().selectedThreadKeys.join(','))
+  ok('the survivor takes the selection', state().selectedThreadId === 't4',
+    String(state().selectedThreadId))
+
+  // A single-row selection still goes through the plain single-thread delete.
+  backend.deleteManyCalls = []
+  await store.selectThread('a1', 't4')
+  await store.deleteSelectedThreads()
+  ok('a lone selection deletes just that conversation',
+    backend.deleteManyCalls.length === 1 && backend.deleteManyCalls[0].length === 1,
+    `${backend.deleteManyCalls[0]?.length} item(s)`)
 
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`

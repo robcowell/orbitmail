@@ -93,7 +93,7 @@
           "Name": "Orbit Mail",
           "GenericName": "Email Client",
           "Comment": "Desktop email client for Linux with IMAP, SMTP, and OAuth",
-          "StartupWMClass": "orbit-mail",
+          "StartupWMClass": "Orbit Mail",
           "Categories": "Network;Email;",
           "MimeType": "x-scheme-handler/mailto;",
           "Keywords": "email;mail;inbox;imap;smtp;gmail;outlook;"

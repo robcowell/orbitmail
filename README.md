@@ -34,7 +34,7 @@ A desktop email client for Linux with an Apple Mail–inspired three-pane layout
 - Light and dark mode
 - Snappy UI — optimistic read/star/flag/move actions, an instantly-painting reader, and a virtualized message list that stays smooth on large folders
 - Desktop notifications for new mail — showing the receiving account, sender name, and subject (truncated to fit)
-- Unread count badge on the taskbar / launcher and in the window title
+- Unread count in the window title, and on the taskbar / launcher on desktops that implement the Unity `LauncherEntry` API (Unity, KDE, GNOME with Dash-to-Dock). **Cinnamon does not** — its window-list applet ignores those signals, so there the title is the count you get
 - `mailto:` link handler — opens compose when enabled in preferences (not registered as the system default automatically)
 - Persistent UI state — selected folder/message, collapsed accounts, dark mode, window size
 - Offline-friendly — cached mail remains readable; status bar shows offline state
@@ -239,6 +239,15 @@ Click **Retry**. For auth-related errors, use **Re-authenticate** to open the ad
 
 **Inbox badge and message list out of sync**  
 Click **Refresh** in the toolbar or **Sync now** on the account. If it persists, restart the app.
+
+**A number on the taskbar icon that does not match the unread count**  
+Check what is drawing it before assuming it is Orbit Mail's. The window title
+carries the total across all accounts, while a folder's badge counts only that
+folder — 6 in an inbox and 9 in the title is normal with several accounts. On
+Cinnamon the number on the panel icon is usually the desktop's own *notification*
+badge (Menu → Preferences → Applets → Grouped window list → "Show notification
+badges"), which counts pending notifications, not mail; Cinnamon ignores the
+launcher-count signal entirely.
 
 **Links in messages do not open**  
 Orbit Mail opens links in your default browser; check that a default browser is set in your desktop environment.

@@ -40,7 +40,11 @@ Type=Application
 Categories=Network;Email;
 Keywords=email;mail;inbox;imap;smtp;
 StartupNotify=true
-StartupWMClass=orbit-mail
+# Must match the window's real WM_CLASS, which Chromium derives from the name
+# main.ts passes to app.setName() on Linux — "Orbit Mail", not the package name.
+# A mismatch means the desktop cannot tie the running window to this entry:
+# pinning and grouping break, and so does any launcher badge.
+StartupWMClass=Orbit Mail
 MimeType=x-scheme-handler/mailto;
 EOF
 

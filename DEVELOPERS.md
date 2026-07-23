@@ -183,6 +183,25 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   folder of large attachments no longer retains gigabytes of buffers until the
   write (they are re-fetched on open). #67.
 - **Unread counts** — recalculated from local message read state after fetch (kept in sync with the message list)
+- **Launcher badge** — `updateAppBadge` (`app-badge.ts`) computes one total
+  (`totalUnreadCount` across accounts) and applies it to the window title,
+  `app.setBadgeCount`, and a Unity `LauncherEntry` D-Bus signal. The title and
+  the launcher therefore always carry the same number; a folder's sidebar badge
+  is a different, smaller thing — that folder alone.
+
+  **Not every desktop shows it.** The signal only appears where the panel
+  implements the Unity `LauncherEntry` API — Unity, KDE, GNOME with Dash-to-Dock.
+  **Cinnamon does not**: `grouped-window-list@cinnamon.org` contains no
+  `LauncherEntry` handling at all, so the emit is correct, succeeds, and is
+  ignored. Any number on the panel icon there belongs to the desktop — the
+  applet's own window-count or *notification* badge — not to Orbit Mail. The
+  window title is the reliable surface on those desktops.
+
+  Attribution depends on `StartupWMClass` matching the window's real `WM_CLASS`,
+  which Chromium derives from the name `main.ts` passes to `app.setName()` on
+  Linux: **`Orbit Mail`**, not the package name. It read `orbit-mail` in both the
+  dev launcher and the packaged entry, so no desktop could tie the window to the
+  entry. `npm run test:imap` now checks all three agree.
 - **Folder roles** — a folder's `type` (inbox/sent/drafts/trash/junk) decides where
   Delete, Archive and Junk send mail, so getting it wrong silently breaks delete.
   It is resolved per account by `detectFolderTypes` (`imap-sync.ts`), which ranks
@@ -604,6 +623,17 @@ Run `unset ELECTRON_RUN_AS_NODE` before `npm run dev`.
 
 **Unread badge ahead of message list**  
 Folder unread counts are updated after messages are persisted during sync. If you see a mismatch, check for stale renderer refresh timing in `src/stores/mailStore.ts` and `syncFolder` in `electron/services/imap-sync.ts`.
+
+**A launcher number that disagrees with the app**  
+Confirm which number is which before debugging. `updateAppBadge` (`app-badge.ts`)
+computes one total — `totalUnreadCount` over every account — and uses it for both
+the window title and the launcher signal, so those two cannot disagree with each
+other. A folder's sidebar badge is that folder's own count, so a smaller number
+there is expected. To check the counters against reality, recount
+`messages.is_read = 0` per folder and compare with `folders.unread_count`.
+
+If the *panel icon* shows something else, it is probably not ours — see the
+LauncherEntry note under Sync model → Launcher badge.
 
 ## Known limitations
 

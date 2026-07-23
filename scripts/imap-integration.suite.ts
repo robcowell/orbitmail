@@ -1196,6 +1196,26 @@ async function main(): Promise<void> {
     // Electron's Linux badge/progress APIs want the *.desktop file name.
     ok('desktop entry id keeps its .desktop suffix',
       LINUX_DESKTOP_ENTRY_ID.endsWith('.desktop'), LINUX_DESKTOP_ENTRY_ID)
+
+    // A desktop can only attribute the badge (and pinning, and grouping) to the
+    // app if StartupWMClass matches the window's real WM_CLASS — which Chromium
+    // derives from the name main.ts gives app.setName() on Linux. Both entries
+    // said "orbit-mail" while the window announced "Orbit Mail", so nothing
+    // matched and the signal had no icon to land on.
+    const { readFileSync: readSource } = await import('fs')
+    const mainSource = readSource(join(process.cwd(), 'electron/main.ts'), 'utf8')
+    const appName = mainSource.match(/app\.setName\('([^']+)'\)/)?.[1]
+    ok('main.ts sets an explicit app name on Linux', !!appName, String(appName))
+
+    const devLauncher = readSource(join(process.cwd(), 'scripts/install-dev-desktop.sh'), 'utf8')
+    const devWmClass = devLauncher.match(/^StartupWMClass=(.+)$/m)?.[1]
+    ok('the dev launcher’s StartupWMClass matches the app name',
+      devWmClass === appName, `${devWmClass} vs ${appName}`)
+
+    const pkg = JSON.parse(readSource(join(process.cwd(), 'package.json'), 'utf8'))
+    const packagedWmClass = pkg.build?.linux?.desktop?.entry?.StartupWMClass
+    ok('the packaged entry’s StartupWMClass matches the app name',
+      packagedWmClass === appName, `${packagedWmClass} vs ${appName}`)
   }
 
   // -------------------------------------------------------------------------

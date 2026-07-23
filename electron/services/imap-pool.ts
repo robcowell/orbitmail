@@ -66,6 +66,32 @@ function scheduleIdleClose(accountId: string, lane: Lane): void {
   }, IDLE_CLOSE_MS)
 }
 
+/**
+ * Can this client be used again? If not, its socket is closed before we let go
+ * of it.
+ *
+ * `usable` goes false the moment a protocol error is seen, which is *before*
+ * the `close` event fires — and on a half-open TCP connection it may never
+ * fire. Simply overwriting the reference, as this used to, leaked both the
+ * local socket and the server-side connection slot: Gmail allows 15 IMAP
+ * connections per account and the app budgets 2, so leaking them steadily is
+ * how an account ends up refusing new ones.
+ *
+ * `close()` rather than `logout()`: the client is already unusable, so a polite
+ * LOGOUT has nobody to talk to and would only risk hanging the lane on a dead
+ * socket.
+ */
+export function reclaimClient(client: { usable: boolean; close: () => void } | null): boolean {
+  if (!client) return false
+  if (client.usable) return true
+  try {
+    client.close()
+  } catch {
+    // Already gone — nothing left to release.
+  }
+  return false
+}
+
 function attachHandlers(accountId: string, lane: Lane, client: ImapFlow): void {
   const drop = () => {
     if (lane.client === client) lane.client = null
@@ -92,7 +118,10 @@ export function withImapClient<T>(
 
   const run = async (): Promise<T> => {
     clearIdleTimer(lane)
-    if (!lane.client || !lane.client.usable) {
+    if (!reclaimClient(lane.client)) {
+      // Drop the dead reference before the await, so nothing inspecting the
+      // lane while we reconnect sees a client that is already closed.
+      lane.client = null
       lane.client = await createImapClient(accountId, provider)
       attachHandlers(accountId, lane, lane.client)
     }

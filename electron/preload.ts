@@ -110,6 +110,11 @@ const api: OrbitMailAPI = {
       ipcRenderer.on('app:needsAccount', handler)
       return () => ipcRenderer.removeListener('app:needsAccount', handler)
     },
+    onUnexpectedError: (callback) => {
+      const handler = (_: unknown, message: string) => callback(message)
+      ipcRenderer.on('app:unexpectedError', handler)
+      return () => ipcRenderer.removeListener('app:unexpectedError', handler)
+    },
     getSecureStorageStatus: () => ipcRenderer.invoke('app:getSecureStorageStatus')
   },
   attachments: {

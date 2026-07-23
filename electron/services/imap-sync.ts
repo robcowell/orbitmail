@@ -1102,8 +1102,12 @@ export async function refreshAllAccounts(): Promise<void> {
     onFolderSynced?.()
   }
 
-  // Also reconcile server flag changes on a manual refresh-all.
-  void reconcileAllAccountsFlags({ filter: (a) => a.provider !== 'pop3' })
+  // Also reconcile server flag changes on a manual refresh-all. Background and
+  // best-effort, but it must still handle its own failure: an unhandled
+  // rejection here would surface as an uncaught exception in main.
+  reconcileAllAccountsFlags({ filter: (a) => a.provider !== 'pop3' }).catch((err) => {
+    console.warn('[orbit-mail] Flag reconcile after refresh failed:', err)
+  })
 
   if (errors.length === accounts.length && accounts.length > 0) {
     throw new Error(errors.join('\n\n'))

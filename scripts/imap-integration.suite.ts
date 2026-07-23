@@ -787,6 +787,38 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Uncaught errors: suppress the known noise, surface the rest')
+  // -------------------------------------------------------------------------
+  {
+    // The handler existed to swallow IMAP socket timeouts and swallowed
+    // everything, logging to a console the user never sees. After an uncaught
+    // exception the process state is unknown, so continuing silently is a guess.
+    const crash = await import('../electron/services/crash-report')
+
+    const timeout = Object.assign(new Error('Socket timeout'), { code: 'ETIMEOUT' })
+    ok('an IMAP socket timeout is still suppressed', crash.isBenignSocketError(timeout))
+    ok('so is the same thing by message alone',
+      crash.isBenignSocketError(new Error('Socket timeout')))
+    ok('and by the other spelling of the code',
+      crash.isBenignSocketError(Object.assign(new Error('nope'), { code: 'ETIMEDOUT' })))
+
+    ok('a real fault is not suppressed',
+      !crash.isBenignSocketError(new TypeError('x is not a function')))
+    ok('nor is a lookalike message',
+      !crash.isBenignSocketError(new Error('Socket timeout while parsing')))
+    ok('nor a non-error', !crash.isBenignSocketError('Socket timeout'))
+
+    const described = crash.describeUnexpectedError(new TypeError('x is not a function'))
+    ok('the user is told what happened and what to do',
+      described.includes('x is not a function') && /restart/i.test(described), described)
+    ok('and something sane when there is no message',
+      /unexpected error/i.test(crash.describeUnexpectedError(new Error(''))),
+      crash.describeUnexpectedError(new Error('')))
+    ok('a huge message is truncated rather than filling the screen',
+      crash.describeUnexpectedError(new Error('x'.repeat(5000))).length < 300)
+  }
+
+  // -------------------------------------------------------------------------
   section('Preferences: shared state is not handed out, and no-ops do not write')
   // -------------------------------------------------------------------------
   {

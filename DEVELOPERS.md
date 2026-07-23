@@ -348,6 +348,16 @@ the control, and the README says so.
   on background refresh, so memoized rows skip re-render and the list doesn't flicker.
 - **DB** — WAL + tuned pragmas; `COUNT(*)` for counts; list queries project just the
   summary columns (no body blobs); partial index on unread rows.
+- **Uncaught errors** — `process.on('uncaughtException')` existed to swallow IMAP
+  socket timeouts, which imapflow surfaces as uncaught errors, and swallowed
+  everything else with it, to a console the user never sees. After an uncaught
+  exception the process state is unknown by definition — a sync may have stopped
+  half way, a connection lane may still be held — so `crash-report.ts` keeps the
+  narrow suppression (`isBenignSocketError`) and, for anything else, logs it and
+  tells the renderer once per run via `app:unexpectedError`. Killing the app
+  instead would cost the user their session for what might be a stray background
+  fault; saying nothing pretends the app is fine when it may not be. Unhandled
+  rejections route to the same reporter, labelled as such.
 - **Preferences** — one `app_state` row holds the UI state, window bounds and the
   sender lists, so any save rewrites all of it. `writeRawState` compares against
   what is on disk and skips a write that would change nothing, which matters
@@ -629,6 +639,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| Uncaught errors | The IMAP socket timeouts the handler exists for are still suppressed (by code, by either spelling of it, and by message), while a real fault, a lookalike message and a non-error are not; the message shown to the user names the fault, says what to do, survives an empty message, and is truncated rather than filling the screen. |
 | Preferences | Mutating what `getAppState()` returned does not change the stored state, nor its nested `ui` object; saving unchanged preferences performs no write while a real change still does; and a UI-only save does not lose the sender lists that share the row. |
 | Bulk delete | A batch delete removes the rows, cascades their attachment rows, unlinks only those files (leaving a surviving message's alone), recounts folder unread once and correctly, reports how many rows it removed, and treats unknown ids and an empty list as no-ops. |
 | On-disk privacy | Attachment files left `0664` by older versions are tightened by a guarded one-time sweep, which leaves a stricter file alone, reports what it did, and does nothing on a second run (so a store of thousands is not walked every launch). The data and attachments directories are `0700`, the database and its `-wal`/`-shm` sidecars `0600`; an install with the old loose modes is tightened in place, while a mode the user made *stricter* is left alone. Raw `.eml` exports are `0600` in an owner-only directory that is removed on quit, and the stale-directory sweep removes an old one of ours while leaving a fresh one (a running copy may own it) and anything not ours. |

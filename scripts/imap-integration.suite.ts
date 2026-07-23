@@ -894,6 +894,40 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('POP3: the sync window is checked before downloading')
+  // -------------------------------------------------------------------------
+  {
+    // The window check ran *after* a full RETR, and a message outside the window
+    // is never stored — so every out-of-window message was downloaded and
+    // MIME-parsed in full on every poll, every 20 seconds, forever. The date now
+    // comes from TOP (headers only) first.
+    const { parseHeaderDate } = await import('../electron/services/pop3-sync')
+
+    const simple = 'From: a@x\r\nDate: Thu, 23 Jul 2026 15:04:05 +0000\r\nSubject: Hi\r\n\r\n'
+    ok('a Date header is read',
+      parseHeaderDate(simple) === Date.UTC(2026, 6, 23, 15, 4, 5),
+      String(parseHeaderDate(simple)))
+
+    ok('the header name is matched case-insensitively',
+      parseHeaderDate('DATE: Thu, 23 Jul 2026 15:04:05 +0000\r\n\r\n') !== null)
+
+    // Long dates fold onto a continuation line.
+    const folded = 'Subject: x\r\nDate: Thu, 23 Jul 2026\r\n 15:04:05 +0000\r\n\r\n'
+    ok('a folded Date header is reassembled',
+      parseHeaderDate(folded) === Date.UTC(2026, 6, 23, 15, 4, 5),
+      String(parseHeaderDate(folded)))
+
+    // Unknown must mean "do not skip", never a guess.
+    ok('no Date header yields nothing', parseHeaderDate('From: a@x\r\n\r\n') === null)
+    ok('an unparseable Date yields nothing',
+      parseHeaderDate('Date: sometime last Tuesday\r\n\r\n') === null)
+
+    // A Date line in the body must not be mistaken for the header.
+    const bodyDate = 'From: a@x\r\n\r\nDate: Thu, 23 Jul 2026 15:04:05 +0000\r\n'
+    ok('a Date line after the headers is ignored', parseHeaderDate(bodyDate) === null)
+  }
+
+  // -------------------------------------------------------------------------
   section('POP3: identity is the UIDL, not a hash of it')
   // -------------------------------------------------------------------------
   {

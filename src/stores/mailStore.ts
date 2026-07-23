@@ -427,33 +427,68 @@ function patchMessageInList(
   partial: Partial<MessageSummary>
 ): Partial<MessageSummary> | null {
   const store = useMailStore.getState()
-  const prev = store.messages.find((m) => m.id === id)
-  const prevSearch = store.searchResults.find((m) => m.id === id)
-  const source = prev ?? prevSearch
-  if (!source) {
-    // Row isn't in either list, but the reader may still be showing it.
-    if (store.selectedMessage?.id === id) {
-      store.setSelectedMessage({ ...store.selectedMessage, ...partial })
-    }
-    return null
-  }
+
+  // A message row lives in more places than the flat list. In conversation view
+  // — the default — `messages` is empty and the row is in the open conversation
+  // or an inline-expanded thread instead. Missing those meant no optimistic
+  // patch *and* a null return, so the caller's rollback never ran and a rejected
+  // star/read/flag left the UI asserting something the server had refused.
+  const inList = store.messages.find((m) => m.id === id)
+  const inSearch = store.searchResults.find((m) => m.id === id)
+  const inThread = store.selectedThread?.find((m) => m.id === id)
+  const expandedKey = Object.keys(store.expandedThreadMessages).find((key) =>
+    store.expandedThreadMessages[key].some((m) => m.id === id)
+  )
+  const inExpanded = expandedKey
+    ? store.expandedThreadMessages[expandedKey].find((m) => m.id === id)
+    : undefined
+  const inReader = store.selectedMessage?.id === id ? store.selectedMessage : undefined
+
+  const source = inList ?? inSearch ?? inThread ?? inExpanded ?? inReader
+  if (!source) return null
 
   const before: Partial<MessageSummary> = {}
   for (const key of Object.keys(partial) as (keyof MessageSummary)[]) {
     ;(before as Record<string, unknown>)[key] = source[key]
   }
 
-  if (prev) {
+  if (inList) {
     store.setMessages(store.messages.map((m) => (m.id === id ? { ...m, ...partial } : m)))
   }
-  if (prevSearch) {
+  if (inSearch) {
     store.setSearchResults(
       store.searchResults.map((m) => (m.id === id ? { ...m, ...partial } : m))
     )
   }
-  if (store.selectedMessage?.id === id) {
-    store.setSelectedMessage({ ...store.selectedMessage, ...partial })
+  if (inReader) {
+    store.setSelectedMessage({ ...store.selectedMessage!, ...partial })
   }
+  if (inThread && store.selectedThread) {
+    store.setSelectedThread(
+      store.selectedThread.map((m) => (m.id === id ? { ...m, ...partial } : m))
+    )
+    // Keep the collapsed row's unread dot and star in step with its messages.
+    if (store.selectedThreadId) {
+      recomputeThreadAggregate(inThread.accountId, store.selectedThreadId)
+    }
+  }
+  if (expandedKey && inExpanded) {
+    const patched = store.expandedThreadMessages[expandedKey].map((m) =>
+      m.id === id ? { ...m, ...partial } : m
+    )
+    store.setExpandedThreadMessages({
+      ...store.expandedThreadMessages,
+      [expandedKey]: patched
+    })
+    const [accountId, threadId] = expandedKey.split(' ')
+    if (accountId && threadId) {
+      patchThreadRow(accountId, threadId, {
+        hasUnread: patched.some((m) => !m.isRead),
+        isStarred: patched.some((m) => m.isStarred)
+      })
+    }
+  }
+
   return before
 }
 

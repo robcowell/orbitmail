@@ -85,16 +85,19 @@ const THREADS = [
   threadRow('t4', 2000, 'Thread four')
 ]
 
-function threadMessage(threadId) {
-  return {
-    ...summaryRow(`${threadId}-m`, 90, 1000, `Message of ${threadId}`),
+// How many messages a conversation holds is configurable: the bulk-action
+// checks want one apiece, the rollback checks want a conversation whose
+// aggregate star/unread state can differ from a single message's.
+function threadMessages(threadId) {
+  return Array.from({ length: backend.messagesPerThread }, (_, i) => ({
+    ...summaryRow(`${threadId}-m${i + 1}`, 90 + i, 1000 + i, `Message ${i + 1} of ${threadId}`),
     threadId,
     cc: '',
     references: null,
     bodyHtml: null,
     bodyText: null,
     attachments: []
-  }
+  }))
 }
 
 // The stubbed IPC surface, standing in for the main process + SQLite.
@@ -103,7 +106,10 @@ const backend = {
   threads: [...THREADS],
   pendingMove: null,
   deleteManyCalls: [],
-  moveManyCalls: []
+  moveManyCalls: [],
+  messagesPerThread: 1,
+  // Flipped on to make the server reject the next flag/star write.
+  writesFail: false
 }
 
 function installWindowStub() {
@@ -116,7 +122,13 @@ function installWindowStub() {
         count: async () => backend.db.length,
         listThreads: async () => [...backend.threads],
         countThreads: async () => backend.threads.length,
-        getThread: async (_accountId, threadId) => [threadMessage(threadId)],
+        getThread: async (_accountId, threadId) => threadMessages(threadId),
+        toggleStar: async () => {
+          if (backend.writesFail) throw new Error('server rejected the star')
+        },
+        setFlag: async () => {
+          if (backend.writesFail) throw new Error('server rejected the flag')
+        },
         deleteMany: async (items) => {
           backend.deleteManyCalls.push(items)
           return { deleted: items.length, failed: 0 }
@@ -384,6 +396,77 @@ async function main() {
   ok('moving to the folder they are already in does nothing',
     backend.moveManyCalls.length === 0 && state().messages.length === 3,
     `${backend.moveManyCalls.length} call(s), ${state().messages.length} rows`)
+
+  // -------------------------------------------------------------------------
+  section('Conversation view: a rejected star rolls back')
+  // -------------------------------------------------------------------------
+  // patchMessageInList only knew about the flat list, the search results and the
+  // single-message reader. In conversation view — the default — `messages` is
+  // empty and the row lives in the open conversation, so the patch did nothing
+  // and returned null, which meant the caller's rollback never ran: a star the
+  // server refused stayed lit until the next refresh.
+  state().setThreadedView(true)
+  backend.threads = [...THREADS]
+  backend.messagesPerThread = 2
+  await store.refreshMessages()
+  await store.selectThread('a1', 't1')
+  const openThread = () => state().selectedThread ?? []
+  const threadRow = (id) => state().threads.find((t) => t.threadId === id)
+  ok('the conversation is open with both messages', openThread().length === 2,
+    `${openThread().length} message(s)`)
+  ok('it starts unstarred', !threadRow('t1')?.isStarred)
+
+  backend.writesFail = false
+  await store.toggleMessageStar('t1-m1', true)
+  ok('starring a message in the open conversation shows immediately',
+    openThread().find((m) => m.id === 't1-m1')?.isStarred === true)
+  ok('the collapsed row picks up the star', threadRow('t1')?.isStarred === true)
+
+  backend.writesFail = true
+  await store.toggleMessageStar('t1-m1', false)
+  ok('a rejected unstar rolls back on the message',
+    openThread().find((m) => m.id === 't1-m1')?.isStarred === true,
+    String(openThread().find((m) => m.id === 't1-m1')?.isStarred))
+  ok('and rolls back on the collapsed row too', threadRow('t1')?.isStarred === true,
+    String(threadRow('t1')?.isStarred))
+
+  // -------------------------------------------------------------------------
+  section('Inline-expanded conversation: the same rollback applies')
+  // -------------------------------------------------------------------------
+  backend.writesFail = false
+  await store.toggleThreadExpanded('a1', 't2')
+  await tick()
+  const expanded = () => state().expandedThreadMessages['a1 t2'] ?? []
+  ok('the expanded children are cached', expanded().length === 2, `${expanded().length}`)
+
+  await store.toggleMessageStar('t2-m1', true)
+  ok('starring an expanded child shows immediately',
+    expanded().find((m) => m.id === 't2-m1')?.isStarred === true)
+  ok('its conversation row picks up the star', threadRow('t2')?.isStarred === true)
+
+  backend.writesFail = true
+  await store.toggleMessageStar('t2-m1', false)
+  ok('a rejected write rolls the expanded child back',
+    expanded().find((m) => m.id === 't2-m1')?.isStarred === true,
+    String(expanded().find((m) => m.id === 't2-m1')?.isStarred))
+  ok('and rolls the conversation row back', threadRow('t2')?.isStarred === true)
+  backend.writesFail = false
+  backend.messagesPerThread = 1
+
+  // -------------------------------------------------------------------------
+  section('Flat list: rollback still works as before')
+  // -------------------------------------------------------------------------
+  state().setThreadedView(false)
+  backend.db = [...ROWS]
+  await store.refreshMessages()
+  const row = (id) => state().messages.find((m) => m.id === id)
+  await store.toggleMessageStar('m1', true)
+  ok('the flat row stars optimistically', row('m1')?.isStarred === true)
+  backend.writesFail = true
+  await store.toggleMessageStar('m1', false)
+  ok('and a rejected write restores it', row('m1')?.isStarred === true,
+    String(row('m1')?.isStarred))
+  backend.writesFail = false
 
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`

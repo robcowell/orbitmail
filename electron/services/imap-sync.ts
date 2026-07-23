@@ -98,6 +98,9 @@ const FOLDER_NAME_MAP: Record<string, FolderType> = {
   Trash: 'trash',
   Deleted: 'trash',
   'Deleted Items': 'trash',
+  // Gmail's localized Trash in en-GB accounts. Servers that advertise
+  // SPECIAL-USE flag it \Trash and never reach this map, but not all do.
+  Bin: 'trash',
   Junk: 'junk',
   Spam: 'junk'
 }
@@ -194,13 +197,14 @@ async function countNewMessagesForAccount(
   return withImapClient(accountId, provider, async (client) => {
     let total = 0
     const mailboxes = await client.list()
+    const folderTypes = detectFolderTypes(mailboxes)
     for (const mb of mailboxes) {
       if (mb.flags?.has('\\Noselect')) continue
       const folder = upsertFolder(
         accountId,
         mb.path,
         mb.name,
-        detectFolderType(mb.name, mb.specialUse),
+        folderTypes.get(mb.path) ?? 'custom',
         isVirtualViewFolder(provider, mb.path)
       )
       const status = await client.status(mb.path, { uidNext: true, uidValidity: true })
@@ -320,7 +324,11 @@ export async function createImapClient(
   return client
 }
 
-function folderSyncRank(mb: { name: string; path: string; specialUse?: string[] }): number {
+function folderSyncRank(mb: {
+  name: string
+  path: string
+  specialUse?: string | string[] | null
+}): number {
   const priority = ['\\Inbox', '\\Sent', '\\Drafts', '\\Trash', '\\Junk']
   const specialIdx = priority.findIndex((p) => mb.specialUse?.includes(p))
   if (specialIdx !== -1) return specialIdx
@@ -453,14 +461,71 @@ export function findInboxMailbox<
   )
 }
 
-export function detectFolderType(name: string, specialUse?: string[]): FolderType {
-  if (specialUse) {
-    for (const flag of specialUse) {
-      const mapped = SPECIAL_USE_MAP[flag]
-      if (mapped) return mapped
-    }
+// imapflow gives `specialUse` as a *single string* ("\\Trash"), not an array —
+// iterating it as one walked the characters, so `SPECIAL_USE_MAP` never matched
+// and every folder was typed from its English name. That is why Gmail's
+// localized Bin ([Gmail]/Bin, flagged \Trash) was typed `custom` while a legacy
+// user folder called "Deleted Items" claimed `trash`, and deletes went to a
+// plain label instead of the real Trash. Accepts either shape now.
+export function detectFolderType(
+  name: string,
+  specialUse?: string | string[] | null
+): FolderType {
+  for (const flag of specialUseFlags(specialUse)) {
+    const mapped = SPECIAL_USE_MAP[flag]
+    if (mapped) return mapped
   }
   return FOLDER_NAME_MAP[name] ?? 'custom'
+}
+
+function specialUseFlags(specialUse?: string | string[] | null): string[] {
+  if (!specialUse) return []
+  const raw = Array.isArray(specialUse) ? specialUse : [specialUse]
+  // Flags are case-insensitive in IMAP; normalize to the map's capitalization.
+  return raw
+    .filter((flag): flag is string => typeof flag === 'string' && flag.length > 0)
+    .map((flag) => {
+      const key = Object.keys(SPECIAL_USE_MAP).find(
+        (candidate) => candidate.toLowerCase() === flag.trim().toLowerCase()
+      )
+      return key ?? flag.trim()
+    })
+}
+
+interface TypedMailbox {
+  name: string
+  path: string
+  specialUse?: string | string[] | null
+}
+
+// Type every mailbox in one pass so SPECIAL-USE can outrank a name guess.
+// Without this, an account carrying both a server-flagged Trash and an old user
+// folder named "Deleted Items" has two `trash` folders and whichever comes first
+// wins the delete destination. A server that states its special-use is
+// authoritative; the name map is only a fallback for servers that do not.
+export function detectFolderTypes<T extends TypedMailbox>(
+  mailboxes: T[]
+): Map<string, FolderType> {
+  const types = new Map<string, FolderType>()
+  const flagged = new Map<FolderType, string>()
+
+  for (const mb of mailboxes) {
+    const fromFlags = specialUseFlags(mb.specialUse)
+      .map((flag) => SPECIAL_USE_MAP[flag])
+      .find((mapped): mapped is FolderType => !!mapped)
+    types.set(mb.path, fromFlags ?? FOLDER_NAME_MAP[mb.name] ?? 'custom')
+    if (fromFlags && !flagged.has(fromFlags)) flagged.set(fromFlags, mb.path)
+  }
+
+  // Demote name-derived matches for any role the server flagged elsewhere.
+  for (const mb of mailboxes) {
+    const type = types.get(mb.path)
+    if (!type || type === 'custom') continue
+    const owner = flagged.get(type)
+    if (owner && owner !== mb.path) types.set(mb.path, 'custom')
+  }
+
+  return types
 }
 
 function formatAddress(addr: { address?: string; name?: string } | undefined): string {
@@ -827,10 +892,11 @@ export async function syncAccount(
     let synced = 0
     const mailboxes = await client.list()
     const folderMap: Record<string, string> = {}
+    const folderTypes = detectFolderTypes(mailboxes)
 
     for (const mb of mailboxes) {
       if (mb.flags?.has('\\Noselect')) continue
-      const type = detectFolderType(mb.name, mb.specialUse)
+      const type = folderTypes.get(mb.path) ?? 'custom'
       const folder = upsertFolder(
         accountId,
         mb.path,

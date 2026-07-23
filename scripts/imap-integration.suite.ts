@@ -385,6 +385,157 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Folder types: SPECIAL-USE decides, not the English folder name')
+  // -------------------------------------------------------------------------
+  {
+    // imapflow hands back `specialUse` as a single string ("\\Trash"), not an
+    // array. Iterating it as an array walked the characters, so SPECIAL-USE
+    // never matched and every folder was typed from its English name. On an
+    // en-GB Gmail account that typed the real Trash ([Gmail]/Bin) as `custom`
+    // while a legacy user folder named "Deleted Items" claimed `trash` — so
+    // "delete" moved mail to an ordinary label, which on Gmail keeps every other
+    // label, leaving the message in All Mail, search and thread views.
+    const { detectFolderType, detectFolderTypes } = await import('../electron/services/imap-sync')
+
+    ok('a string special-use is honoured',
+      detectFolderType('Bin', '\\Trash') === 'trash',
+      detectFolderType('Bin', '\\Trash'))
+    ok('an array special-use still works',
+      detectFolderType('Papierkorb', ['\\Trash']) === 'trash')
+    ok('flags are matched case-insensitively',
+      detectFolderType('Bin', '\\trash') === 'trash')
+    ok('an unflagged folder still falls back to its name',
+      detectFolderType('Deleted Items') === 'trash')
+    ok('Gmail’s en-GB Bin is trash even without a flag',
+      detectFolderType('Bin') === 'trash')
+    ok('an ordinary folder stays custom', detectFolderType('Rotary') === 'custom')
+
+    // The account-wide pass: the server's flag outranks a name match elsewhere.
+    const mailboxes = [
+      { name: 'INBOX', path: 'INBOX', specialUse: '\\Inbox' },
+      { name: 'Bin', path: '[Gmail]/Bin', specialUse: '\\Trash' },
+      { name: 'Deleted Items', path: 'Deleted Items' },
+      { name: 'All Mail', path: '[Gmail]/All Mail', specialUse: '\\All' }
+    ]
+    const types = detectFolderTypes(mailboxes)
+    ok('the flagged mailbox owns the trash role',
+      types.get('[Gmail]/Bin') === 'trash', String(types.get('[Gmail]/Bin')))
+    ok('the name-matched impostor is demoted to custom',
+      types.get('Deleted Items') === 'custom', String(types.get('Deleted Items')))
+    ok('unrelated roles are unaffected',
+      types.get('INBOX') === 'inbox' && types.get('[Gmail]/All Mail') === 'custom')
+
+    // With no server flag anywhere, the name fallback still names a Trash.
+    const unflagged = detectFolderTypes([
+      { name: 'INBOX', path: 'INBOX' },
+      { name: 'Deleted Items', path: 'Deleted Items' }
+    ])
+    ok('without SPECIAL-USE the name match still wins the role',
+      unflagged.get('Deleted Items') === 'trash', String(unflagged.get('Deleted Items')))
+  }
+
+  // -------------------------------------------------------------------------
+  section('Folder types: an existing folder is re-typed, not frozen')
+  // -------------------------------------------------------------------------
+  {
+    // The type used to be set only on insert, so a folder mis-typed once stayed
+    // that way and no detection fix could reach an existing install.
+    const first = db.upsertFolder(account.id, '[Gmail]/Retype', 'Retype', 'custom')
+    ok('starts as first detected', first.type === 'custom', first.type)
+
+    const second = db.upsertFolder(account.id, '[Gmail]/Retype', 'Retype', 'trash')
+    ok('the corrected type is returned', second.type === 'trash', second.type)
+    ok('it is the same folder row, not a duplicate', second.id === first.id)
+
+    const listed = db.listFolders(account.id).find((f) => f.imapPath === '[Gmail]/Retype')
+    ok('the corrected type is persisted', listed?.type === 'trash', String(listed?.type))
+  }
+
+  // -------------------------------------------------------------------------
+  section('Delete: a later sync must not re-import the deleted message')
+  // -------------------------------------------------------------------------
+  {
+    // Mirrors what main.ts does — server op first, then drop the local row —
+    // and then runs the sync that a poll/IDLE would run, to prove the message
+    // does not come back. Deleting the *newest* message is the interesting case:
+    // it lowers the folder's local max UID, and the next sync searches
+    // `maxLocalUid + 1 : *`, which in IMAP still matches the highest existing
+    // message when that range starts past the end.
+    const box = 'DeleteResync'
+    const client = rawClient()
+    await client.connect()
+    await client.mailboxCreate(box).catch(() => {})
+    const folder = db.upsertFolder(account.id, box, box, 'custom')
+    await seed(client, box, ['Keep one', 'Keep two', 'Delete me'])
+    await sync.syncFolder(client, account.id, folder.id, box)
+
+    const cached = db.listMessages(folder.id, 50, 0)
+    ok('all three synced', cached.length === 3, `cached=${cached.length}`)
+    const target = cached.find((m) => m.subject === 'Delete me')
+    ok('the newest message is the delete target', !!target && target.uid === Math.max(...cached.map((m) => m.uid)))
+
+    await sync.deleteMessageOnServer(account.id, account.provider, box, target!.uid)
+    db.deleteMessage(target!.id)
+    ok('it is gone locally right after the delete',
+      db.listMessages(folder.id, 50, 0).length === 2)
+
+    // The poll that follows every delete, and every one after that.
+    await sync.syncFolder(client, account.id, folder.id, box)
+    await sync.syncFolder(client, account.id, folder.id, box)
+    const after = db.listMessages(folder.id, 50, 0)
+    ok('a later sync does not re-import it',
+      !after.some((m) => m.subject === 'Delete me'),
+      after.map((m) => m.subject).join(', '))
+    ok('and does not duplicate the survivors', after.length === 2, `cached=${after.length}`)
+
+    // New mail after the delete must still arrive — the guard must not wedge the
+    // folder's UID watermark.
+    await seed(client, box, ['Arrived later'])
+    await sync.syncFolder(client, account.id, folder.id, box)
+    const later = db.listMessages(folder.id, 50, 0)
+    ok('mail arriving after the delete still syncs',
+      later.some((m) => m.subject === 'Arrived later'), `cached=${later.length}`)
+
+    await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
+  section('Move: the message lands in the target and stays out of the source')
+  // -------------------------------------------------------------------------
+  {
+    // Delete-to-Trash is a move, so this is the path the Delete key really takes.
+    const src = 'MoveSrc'
+    const dst = 'MoveDst'
+    const client = rawClient()
+    await client.connect()
+    await client.mailboxCreate(src).catch(() => {})
+    await client.mailboxCreate(dst).catch(() => {})
+    const srcFolder = db.upsertFolder(account.id, src, src, 'custom')
+    const dstFolder = db.upsertFolder(account.id, dst, dst, 'trash')
+    await seed(client, src, ['Stays put', 'Moves away'])
+    await sync.syncFolder(client, account.id, srcFolder.id, src)
+
+    const moving = db.listMessages(srcFolder.id, 50, 0).find((m) => m.subject === 'Moves away')
+    ok('the message to move is cached', !!moving)
+
+    await sync.moveMessageOnServer(account.id, account.provider, src, dst, moving!.uid)
+    db.deleteMessage(moving!.id)
+
+    await sync.syncFolder(client, account.id, srcFolder.id, src)
+    await sync.syncFolder(client, account.id, dstFolder.id, dst)
+    const srcAfter = db.listMessages(srcFolder.id, 50, 0)
+    const dstAfter = db.listMessages(dstFolder.id, 50, 0)
+    ok('it does not come back in the source folder',
+      !srcAfter.some((m) => m.subject === 'Moves away'),
+      srcAfter.map((m) => m.subject).join(', '))
+    ok('it is cached in the destination exactly once',
+      dstAfter.filter((m) => m.subject === 'Moves away').length === 1,
+      dstAfter.map((m) => m.subject).join(', '))
+
+    await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
   section('Sent folders: a row names the recipient, not us')
   // -------------------------------------------------------------------------
   {

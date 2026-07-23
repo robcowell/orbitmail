@@ -328,15 +328,22 @@ export function upsertFolder(
     .get()
 
   if (existing) {
-    if (existing.isVirtualView !== isVirtualView) {
-      db.update(folders).set({ isVirtualView }).where(eq(folders.id, existing.id)).run()
+    // Re-type on every sync. The type used to be frozen at first sight, so a
+    // folder mis-typed once stayed that way forever — an account whose real
+    // Trash was typed `custom` kept sending deletes to whatever else claimed
+    // `trash`, and no detection fix could reach an existing install.
+    const patch: { isVirtualView?: boolean; type?: FolderType } = {}
+    if (existing.isVirtualView !== isVirtualView) patch.isVirtualView = isVirtualView
+    if (existing.type !== type) patch.type = type
+    if (Object.keys(patch).length > 0) {
+      db.update(folders).set(patch).where(eq(folders.id, existing.id)).run()
     }
     return {
       id: existing.id,
       accountId: existing.accountId,
       imapPath: existing.imapPath,
       name: existing.name,
-      type: existing.type as FolderType,
+      type,
       unreadCount: existing.unreadCount,
       isVirtualView
     }

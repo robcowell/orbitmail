@@ -183,6 +183,23 @@ The AI features — per-message **Analyze** and the folder **Tasks** sweep — a
   folder of large attachments no longer retains gigabytes of buffers until the
   write (they are re-fetched on open). #67.
 - **Unread counts** — recalculated from local message read state after fetch (kept in sync with the message list)
+- **Folder roles** — a folder's `type` (inbox/sent/drafts/trash/junk) decides where
+  Delete, Archive and Junk send mail, so getting it wrong silently breaks delete.
+  It is resolved per account by `detectFolderTypes` (`imap-sync.ts`): the server's
+  SPECIAL-USE flag wins, and a folder that only *looks* like a role by name is
+  demoted to `custom` when another mailbox is flagged for that role. The English
+  name map (`FOLDER_NAME_MAP`) is the fallback for servers that advertise no
+  SPECIAL-USE. Types are re-evaluated on **every** sync — `upsertFolder` updates
+  the stored type — because a folder mis-typed once would otherwise stay that way
+  forever.
+
+  Two traps worth knowing, both of which shipped: imapflow gives `specialUse` as
+  a **single string** (`"\\Trash"`), not an array, so iterating it walks
+  characters and matches nothing; and Gmail localizes Trash (`[Gmail]/Bin` in
+  en-GB), so a name-only match can hand the trash role to an unrelated user
+  folder called "Deleted Items". On Gmail that is not a harmless mislabel — a
+  move to an ordinary label keeps every other label, so the "deleted" message
+  stays in All Mail, in search, and in thread views.
 
 ### Threading
 
@@ -469,6 +486,8 @@ reimplementing them, so it exercises the shipping code paths:
 | Unique-index dedupe | A duplicate `(folder_id, uid)` row (a pre-constraint DB) blocks `CREATE UNIQUE INDEX`; `dedupeMessagesByFolderUid` collapses each key to one row — keeping the one carrying AI analysis/sweep cache — so the index builds, and is a no-op on a healthy table. |
 | Attachment metadata | `toAttachmentMeta` preserves filename/type/size (including the size-from-`content.length` fallback) and returns no content Buffer, so the sync batch can drop the parsed buffers instead of retaining them. |
 | Attachment index | `attachments.message_id` has an index, and the planner uses it (`EXPLAIN QUERY PLAN` shows the index, not a `SCAN`) — so a message-id lookup and the delete cascade are not full scans. |
+| Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. |
+| Delete durability | Deleting the newest message in a folder (which lowers the local max UID, so the next sync searches a range starting past the end) does not re-import it on the following syncs, does not duplicate the survivors, and does not wedge the watermark for mail that arrives afterwards. A move leaves the source and lands in the destination exactly once. |
 | Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). |
 
 Notes for anyone extending it:

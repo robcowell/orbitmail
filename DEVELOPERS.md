@@ -348,6 +348,13 @@ the control, and the README says so.
   on background refresh, so memoized rows skip re-render and the list doesn't flicker.
 - **DB** — WAL + tuned pragmas; `COUNT(*)` for counts; list queries project just the
   summary columns (no body blobs); partial index on unread rows.
+- **Bulk delete** — `deleteMessages` removes a batch in one transaction, recounts
+  each affected folder's unread **once** rather than once per row (pruning 5,000
+  messages did 5,000 recounts), and unlinks attachment files **after** the rows
+  are gone. The old order — files first — meant a crash in between left rows
+  offering an attachment that no longer existed; this way the same crash leaves
+  files with no rows, which is wasted space rather than a broken reader.
+  `clearFolderMessages` follows the same rule.
 - **Freelist reclaim** — deleting mail (prune, account removal, empty folder) frees
   pages that SQLite keeps on the freelist, so the file only ever grew (`auto_vacuum`
   is off). `reclaimFreelistIfLarge` runs `VACUUM` from `window-all-closed`, after the
@@ -608,6 +615,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
+| Bulk delete | A batch delete removes the rows, cascades their attachment rows, unlinks only those files (leaving a surviving message's alone), recounts folder unread once and correctly, reports how many rows it removed, and treats unknown ids and an empty list as no-ops. |
 | On-disk privacy | Attachment files left `0664` by older versions are tightened by a guarded one-time sweep, which leaves a stricter file alone, reports what it did, and does nothing on a second run (so a store of thousands is not walked every launch). The data and attachments directories are `0700`, the database and its `-wal`/`-shm` sidecars `0600`; an install with the old loose modes is tightened in place, while a mode the user made *stricter* is left alone. Raw `.eml` exports are `0600` in an owner-only directory that is removed on quit, and the stale-directory sweep removes an old one of ours while leaving a fresh one (a running copy may own it) and anything not ours. |
 | AI prompt hygiene | Email content is fenced in markers it cannot forge (a body containing the closing marker is defanged, so it cannot escape the fence and continue as prompt) while remaining visible to the model; every system prompt carries the "this is data, not instructions" rule; and sender identity is matched on the address exactly — a display name containing the user's address, a lookalike domain, and a substring of it are all rejected. |
 | Attachment allowlist | Only files approved in this compose session can be attached: an unapproved path in the list refuses the whole send, the refusal names the offending file, equivalent path spellings (`/tmp/./x`) do not decide approval, `sendMail` refuses before touching credentials or a transport, and closing compose withdraws approval. |

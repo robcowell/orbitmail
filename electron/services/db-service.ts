@@ -1306,13 +1306,9 @@ export function deleteMessagesByUid(folderId: string, uids: number[]): number {
     .from(messages)
     .where(eq(messages.folderId, folderId))
     .all()
-  let removed = 0
-  for (const r of rows) {
-    if (!wanted.has(r.uid)) continue
-    deleteMessage(r.id)
-    removed++
-  }
-  return removed
+  const doomed = rows.filter((r) => wanted.has(r.uid)).map((r) => r.id)
+  deleteMessages(doomed)
+  return doomed.length
 }
 
 // Reconcile server flags into local rows: for the given folder, set is_read /
@@ -1390,17 +1386,29 @@ export function updateFolderSyncState(
 
 export function clearFolderMessages(folderId: string): void {
   const db = getDb()
-  const messageRows = db
-    .select({ id: messages.id })
-    .from(messages)
-    .where(eq(messages.folderId, folderId))
-    .all()
+  const sqlite = getRawSqlite()
 
-  for (const row of messageRows) {
-    deleteAttachmentFilesForMessage(row.id)
-  }
+  // Same ordering rule as deleteMessages: rows first, then the files they
+  // referenced, so a crash cannot leave a row pointing at a file that is gone.
+  const filePaths = (
+    sqlite
+      .prepare(
+        `SELECT a.local_path FROM attachments a
+         JOIN messages m ON m.id = a.message_id
+         WHERE m.folder_id = ? AND a.local_path IS NOT NULL`
+      )
+      .all(folderId) as Array<{ local_path: string }>
+  ).map((r) => r.local_path)
 
   db.delete(messages).where(eq(messages.folderId, folderId)).run()
+
+  for (const path of filePaths) {
+    try {
+      if (existsSync(path)) unlinkSync(path)
+    } catch {
+      // Row already gone; an unremovable file is wasted space, not a bug.
+    }
+  }
   updateFolderSyncState(folderId, {
     highestSyncedUid: 0,
     initialSyncComplete: false,
@@ -1624,36 +1632,71 @@ export function countMessages(folderId: string | 'unified', unreadOnly = false):
 }
 
 export function deleteMessage(messageId: string): void {
-  const db = getDb()
-  const existing = db
-    .select({ folderId: messages.folderId })
-    .from(messages)
-    .where(eq(messages.id, messageId))
-    .get()
-  deleteAttachmentFilesForMessage(messageId)
-  db.delete(messages).where(eq(messages.id, messageId)).run()
-  if (existing) {
-    recalculateFolderUnread(existing.folderId)
-  }
+  deleteMessages([messageId])
 }
 
-function deleteAttachmentFilesForMessage(messageId: string): void {
+/**
+ * Delete messages and their cached attachment files.
+ *
+ * Three things this gets right that deleting row-by-row did not:
+ *
+ * - **The rows go in one transaction.** A crash part way through a prune or an
+ *   expunge reconcile used to leave the batch half applied.
+ * - **Files are unlinked *after* the rows are gone**, not before. The old order
+ *   meant a crash in between left rows pointing at files that no longer existed
+ *   — an attachment the reader offers and cannot open. This way the same crash
+ *   leaves files with no rows: wasted bytes, invisible, and reclaimable. Of the
+ *   two failure modes that is plainly the better one.
+ * - **Unread counts are recomputed once per affected folder**, rather than once
+ *   per row — pruning 5,000 messages from one folder did 5,000 recounts.
+ */
+export function deleteMessages(messageIds: string[]): number {
+  if (messageIds.length === 0) return 0
   const db = getDb()
-  const rows = db
-    .select({ localPath: attachments.localPath })
-    .from(attachments)
-    .where(eq(attachments.messageId, messageId))
-    .all()
+  const sqlite = getRawSqlite()
 
-  for (const row of rows) {
-    if (!row.localPath) continue
-    try {
-      if (existsSync(row.localPath)) unlinkSync(row.localPath)
-    } catch {
-      // ignore missing files
+  // Collected before the delete: the attachment rows cascade with the messages.
+  const folderIds = new Set<string>()
+  const filePaths: string[] = []
+  const present: string[] = []
+  for (const id of messageIds) {
+    const row = db
+      .select({ folderId: messages.folderId })
+      .from(messages)
+      .where(eq(messages.id, id))
+      .get()
+    if (!row) continue
+    present.push(id)
+    folderIds.add(row.folderId)
+    for (const att of db
+      .select({ localPath: attachments.localPath })
+      .from(attachments)
+      .where(eq(attachments.messageId, id))
+      .all()) {
+      if (att.localPath) filePaths.push(att.localPath)
     }
   }
+
+  const removeRows = sqlite.transaction((ids: string[]) => {
+    for (const id of ids) {
+      db.delete(messages).where(eq(messages.id, id)).run()
+    }
+  })
+  removeRows(present)
+
+  for (const path of filePaths) {
+    try {
+      if (existsSync(path)) unlinkSync(path)
+    } catch {
+      // The row is already gone; a file we cannot remove is wasted space, not
+      // a correctness problem.
+    }
+  }
+
+  for (const folderId of folderIds) recalculateFolderUnread(folderId)
+  return present.length
 }
+
 
 export function addAttachment(
   messageId: string,
@@ -1693,9 +1736,7 @@ export function pruneMessagesOutsideSyncWindow(accountId: string, syncDays: numb
     .where(and(eq(messages.accountId, accountId), lt(messages.date, cutoff)))
     .all()
 
-  for (const row of stale) {
-    deleteMessage(row.id)
-  }
+  deleteMessages(stale.map((row) => row.id))
 
   return stale.length
 }

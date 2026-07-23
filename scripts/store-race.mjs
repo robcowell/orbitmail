@@ -110,6 +110,11 @@ const backend = {
   messagesPerThread: 1,
   // Make the reader's two fetches reject, to exercise the failure paths.
   getThreadFails: false,
+  // One-shot gate: the *next* getThread parks until released, so a test can
+  // interleave a click with an in-flight mutation. One-shot matters — the click
+  // itself calls getThread, and it must not park behind the same gate.
+  gateNextGetThread: false,
+  releaseGetThread: null,
   getFails: false,
   // Flipped on to make the server reject the next flag/star write.
   writesFail: false
@@ -127,6 +132,12 @@ function installWindowStub() {
         countThreads: async () => backend.threads.length,
         getThread: async (_accountId, threadId) => {
           if (backend.getThreadFails) throw new Error('thread fetch failed')
+          if (backend.gateNextGetThread) {
+            backend.gateNextGetThread = false
+            await new Promise((resolve) => {
+              backend.releaseGetThread = resolve
+            })
+          }
           return threadMessages(threadId)
         },
         toggleStar: async () => {
@@ -529,6 +540,51 @@ async function main() {
   backend.getFails = false
   await store.selectMessage('m1')
   ok('selecting something else clears it', state().readerError === null)
+
+  // -------------------------------------------------------------------------
+  section('Thread mutations: the selection is judged when they land, not when they start')
+  // -------------------------------------------------------------------------
+  // A thread mutation resolves its messages over IPC before touching the list,
+  // and the user can click during that gap. Deciding whether to clear the reader
+  // from a snapshot taken *before* the await gets it wrong in both directions:
+  // it can leave a deleted conversation on screen, or clear one the user has
+  // since opened.
+  state().setThreadedView(true)
+  backend.threads = [...THREADS]
+  backend.messagesPerThread = 1
+  await store.refreshMessages()
+  await store.selectThread('a1', 't1')
+  ok('t1 is open to begin with', state().selectedThreadId === 't1')
+
+  // Delete t2 — not the open conversation, so it awaits getThread — and click
+  // t2 while that is in flight. By the time the delete lands, t2 *is* the open
+  // conversation, so the reader must be cleared.
+  backend.gateNextGetThread = true
+  const deletingT2 = store.deleteThread('a1', 't2')
+  await tick()
+  await store.selectThread('a1', 't2')
+  ok('the user has opened t2 mid-flight', state().selectedThreadId === 't2')
+  backend.releaseGetThread?.()
+  await deletingT2
+  ok('the deleted conversation does not stay on screen',
+    state().selectedThreadId !== 't2', `selected=${state().selectedThreadId}`)
+  ok('and its row is gone from the list',
+    !state().threads.some((t) => t.threadId === 't2'),
+    state().threads.map((t) => t.threadId).join(','))
+
+  // The other direction: delete the open conversation, but move to another one
+  // before it lands. The reader must keep what the user chose.
+  backend.threads = [...THREADS]
+  await store.refreshMessages()
+  await store.selectThread('a1', 't3')
+  backend.gateNextGetThread = true
+  const deletingT4 = store.deleteThread('a1', 't4')
+  await tick()
+  await store.selectThread('a1', 't1')
+  backend.releaseGetThread?.()
+  await deletingT4
+  ok('a delete that lands late does not steal the reader',
+    state().selectedThreadId === 't1', `selected=${state().selectedThreadId}`)
 
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`

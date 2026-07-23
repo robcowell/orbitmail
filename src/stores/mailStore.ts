@@ -751,6 +751,16 @@ export async function toggleThreadExpanded(accountId: string, threadId: string):
 // Open a conversation: load every message in the thread (across folders), show
 // the newest, and mark any unread messages read optimistically + in the
 // background. `selectedThread` drives the reader.
+// The folder list, read from *current* state rather than a snapshot taken before
+// an await. Every mutation needs it, and they all reached for `store.folders`
+// captured at the top of the function — which by then could predate the initial
+// load, sending them to IPC for a list already in memory, or predate a rename.
+// State read after an await must be re-read.
+async function currentFolders(): Promise<Folder[]> {
+  const { folders } = useMailStore.getState()
+  return folders.length ? folders : await window.orbitMail.folders.list()
+}
+
 export async function selectThread(accountId: string, threadId: string): Promise<void> {
   const store = useMailStore.getState()
   // A plain click collapses any multi-selection down to this one row.
@@ -970,7 +980,7 @@ async function relocateSelectedThreads(options: {
   const selected = store.threads.filter((t) => keys.includes(threadKey(t)))
   if (selected.length === 0) return
 
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const threads = await Promise.all(
     selected.map((t) => resolveThreadMessages(t.accountId, t.threadId))
   )
@@ -1088,7 +1098,7 @@ export async function deleteThread(accountId: string, threadId: string): Promise
       : await window.orbitMail.messages.getThread(accountId, threadId)
   if (messages.length === 0) return
 
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const items = messages.map((m) => {
     const currentFolder = folders.find((f) => f.id === m.folderId)
     const trash =
@@ -1145,7 +1155,7 @@ export async function archiveThread(accountId: string, threadId: string): Promis
   const messages = await resolveThreadMessages(accountId, threadId)
   if (messages.length === 0) return
 
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const moves = messages
     .map((m) => {
       const archive = findArchiveFolder(folders, m.accountId)
@@ -1250,7 +1260,7 @@ export async function moveThreadToFolder(
   const messages = await resolveThreadMessages(accountId, threadId)
   if (messages.length === 0) return
 
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const target = folders.find((f) => f.id === targetFolderId)
 
   removeThreadAndAdvance(accountId, threadId)
@@ -1282,7 +1292,7 @@ export async function copyThreadToFolder(
   const messages = await resolveThreadMessages(accountId, threadId)
   if (messages.length === 0) return
 
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const target = folders.find((f) => f.id === targetFolderId)
 
   try {
@@ -1823,9 +1833,7 @@ export async function moveMessageToTrash(messageId: string): Promise<void> {
   const msg = store.selectedMessage ?? (await window.orbitMail.messages.get(messageId))
   if (!msg) return
 
-  const folders = store.folders.length
-    ? store.folders
-    : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const currentFolder = folders.find((f) => f.id === msg.folderId)
   const alreadyInTrash = currentFolder?.type === 'trash'
   const trash = alreadyInTrash ? null : findAccountFolder(folders, msg.accountId, 'trash')
@@ -1867,9 +1875,7 @@ export async function deleteSelectedMessages(): Promise<void> {
     return
   }
 
-  const folders = store.folders.length
-    ? store.folders
-    : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
 
   // Resolve each message's destination (trash folder, or permanent delete when
   // already in trash) from the summaries we already have — no per-id server get.
@@ -1936,7 +1942,7 @@ async function relocateSelectedMessages(options: {
     return
   }
 
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const summaries = new Map(
     [...store.messages, ...store.searchResults].map((m) => [m.id, m])
   )
@@ -2001,9 +2007,7 @@ export async function archiveMessage(messageId: string): Promise<void> {
   const msg = store.selectedMessage ?? (await window.orbitMail.messages.get(messageId))
   if (!msg) return
 
-  const folders = store.folders.length
-    ? store.folders
-    : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const archive = findArchiveFolder(folders, msg.accountId)
 
   if (!archive) {
@@ -2056,9 +2060,7 @@ export async function moveMessageToJunk(messageId: string): Promise<void> {
   const msg = store.selectedMessage ?? (await window.orbitMail.messages.get(messageId))
   if (!msg) return
 
-  const folders = store.folders.length
-    ? store.folders
-    : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const junk = findAccountFolder(folders, msg.accountId, 'junk')
 
   if (!junk) {
@@ -2085,7 +2087,7 @@ export async function moveMessageToFolder(
   targetFolderId: string
 ): Promise<void> {
   const store = useMailStore.getState()
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const target = folders.find((folder) => folder.id === targetFolderId)
 
   removeMessagesAndAdvance([messageId])
@@ -2107,7 +2109,7 @@ export async function copyMessageToFolder(
   targetFolderId: string
 ): Promise<void> {
   const store = useMailStore.getState()
-  const folders = store.folders.length ? store.folders : await window.orbitMail.folders.list()
+  const folders = await currentFolders()
   const target = folders.find((folder) => folder.id === targetFolderId)
 
   await window.orbitMail.messages.copy(messageId, targetFolderId)

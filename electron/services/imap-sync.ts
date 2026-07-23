@@ -102,6 +102,9 @@ const FOLDER_NAME_MAP: Record<string, FolderType> = {
   // SPECIAL-USE flag it \Trash and never reach this map, but not all do.
   Bin: 'trash',
   Junk: 'junk',
+  // Exchange/Outlook names its junk folder in full, in two spellings.
+  'Junk Email': 'junk',
+  'Junk E-mail': 'junk',
   Spam: 'junk'
 }
 
@@ -496,33 +499,58 @@ interface TypedMailbox {
   name: string
   path: string
   specialUse?: string | string[] | null
+  delimiter?: string
 }
 
-// Type every mailbox in one pass so SPECIAL-USE can outrank a name guess.
-// Without this, an account carrying both a server-flagged Trash and an old user
-// folder named "Deleted Items" has two `trash` folders and whichever comes first
-// wins the delete destination. A server that states its special-use is
-// authoritative; the name map is only a fallback for servers that do not.
+// How deep a mailbox sits in the hierarchy. Delegated and imported mailboxes get
+// grafted under the user's own tree (`INBOX/admin/Sent Items`), so depth is what
+// separates "my Sent" from "a copy of somebody else's".
+function mailboxDepth(mb: TypedMailbox): number {
+  const delimiter = mb.delimiter && mb.delimiter.length === 1 ? mb.delimiter : '/'
+  return mb.path.split(delimiter).length
+}
+
+// Type every mailbox in one pass, so the account's *own* folder wins each role
+// rather than whichever candidate the server happened to list first.
+//
+// Evidence is ranked, not mixed: a SPECIAL-USE flag beats any name match (Gmail
+// localizes Trash to [Gmail]/Bin at depth 2, and it must still beat a top-level
+// user folder called "Deleted Items"), and depth only breaks ties *within* a
+// class. That matters for accounts with an old mailbox imported under INBOX:
+// `INBOX/admin/Sent Items` and a real top-level `Sent Items` both match by name,
+// neither is flagged, and the nested empty one used to win — so Sent showed
+// nothing and sent copies filed into somebody else's folder.
 export function detectFolderTypes<T extends TypedMailbox>(
   mailboxes: T[]
 ): Map<string, FolderType> {
   const types = new Map<string, FolderType>()
-  const flagged = new Map<FolderType, string>()
+  // Per role, the best candidate seen so far and how it was identified.
+  const winners = new Map<FolderType, { path: string; flagged: boolean; depth: number }>()
 
   for (const mb of mailboxes) {
     const fromFlags = specialUseFlags(mb.specialUse)
       .map((flag) => SPECIAL_USE_MAP[flag])
       .find((mapped): mapped is FolderType => !!mapped)
-    types.set(mb.path, fromFlags ?? FOLDER_NAME_MAP[mb.name] ?? 'custom')
-    if (fromFlags && !flagged.has(fromFlags)) flagged.set(fromFlags, mb.path)
+    const role = fromFlags ?? FOLDER_NAME_MAP[mb.name]
+    types.set(mb.path, role ?? 'custom')
+    if (!role) continue
+
+    const candidate = { path: mb.path, flagged: !!fromFlags, depth: mailboxDepth(mb) }
+    const held = winners.get(role)
+    // First candidate wins ties, so a stable server listing gives a stable role.
+    const better =
+      !held ||
+      (candidate.flagged && !held.flagged) ||
+      (candidate.flagged === held.flagged && candidate.depth < held.depth)
+    if (better) winners.set(role, candidate)
   }
 
-  // Demote name-derived matches for any role the server flagged elsewhere.
+  // Everything that matched a role but did not win it is an ordinary folder.
   for (const mb of mailboxes) {
     const type = types.get(mb.path)
     if (!type || type === 'custom') continue
-    const owner = flagged.get(type)
-    if (owner && owner !== mb.path) types.set(mb.path, 'custom')
+    const winner = winners.get(type)
+    if (winner && winner.path !== mb.path) types.set(mb.path, 'custom')
   }
 
   return types

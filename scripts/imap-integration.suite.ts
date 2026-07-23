@@ -432,6 +432,58 @@ async function main(): Promise<void> {
     ])
     ok('without SPECIAL-USE the name match still wins the role',
       unflagged.get('Deleted Items') === 'trash', String(unflagged.get('Deleted Items')))
+
+    // A mailbox imported under INBOX (delegated, or migrated from an old IMAP
+    // account) offers the same role names as the account's own folders. The
+    // account's own — shallower — folder must win, or Sent shows an empty
+    // stranger's folder and sent copies file into it. Listed nested-first here
+    // because that is the order that used to decide it.
+    // Note the grafted mailboxes carry their *own* SPECIAL-USE flags — this is
+    // the real shape of an Exchange account with an old IMAP tree imported under
+    // INBOX, and it is why depth has to break ties within the flagged class too
+    // rather than flags alone deciding.
+    const grafted = detectFolderTypes([
+      { name: 'INBOX', path: 'INBOX', specialUse: '\\Inbox' },
+      { name: 'Sent Items', path: 'INBOX/admin/Sent Items', specialUse: '\\Sent' },
+      { name: 'Junk Email', path: 'INBOX/admin/Junk Email', specialUse: '\\Junk' },
+      { name: 'sent-mail', path: 'INBOX/info/mail/sent-mail' },
+      { name: 'Sent Items', path: 'Sent Items', specialUse: '\\Sent' },
+      { name: 'Deleted Items', path: 'Deleted Items' },
+      { name: 'Trash', path: 'Trash' }
+    ])
+    ok('the account’s own Sent wins over a grafted copy, both flagged',
+      grafted.get('Sent Items') === 'sent', String(grafted.get('Sent Items')))
+    ok('the grafted copy is demoted',
+      grafted.get('INBOX/admin/Sent Items') === 'custom',
+      String(grafted.get('INBOX/admin/Sent Items')))
+    ok('a nested role with no shallower rival still takes it',
+      grafted.get('INBOX/admin/Junk Email') === 'junk',
+      String(grafted.get('INBOX/admin/Junk Email')))
+    ok('an unflagged lookalike deeper still is left alone',
+      grafted.get('INBOX/info/mail/sent-mail') === 'custom',
+      String(grafted.get('INBOX/info/mail/sent-mail')))
+    ok('among equally shallow rivals the first listed keeps the role',
+      grafted.get('Deleted Items') === 'trash' && grafted.get('Trash') === 'custom',
+      `${grafted.get('Deleted Items')} / ${grafted.get('Trash')}`)
+
+    // Depth must not outrank a flag: Gmail's Bin is nested and still correct.
+    const gmail = detectFolderTypes([
+      { name: 'INBOX', path: 'INBOX', specialUse: '\\Inbox' },
+      { name: 'Deleted Items', path: 'Deleted Items' },
+      { name: 'Bin', path: '[Gmail]/Bin', specialUse: '\\Trash' }
+    ])
+    ok('a flagged deep folder still beats a shallow name match',
+      gmail.get('[Gmail]/Bin') === 'trash' && gmail.get('Deleted Items') === 'custom',
+      `${gmail.get('[Gmail]/Bin')} / ${gmail.get('Deleted Items')}`)
+
+    // Servers using '.' as the hierarchy delimiter must measure depth with it.
+    const dotted = detectFolderTypes([
+      { name: 'Sent', path: 'INBOX.shared.Sent', delimiter: '.' },
+      { name: 'Sent', path: 'Sent', delimiter: '.' }
+    ])
+    ok('depth respects the server’s hierarchy delimiter',
+      dotted.get('Sent') === 'sent' && dotted.get('INBOX.shared.Sent') === 'custom',
+      `${dotted.get('Sent')} / ${dotted.get('INBOX.shared.Sent')}`)
   }
 
   // -------------------------------------------------------------------------

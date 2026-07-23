@@ -903,7 +903,7 @@ async function main(): Promise<void> {
     // This cannot check prose. It checks the claims that are mechanically
     // verifiable — the ones that go stale silently.
     const { existsSync, readFileSync } = await import('fs')
-    const docs = ['README.md', 'DEVELOPERS.md', 'CLAUDE.md'].filter((f) =>
+    const docs = ['README.md', 'INSTALL.md', 'DEVELOPERS.md', 'CLAUDE.md'].filter((f) =>
       existsSync(join(process.cwd(), f))
     )
     const text = docs.map((f) => readFileSync(join(process.cwd(), f), 'utf8')).join('\n')

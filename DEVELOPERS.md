@@ -299,6 +299,24 @@ Export streams message by message to an owner-only file. It previously used
 `join`ed the lot into one string (a third copy) before writing — three copies of
 a mailbox that can be gigabytes.
 
+### POP3 sync window
+
+POP3 has no server-side search, so the sync window is enforced client-side: a
+message older than it is not stored. The check used to run *after* `RETR`, which
+downloads the whole message, attachments and all — and since nothing recorded the
+skip, every out-of-window message was fetched and MIME-parsed again on every
+poll, twenty seconds apart, indefinitely.
+
+The date now comes from `TOP msgNum 0` (headers only) before deciding.
+`parseHeaderDate` returns null for a missing or unparseable `Date`, and a null
+never skips: not knowing the date must not be treated as knowing it is old. `TOP`
+is optional in RFC 1939, so a server without it falls through to the original
+post-`RETR` check — no worse than before.
+
+Still per-poll: an out-of-window message costs one small `TOP` each time, because
+nothing remembers that it was skipped. Cheap, but not free — recorded in
+`TODO.md`.
+
 ### POP3 identity
 
 POP3 has no UIDs — a message is identified by its **UIDL** string — but the
@@ -684,6 +702,7 @@ reimplementing them, so it exercises the shipping code paths:
 | IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
 | mbox export | `From ` lines inside a body are escaped, at the start of a body too, already-escaped lines gain a marker (mboxrd, so it is reversible), and a word merely starting with "From" is untouched; 8-bit content survives byte for byte; the separator carries an asctime date and copes with an unusable one; and an end-to-end export of a message *containing* a From line produces one separator per message, not one per line, in an owner-only file. |
+| POP3 sync window | The `Date` header is read case-insensitively and reassembled when folded onto a continuation line; a missing or unparseable date yields null so the message is *not* skipped on a guess; and a `Date:` line appearing after the headers is not mistaken for one. |
 | POP3 identity | The UIDL is stored rather than only hashed; known messages are recognised by UIDL and an unseen one is not mistaken for a known one; a message resolves to its own UIDL for a delete and never another's; and a message synced before the column existed refuses to be deleted server-side rather than guessing. |
 | IMAP pool | A usable client is kept and not closed; an unusable one is not reused *and* its socket is closed; a `close()` that throws does not propagate; no client is simply no client. |
 | Uncaught errors | The IMAP socket timeouts the handler exists for are still suppressed (by code, by either spelling of it, and by message), while a real fault, a lookalike message and a non-error are not; the message shown to the user names the fault, says what to do, survives an empty message, and is truncated rather than filling the screen. |

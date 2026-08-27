@@ -2491,9 +2491,16 @@ Notes for anyone extending it:
 ## End-to-end, through real windows (`test:e2e`)
 
 ```bash
-npm run test:e2e            # build, start GreenMail, run every suite, tear down
-npm run test:e2e -- --keep  # leave the container up afterwards
+npm run test:e2e                 # build, start GreenMail, run every suite, tear down
+npm run test:e2e -- --keep       # leave the container up afterwards
+npm run test:e2e -- --only window  # one suite by name
 ```
+
+`--only` exists because these suites drive a real window manager and are
+therefore timing-sensitive: the window suite failed once in nine runs during
+this work and was never reproduced, and re-running all ten to chase one is a
+poor loop. A suite that fails occasionally trains people to re-run rather than
+investigate, so catch the output when it happens.
 
 **Requires Docker *and* a display; it is not in CI.** `test:imap` is windowless
 by design, which means a *window's* lifecycle — a `close` handler, the draft

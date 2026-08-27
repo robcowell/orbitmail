@@ -262,6 +262,15 @@ export interface AccountSyncStatus {
  * message whose headers carry no Message-ID therefore cannot be undone, and is
  * counted as skipped rather than silently dropped.
  */
+/** A message asleep in the Snoozed folder, and when it is due back. */
+export interface SnoozedMessage {
+  /** The scheduled action's id — what `unsnooze` takes. */
+  id: string
+  accountId: string
+  wakeAt: number
+  rfcMessageId: string
+}
+
 export interface UndoRelocateEntry {
   accountId: string
   rfcMessageId: string
@@ -703,6 +712,23 @@ export interface OrbitMailAPI {
      * a move; see UndoRelocateEntry.
      */
     undoRelocate: (entries: UndoRelocateEntry[]) => Promise<UndoRelocateResult>
+    /**
+     * Move messages to a real **Snoozed** folder and bring them back at
+     * `wakeAt`. A real folder, not a local flag, so the message genuinely
+     * leaves the inbox on your phone and in webmail too.
+     *
+     * A message whose headers carry no Message-ID cannot be found again when it
+     * is due, so it cannot be snoozed — those come back in `failed`.
+     */
+    snooze: (
+      messageIds: string[],
+      wakeAt: number
+    ) => Promise<{ snoozed: number; failed: number }>
+    listSnoozed: () => Promise<SnoozedMessage[]>
+    /** Bring one back now instead of waiting. False if it already came back. */
+    unsnooze: (scheduledId: string) => Promise<boolean>
+    /** Fires when a snoozed message has been returned to its folder. */
+    onUnsnoozed: (callback: (rfcMessageId: string) => void) => () => void
     copy: (messageId: string, targetFolderId: string) => Promise<void>
     // Gmail only. The labels these messages carry, the labels the account has
     // to offer, and putting one on or taking one off the lot of them. Passing

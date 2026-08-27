@@ -154,8 +154,10 @@ message is back **on the server** — the pure half is covered by `test:store` a
 the Message-ID lookup by `test:imap`, but neither can render a toast, click its
 button, or see where the mail actually ended up. **shortcuts** presses a real
 `a` and checks a reply-all composer opens addressed to everyone on the thread
-but us — asserting only that a window opened would prove nothing. All seven also
-assert **nothing threw**.
+but us — asserting only that a window opened would prove nothing. All eight also
+assert **nothing threw**. **snooze** moves a real message to the Snoozed folder
+and asserts against the *server* that it left the inbox and came back when due —
+the only thing snooze actually promises, and invisible from inside the app.
 Needs Docker *and* a display (headless Ozone segfaults on the
 first window), so it is **not in CI** — run it after touching the compose/send
 path, signatures, zoom, message actions, keyboard shortcuts, or anything

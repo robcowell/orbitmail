@@ -823,6 +823,37 @@ Two rules the module exists to protect:
 The ticker is second-resolution because the shortest thing on the table is a
 ten-second undo-send window; a minute-resolution tick would make it feel broken.
 
+#### Snooze
+
+A message is **moved to a real `Snoozed` folder** on the server, not hidden
+behind a local flag. That is the whole point: a snooze that only hid mail in
+this app would leave the inbox lying on your phone and in webmail. It also means
+someone who stops using Orbit finds their mail in an obvious place.
+
+The folder is created on demand. **Its path is not "Snoozed" on every server** —
+one that puts new mailboxes under the personal namespace creates `INBOX.Snoozed`,
+which is what GreenMail does. The lookup matches the **leaf name** for that
+reason; a check that hardcodes the path finds nothing and reports an empty
+folder for a message sitting right there (which is exactly how the e2e suite
+first failed).
+
+The scheduled action is keyed by **RFC Message-ID**, for the same reason undo
+is: the local row does not survive the move. When it falls due the message is
+found again and moved home. If the folder it came from has since been deleted it
+goes to the inbox rather than nowhere.
+
+A message whose headers carry no Message-ID **cannot be snoozed at all** — there
+would be no way to find it when it is due — and is reported in `failed` rather
+than accepted and lost.
+
+Presets (`src/utils/snoozePresets.ts`) are pure and take an explicit `now`, so
+the arithmetic is testable without waiting for Tuesday. Every preset lands on a
+**whole hour**: a message snoozed at 09:47 until tomorrow arrives at 08:00, not
+09:47, or the inbox fills at times nobody chose. "Later today" disappears in the
+evening rather than quietly meaning tomorrow — a preset that lies about when it
+fires is worse than one that is missing. "This weekend" asked on a Saturday
+means *next* Saturday, which is the rule that stops a preset firing in the past.
+
 #### Undo send
 
 `compose:send` no longer sends. It saves the draft (so Undo has something to
@@ -2331,6 +2362,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
+| Snooze presets | Every preset lands on a whole hour and in the future, checked across every day of the week and five times of day. "Later today" is the afternoon in the morning, the evening in the afternoon, and absent in the evening. "This weekend" asked on a Saturday means the next one, and "next week" on a Monday the next Monday — the rule that stops a preset firing in the past. |
 | Scheduler | Something overdue runs at the next start, so a quit does not lose it, while something not yet due is left alone. A completed action is gone from the table and a second run does not repeat it. A handler that throws does not stall the queue and its row is **not** retried into a duplicate. Cancelling reports whether it won the race — twice, or after the action ran, both report false. An unparseable payload is dropped rather than wedging the queue. Removing an account cascades to its scheduled work. |
 | Undo lookup | A relocated message is findable by its RFC Message-ID and reports the folder it now sits in; every row for a Message-ID comes back, not just the first, so a Gmail row already in the destination can be told from one that is not; the lookup is scoped to one account, so an identical Message-ID in another account is not restored. |
 | Unified search | A null `accountId` searches every account and returns them interleaved newest-first, not grouped; an account id still scopes to that account alone; an **empty string** returns nothing rather than everything; the limit bounds the merged set rather than applying per account. |
@@ -2427,6 +2459,19 @@ everything around it — that `before-input-event` is registered at all, that th
 key reaches it, that the frame is actually zoomed rather than the level merely
 stored, that the level survives the reload used to recover a dead renderer, and
 that a composer opens at the same size as the window that spawned it.
+
+**`e2e-snooze.suite.ts` — does snoozed mail actually leave, and come back?**
+Snoozes a real message and asserts **against the server**: it leaves INBOX, waits
+in the Snoozed folder, and returns to INBOX when its action falls due. The
+presets are pure and covered by `test:store`, the scheduler's rules by
+`test:imap`; neither can see where the mail ended up, which is the only thing
+snooze actually promises. It also checks that a message with no Message-ID is
+refused rather than accepted and lost.
+
+Its first run reported an empty Snoozed folder for a message that was sitting in
+it: the mailbox is `INBOX.Snoozed` on a server that puts new mailboxes under the
+personal namespace, and the suite had hardcoded `Snoozed`. It now resolves the
+path from the app's own folder list.
 
 **`e2e-shortcuts.suite.ts` — the reader's keys, through real keystrokes.**
 `sendInputEvent` delivers `a` the way Chromium would; a compose window has to

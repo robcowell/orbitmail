@@ -341,6 +341,17 @@ async function main() {
 
   // The status-bar wording is a pure function for exactly this reason: the bug
   // it replaces lived in JSX, where no test in this repo could reach it.
+  // When "later" actually means. Pure, and given an explicit `now`, so the
+  // arithmetic can be tested without waiting for Tuesday.
+  await build({
+    entryPoints: [join(root, 'src/utils/snoozePresets.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'snoozePresets.cjs'),
+    logLevel: 'silent'
+  })
+
   // How the three panes share the window — the reader is defended, the list
   // and sidebar give way.
   await build({
@@ -1264,6 +1275,83 @@ async function main() {
         status([acct('a', { reachedServer: false })], { syncing: true }), true).state === 'online')
     ok('and there is no banner text when everything is fine',
       deriveConnectivity(status([acct('a', { reachedServer: true })]), true).message === null)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Snooze presets: "later" lands on an hour somebody chose')
+  // -------------------------------------------------------------------------
+  {
+    const { snoozePresets, formatWakeAt } = require(join(outDir, 'snoozePresets.cjs'))
+    const at = (iso) => new Date(iso).getTime()
+    const get = (now, id) => snoozePresets(at(now)).find((p) => p.id === id)
+    const hourOf = (ts) => new Date(ts).getHours()
+
+    // Every preset lands on a whole hour. Now-plus-an-offset would mean a
+    // message snoozed at 09:47 arriving at 09:47 tomorrow, and an inbox filling
+    // at times nobody picked.
+    const morning = at('2026-03-10T09:47:00')
+    for (const p of snoozePresets(morning)) {
+      if (p.wakeAt === null) continue
+      const d = new Date(p.wakeAt)
+      ok(`${p.id} lands on a whole hour`,
+        d.getMinutes() === 0 && d.getSeconds() === 0,
+        d.toISOString())
+      ok(`${p.id} is in the future`, p.wakeAt > morning, d.toISOString())
+    }
+
+    // "Later today" is the afternoon in the morning, the evening in the
+    // afternoon, and absent in the evening — rather than silently meaning
+    // tomorrow, which would be a preset that lies about when it fires.
+    ok('later today means this afternoon when asked in the morning',
+      hourOf(get('2026-03-10T09:00:00', 'later-today').wakeAt) === 14)
+    ok('and this evening when asked in the afternoon',
+      hourOf(get('2026-03-10T15:00:00', 'later-today').wakeAt) === 18)
+    ok('and is offered as nothing at all once the evening has gone',
+      get('2026-03-10T21:00:00', 'later-today').wakeAt === null)
+
+    ok('tomorrow is the next morning',
+      hourOf(get('2026-03-10T21:00:00', 'tomorrow').wakeAt) === 8 &&
+      new Date(get('2026-03-10T21:00:00', 'tomorrow').wakeAt).getDate() === 11)
+
+    // Tuesday 10 March 2026. Saturday is the 14th, Monday the 16th.
+    ok('this weekend is the coming Saturday',
+      new Date(get('2026-03-10T09:00:00', 'this-weekend').wakeAt).getDate() === 14)
+    ok('next week is the coming Monday',
+      new Date(get('2026-03-10T09:00:00', 'next-week').wakeAt).getDate() === 16)
+
+    // The rule that stops a preset firing in the past: asked ON a Saturday,
+    // "this weekend" is the NEXT Saturday, not this morning.
+    const sat = at('2026-03-14T09:00:00')
+    ok('asked on a Saturday, this weekend means the next one',
+      get('2026-03-14T09:00:00', 'this-weekend').wakeAt > sat &&
+      new Date(get('2026-03-14T09:00:00', 'this-weekend').wakeAt).getDate() === 21)
+    const mon = at('2026-03-16T09:00:00')
+    ok('and asked on a Monday, next week means the next Monday',
+      get('2026-03-16T09:00:00', 'next-week').wakeAt > mon &&
+      new Date(get('2026-03-16T09:00:00', 'next-week').wakeAt).getDate() === 23)
+
+    // No preset may ever be in the past, on any day of the week or hour.
+    for (let day = 10; day <= 16; day++) {
+      for (const hour of ['00:30', '09:00', '15:00', '21:00', '23:45']) {
+        const now = at(`2026-03-${day}T${hour}:00`)
+        for (const p of snoozePresets(now)) {
+          if (p.wakeAt === null) continue
+          ok(`no preset fires in the past (day ${day}, ${hour}, ${p.id})`, p.wakeAt > now,
+            new Date(p.wakeAt).toISOString())
+        }
+      }
+    }
+
+    // The label a person reads.
+    const base = at('2026-03-10T09:00:00')
+    ok('a same-day wake reads as a time', !/at/.test(formatWakeAt(at('2026-03-10T14:00:00'), base)))
+    ok('tomorrow is named', /^tomorrow at/.test(formatWakeAt(at('2026-03-11T08:00:00'), base)))
+    ok('a day this week is named by weekday',
+      /^Saturday at/.test(formatWakeAt(at('2026-03-14T08:00:00'), base)),
+      formatWakeAt(at('2026-03-14T08:00:00'), base))
+    ok('and further out by date',
+      /^2 Apr at/.test(formatWakeAt(at('2026-04-02T08:00:00'), base)),
+      formatWakeAt(at('2026-04-02T08:00:00'), base))
   }
 
   // -------------------------------------------------------------------------

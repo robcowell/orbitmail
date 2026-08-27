@@ -1346,12 +1346,21 @@ async function main() {
     const base = at('2026-03-10T09:00:00')
     ok('a same-day wake reads as a time', !/at/.test(formatWakeAt(at('2026-03-10T14:00:00'), base)))
     ok('tomorrow is named', /^tomorrow at/.test(formatWakeAt(at('2026-03-11T08:00:00'), base)))
+    // The weekday's *name* is whatever the locale calls it — "Saturday" here,
+    // "Samstag" on a German machine. Compared against the platform's own
+    // formatting rather than an English string.
+    const weekdayLabel = formatWakeAt(at('2026-03-14T08:00:00'), base)
+    const expectedWeekday = new Date(at('2026-03-14T08:00:00'))
+      .toLocaleDateString(undefined, { weekday: 'long' })
     ok('a day this week is named by weekday',
-      /^Saturday at/.test(formatWakeAt(at('2026-03-14T08:00:00'), base)),
-      formatWakeAt(at('2026-03-14T08:00:00'), base))
-    ok('and further out by date',
-      /^2 Apr at/.test(formatWakeAt(at('2026-04-02T08:00:00'), base)),
-      formatWakeAt(at('2026-04-02T08:00:00'), base))
+      weekdayLabel.startsWith(`${expectedWeekday} at`), weekdayLabel)
+    // Asserted without assuming a locale's date order: this ran green on a
+    // machine formatting "2 Apr at 8:00" and failed in CI on one formatting
+    // "Apr 2 at 8:00 AM". What matters is that it names the month and day
+    // rather than a weekday, not which way round they go.
+    const far = formatWakeAt(at('2026-04-02T08:00:00'), base)
+    ok('and further out by month and day rather than a weekday',
+      /Apr/i.test(far) && /\b2\b/.test(far) && !/tomorrow|day at/i.test(far), far)
   }
 
   // -------------------------------------------------------------------------
@@ -1489,9 +1498,12 @@ async function main() {
     ok('empty says so in words',
       describeListHeader({ ...base, selectedFolderId: 'f1', loaded: 0, total: 0 })
         .count === 'no conversations')
+    // Grouped the way the platform groups: "12,000" here, "12.000" in German.
+    // Comparing against a hardcoded comma tested the machine, not the code.
     ok('and large counts are grouped for reading',
       describeListHeader({ ...base, selectedFolderId: 'f1', loaded: 12000, total: 12000 })
-        .count === '12,000 conversations')
+        .count === `${(12000).toLocaleString()} conversations`,
+      describeListHeader({ ...base, selectedFolderId: 'f1', loaded: 12000, total: 12000 }).count)
 
     // The filter had no textual cue at all: a pressed toggle was the only sign,
     // which is easy to leave on and then wonder where the mail went. It is

@@ -137,6 +137,14 @@ does. Preserving that needs prefix or trigram tokenisation.
   stops a preset firing in the past, mutation-tested across every day and five
   times of day.
 
+  **CI caught a locale-dependent assertion**, and chasing it found two more from
+  the list-header work that had been green since they were written. `12,000` is
+  `12.000` in German and `2 Apr` is `Apr 2` in CI, so three checks were testing
+  the machine rather than the code — one failed in CI, the other two would only
+  ever have failed for a contributor abroad. All three now compare against the
+  platform's own formatting, `test:store` passes under en_GB, en_US and de_DE,
+  and the trap is written into CLAUDE.md.
+
   Remaining from B5: scheduled send, which is the same scheduler with a
   user-chosen time instead of ten seconds.
 

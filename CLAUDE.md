@@ -93,6 +93,14 @@ Two habits that prevent the worst of it:
   a confident, wrong "no". That has already produced a shipped commit deleting a
   true statement from DEVELOPERS.md and filing a gap that did not exist. Confirm
   any "nothing covers this" against the named file, or `rg --text`.
+- **Never assert on a formatted date or number.** `toLocaleString` follows the
+  machine's locale, so `12,000` here is `12.000` in German and `2 Apr` is
+  `Apr 2` in CI. Three assertions were written against a UK machine's output and
+  one of them failed in CI; the other two would only have failed for a
+  contributor abroad. Compare against the platform's own formatting
+  (`` `${(12000).toLocaleString()} conversations` ``) or assert the shape rather
+  than the string. `npm run test:store` can be run under `LC_ALL=de_DE.UTF-8`
+  to check.
 - **Document what is *not* handled.** A security or feature section that lists
   only wins is worse than none: remote images still load, credential encryption
   degrades without a keyring, thread listing is still linear in account size.

@@ -5,6 +5,13 @@
   "description": "Orbit Mail — a polished desktop email client for Linux",
   "main": "out/main/index.js",
   "homepage": "https://robcowell.github.io/orbit-website/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/robcowell/orbitmail.git"
+  },
+  "bugs": {
+    "url": "https://github.com/robcowell/orbitmail/issues"
+  },
   "author": {
     "name": "Orbit Mail",
     "email": "orbit-mail@localhost"

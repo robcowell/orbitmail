@@ -823,6 +823,26 @@ Two rules the module exists to protect:
 The ticker is second-resolution because the shortest thing on the table is a
 ten-second undo-send window; a minute-resolution tick would make it feel broken.
 
+#### Scheduled send
+
+The same scheduler with a time you chose instead of ten seconds. `compose:send`
+takes an optional `sendAt`; a time in the past is treated as "now", because the
+scheduler would run it on its next tick anyway and a countdown to nothing would
+be a lie.
+
+**A scheduled message waits in Drafts**, which is the only place it is visible,
+and **opening it takes it out of the queue**. That second half is the part that
+matters: without it, editing a message that is still going to send itself —
+unedited, at the old time — is the worst outcome available here. The renderer
+says so when it happens rather than silently unscheduling.
+
+Both halves are mutation-tested in `e2e-scheduled-send.suite.ts`: ignoring the
+chosen time, and leaving a draft queued when it is opened.
+
+The suite waits **past the ten-second undo window** before checking nothing has
+gone. A scheduled send that quietly used the hold instead of the chosen time
+would otherwise slip through unnoticed.
+
 #### Snooze
 
 A message is **moved to a real `Snoozed` folder** on the server, not hidden
@@ -2459,6 +2479,12 @@ everything around it — that `before-input-event` is registered at all, that th
 key reaches it, that the frame is actually zoomed rather than the level merely
 stored, that the level survives the reload used to recover a dead renderer, and
 that a composer opens at the same size as the window that spawned it.
+
+**`e2e-scheduled-send.suite.ts` — does a timed message wait, and can it be
+taken back?** Schedules a send for an hour out, waits past the undo window to
+prove nothing goes, then opens the draft and asserts it has left the queue *and*
+that nothing is sent when its time finally comes — checking the row vanished
+would not catch a send already handed to something else.
 
 **`e2e-snooze.suite.ts` — does snoozed mail actually leave, and come back?**
 Snoozes a real message and asserts **against the server**: it leaves INBOX, waits

@@ -67,7 +67,8 @@ const SUITES = [
   { name: 'zoom', entry: 'e2e-zoom.suite.ts' },
   { name: 'undo', entry: 'e2e-undo.suite.ts' },
   { name: 'shortcuts', entry: 'e2e-shortcuts.suite.ts' },
-  { name: 'snooze', entry: 'e2e-snooze.suite.ts' }
+  { name: 'snooze', entry: 'e2e-snooze.suite.ts' },
+  { name: 'scheduled-send', entry: 'e2e-scheduled-send.suite.ts' }
 ]
 
 const keep = process.argv.includes('--keep')

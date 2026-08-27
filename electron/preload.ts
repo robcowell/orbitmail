@@ -104,7 +104,7 @@ const api: OrbitMailAPI = {
   },
   compose: {
     open: (payload) => ipcRenderer.invoke('compose:open', payload),
-    scheduleSend: (payload) => ipcRenderer.invoke('compose:send', payload),
+    scheduleSend: (payload, sendAt) => ipcRenderer.invoke('compose:send', payload, sendAt),
     cancelSend: (scheduledId) => ipcRenderer.invoke('compose:cancelSend', scheduledId),
     onSent: (callback) => {
       const listener = (_e: unknown, subject: string) => callback(subject)
@@ -114,10 +114,15 @@ const api: OrbitMailAPI = {
     onSendScheduled: (callback) => {
       const listener = (
         _e: unknown,
-        info: { scheduledId: string; dueAt: number; subject: string }
+        info: { scheduledId: string; dueAt: number; subject: string; scheduled: boolean }
       ) => callback(info)
       ipcRenderer.on('compose:scheduled', listener)
       return () => ipcRenderer.removeListener('compose:scheduled', listener)
+    },
+    onSendUnscheduled: (callback) => {
+      const listener = (_e: unknown, draftId: string) => callback(draftId)
+      ipcRenderer.on('compose:unscheduled', listener)
+      return () => ipcRenderer.removeListener('compose:unscheduled', listener)
     },
     pickAttachments: () => ipcRenderer.invoke('compose:pickAttachments'),
     statAttachments: (paths: string[]) => ipcRenderer.invoke('compose:statAttachments', paths),

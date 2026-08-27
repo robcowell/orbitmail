@@ -769,7 +769,7 @@ export interface OrbitMailAPI {
      * a short hold so it can be taken back; the composer closes immediately
      * either way. Resolving does **not** mean the mail has left.
      */
-    scheduleSend: (payload: ComposePayload) => Promise<ScheduledSend>
+    scheduleSend: (payload: ComposePayload, sendAt?: number) => Promise<ScheduledSend>
     /**
      * Take back a send that has not gone yet. `cancelled: false` means the hold
      * had already expired and the message is away — the one answer the UI must
@@ -783,8 +783,19 @@ export interface OrbitMailAPI {
      * already closed by then, so this is where the offer to take it back lives.
      */
     onSendScheduled: (
-      callback: (info: { scheduledId: string; dueAt: number; subject: string }) => void
+      callback: (info: {
+        scheduledId: string
+        dueAt: number
+        subject: string
+        /** True for a message timed for later, false for the ten-second hold. */
+        scheduled: boolean
+      }) => void
     ) => () => void
+    /**
+     * Fires when a timed send is taken out of the queue because its draft was
+     * opened for editing.
+     */
+    onSendUnscheduled: (callback: (draftId: string) => void) => () => void
     pickAttachments: () => Promise<AttachmentDraft[]>
     statAttachments: (paths: string[]) => Promise<AttachmentDraft[]>
     // Resolves a dropped File to a path *and* approves it for attachment; the

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
+import { snoozePresets, formatWakeAt } from '../../utils/snoozePresets'
 import { assumesLightBackground } from '../../utils/emailColorScheme'
 import { Paperclip } from '@phosphor-icons/react/dist/ssr/Paperclip'
 import { X } from '@phosphor-icons/react/dist/ssr/X'
@@ -46,6 +47,7 @@ export function ComposeWindow() {
   const setToast = useMailStore((s) => s.setToast)
   const [payload, setPayload] = useState<ComposePayload | null>(null)
   const [sending, setSending] = useState(false)
+  const [sendLaterOpen, setSendLaterOpen] = useState(false)
   const [showCc, setShowCc] = useState(false)
   const [showBcc, setShowBcc] = useState(false)
   const [attachments, setAttachments] = useState<AttachmentDraft[]>([])
@@ -368,7 +370,7 @@ export function ComposeWindow() {
     }
   }
 
-  const handleSend = async () => {
+  const handleSend = async (sendAt?: number) => {
     if (!payload.to.trim()) {
       setToast('Please enter a recipient')
       return
@@ -399,7 +401,7 @@ export function ComposeWindow() {
         // it once the message is actually away, not before.
         draftId: draftIdRef.current ?? undefined,
         attachmentPaths: attachments.length ? attachments.map((a) => a.path) : undefined
-      })
+      }, sendAt)
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Failed to send')
       // The send failed, so this is a draft again — and the content is now only
@@ -616,7 +618,46 @@ export function ComposeWindow() {
         </button>
         <span className="compose-actions-spacer" />
         <span className="compose-send-hint">⌘↵ to send</span>
-        <button className="btn btn-primary" onClick={handleSend} disabled={sending}>
+        {/* A message timed for later stays in Drafts, which is where it can be
+            seen and where opening it takes it back out of the queue. */}
+        <div className="compose-send-later">
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setSendLaterOpen((open) => !open)}
+            disabled={sending}
+            aria-expanded={sendLaterOpen}
+            title="Send later"
+          >
+            Send later
+          </button>
+          {sendLaterOpen && (
+            <div className="compose-send-later-menu">
+              {/* The same "when later means" arithmetic snooze uses: whole
+                  hours, never in the past, and no option that would fire
+                  immediately. */}
+              {snoozePresets(Date.now())
+                .filter((preset) => preset.wakeAt !== null)
+                .map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="compose-send-later-item"
+                    onClick={() => {
+                      setSendLaterOpen(false)
+                      void handleSend(preset.wakeAt as number)
+                    }}
+                  >
+                    <span>{preset.label}</span>
+                    <span className="compose-send-later-when">
+                      {formatWakeAt(preset.wakeAt as number)}
+                    </span>
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
+        <button className="btn btn-primary" onClick={() => void handleSend()} disabled={sending}>
           {sending ? 'Sending…' : 'Send'}
         </button>
       </div>

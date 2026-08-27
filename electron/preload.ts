@@ -63,6 +63,14 @@ const api: OrbitMailAPI = {
     deleteMany: (items) => ipcRenderer.invoke('messages:deleteMany', items),
     moveMany: (items) => ipcRenderer.invoke('messages:moveMany', items),
     undoRelocate: (entries) => ipcRenderer.invoke('messages:undoRelocate', entries),
+    snooze: (messageIds, wakeAt) => ipcRenderer.invoke('messages:snooze', messageIds, wakeAt),
+    listSnoozed: () => ipcRenderer.invoke('messages:listSnoozed'),
+    unsnooze: (scheduledId) => ipcRenderer.invoke('messages:unsnooze', scheduledId),
+    onUnsnoozed: (callback) => {
+      const listener = (_e: unknown, rfcMessageId: string) => callback(rfcMessageId)
+      ipcRenderer.on('messages:unsnoozed', listener)
+      return () => ipcRenderer.removeListener('messages:unsnoozed', listener)
+    },
     move: (messageId, targetFolderId) =>
       ipcRenderer.invoke('messages:move', messageId, targetFolderId),
     copy: (messageId, targetFolderId) =>

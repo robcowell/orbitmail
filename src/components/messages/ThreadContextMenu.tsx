@@ -13,7 +13,8 @@ import {
   moveThreadToFolder,
   moveSelectedThreadsToFolder,
   selectThread,
-  setThreadFlagColor
+  setThreadFlagColor,
+  snoozeThread
 } from '../../stores/mailStore'
 import { extractSenderEmail, type MessageComposeMode } from '../../utils/messageActions'
 import { printThreadById } from '../../utils/printMessage'
@@ -53,6 +54,14 @@ export function ThreadContextMenu({ thread, x, y, onClose }: ThreadContextMenuPr
 
   const items = useMemo(() => {
     const { accountId, threadId } = thread
+    // Snoozing mail you sent, a draft, or something already asleep is
+    // meaningless, so the menu does not offer it in those folders.
+    const currentFolder = folders.find((f) => f.id === selectedFolderId)
+    const canSnooze =
+      !currentFolder ||
+      (currentFolder.type !== 'sent' &&
+        currentFolder.type !== 'drafts' &&
+        currentFolder.name !== 'Snoozed')
     const compose = (mode: MessageComposeMode) =>
       window.orbitMail.compose.open({
         accountId,
@@ -81,6 +90,11 @@ export function ThreadContextMenu({ thread, x, y, onClose }: ThreadContextMenuPr
         del: () => (inSelection ? deleteSelectedThreads() : deleteThread(accountId, threadId)),
         setFlag: (color) => setThreadFlagColor(accountId, threadId, color),
         archive: () => (inSelection ? archiveSelectedThreads() : archiveThread(accountId, threadId)),
+        // Snoozing mail you sent, or a draft, or something already asleep, is
+        // meaningless — the menu simply does not offer it there.
+        snooze: canSnooze
+          ? (wakeAt: number) => snoozeThread(accountId, threadId, wakeAt)
+          : undefined,
         move: (folderId) =>
           inSelection
             ? moveSelectedThreadsToFolder(folderId)

@@ -93,6 +93,14 @@ Two habits that prevent the worst of it:
   a confident, wrong "no". That has already produced a shipped commit deleting a
   true statement from DEVELOPERS.md and filing a gap that did not exist. Confirm
   any "nothing covers this" against the named file, or `rg --text`.
+- **Never assert on a formatted date or number.** `toLocaleString` follows the
+  machine's locale, so `12,000` here is `12.000` in German and `2 Apr` is
+  `Apr 2` in CI. Three assertions were written against a UK machine's output and
+  one of them failed in CI; the other two would only have failed for a
+  contributor abroad. Compare against the platform's own formatting
+  (`` `${(12000).toLocaleString()} conversations` ``) or assert the shape rather
+  than the string. `npm run test:store` can be run under `LC_ALL=de_DE.UTF-8`
+  to check.
 - **Document what is *not* handled.** A security or feature section that lists
   only wins is worse than none: remote images still load, credential encryption
   degrades without a keyring, thread listing is still linear in account size.
@@ -154,8 +162,10 @@ message is back **on the server** — the pure half is covered by `test:store` a
 the Message-ID lookup by `test:imap`, but neither can render a toast, click its
 button, or see where the mail actually ended up. **shortcuts** presses a real
 `a` and checks a reply-all composer opens addressed to everyone on the thread
-but us — asserting only that a window opened would prove nothing. All seven also
-assert **nothing threw**.
+but us — asserting only that a window opened would prove nothing. All eight also
+assert **nothing threw**. **snooze** moves a real message to the Snoozed folder
+and asserts against the *server* that it left the inbox and came back when due —
+the only thing snooze actually promises, and invisible from inside the app.
 Needs Docker *and* a display (headless Ozone segfaults on the
 first window), so it is **not in CI** — run it after touching the compose/send
 path, signatures, zoom, message actions, keyboard shortcuts, or anything

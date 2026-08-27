@@ -4,6 +4,7 @@
 import type { IconProps } from '@phosphor-icons/react'
 import { Tray } from '@phosphor-icons/react/dist/ssr/Tray'
 import { SidebarSimple } from '@phosphor-icons/react/dist/ssr/SidebarSimple'
+import { Clock } from '@phosphor-icons/react/dist/ssr/Clock'
 import { PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr/PaperPlaneTilt'
 import { NotePencil } from '@phosphor-icons/react/dist/ssr/NotePencil'
 import { Trash } from '@phosphor-icons/react/dist/ssr/Trash'
@@ -82,6 +83,7 @@ export {
   Trash,
   WarningCircle,
   SidebarSimple,
+  Clock,
   Folder,
   TrayArrowDown,
   PlusCircle,

@@ -111,9 +111,11 @@ import {
   scheduleAction,
   cancelAction,
   getAction,
+  listActions,
   registerHandler,
   startScheduler,
-  stopScheduler
+  stopScheduler,
+  type ScheduledAction
 } from './services/scheduler'
 import {
   startIdleMonitoring,
@@ -474,6 +476,13 @@ function senderName(from: string): string {
  * setting, which is what people eventually want from it.
  */
 const UNDO_SEND_MS = 10_000
+
+/**
+ * Where snoozed mail waits. A plain folder name rather than a special one:
+ * every IMAP server can make it, it is visible in webmail and on a phone, and
+ * a user who abandons Orbit is left with their mail in an obvious place.
+ */
+const SNOOZE_FOLDER = 'Snoozed'
 
 /** Told the renderer once the message is actually away, so it can say so. */
 function notifySendCompleted(subject: string): void {
@@ -1520,6 +1529,114 @@ function registerIpc(): void {
     notifySendScheduled({ scheduledId, dueAt, subject: payload.subject ?? '' })
 
     return { scheduledId, dueAt, draftId: draftId ?? null }
+  })
+
+  /**
+   * The folder a snoozed message waits in, created on the server if absent.
+   *
+   * A real folder rather than a local flag, so the message genuinely leaves the
+   * inbox on your phone and in webmail too. A snooze that only hides mail in
+   * this app would leave the inbox lying everywhere else, which is the opposite
+   * of what snoozing is for.
+   */
+  const ensureSnoozeFolder = async (accountId: string) => {
+    const existing = listFolders(accountId).find(
+      (f) => f.name === SNOOZE_FOLDER || f.imapPath === SNOOZE_FOLDER
+    )
+    if (existing) return existing
+
+    await createMailbox(accountId, SNOOZE_FOLDER)
+    await pollForNewMessages({ announce: false })
+    return listFolders(accountId).find(
+      (f) => f.name === SNOOZE_FOLDER || f.imapPath === SNOOZE_FOLDER
+    )
+  }
+
+  const runSnoozeAction = async (action: ScheduledAction): Promise<void> => {
+    const payload = action.payload as
+      | { rfcMessageId?: string; folderId?: string }
+      | null
+    if (!payload?.rfcMessageId || !payload.folderId) return
+
+    // The row it was snoozed from no longer exists — a move deletes it locally
+    // and the poll re-imports the message under a new id. Found by Message-ID,
+    // the same handle undo uses and for the same reason.
+    const rows = findMessagesByRfcId(action.accountId, payload.rfcMessageId)
+    const row = rows.find((r) => r.folderId !== payload.folderId)
+    if (!row) return
+
+    // The folder it came from may have been deleted while it slept. Better the
+    // inbox than nowhere, so it is not silently lost.
+    const home = getFolderById(payload.folderId)
+      ? payload.folderId
+      : (listFolders(action.accountId).find((f) => f.type === 'inbox')?.id ?? null)
+    if (!home) return
+
+    await relocateMany([{ id: row.id, targetFolderId: home }])
+    notifyMessagesUpdated()
+    const win = liveMainWindow()
+    if (win) win.webContents.send('messages:unsnoozed', payload.rfcMessageId)
+  }
+
+  registerHandler('snooze', runSnoozeAction)
+
+  ipcMain.handle(
+    'messages:snooze',
+    async (_, messageIds: string[], wakeAt: number) => {
+      let snoozed = 0
+      let failed = 0
+
+      for (const messageId of messageIds) {
+        const msg = getMessage(messageId)
+        if (!msg || !msg.messageId) {
+          // No Message-ID means no way to find it again when it is due, so it
+          // cannot be snoozed at all. Counted, not silently skipped.
+          failed++
+          continue
+        }
+        const folder = await ensureSnoozeFolder(msg.accountId)
+        if (!folder) {
+          failed++
+          continue
+        }
+        const from = msg.folderId
+        const result = await relocateMany([{ id: messageId, targetFolderId: folder.id }])
+        if (result.deleted === 0) {
+          failed++
+          continue
+        }
+        scheduleAction({
+          accountId: msg.accountId,
+          kind: 'snooze',
+          dueAt: wakeAt,
+          payload: { rfcMessageId: msg.messageId, folderId: from }
+        })
+        snoozed++
+      }
+
+      notifyMessagesUpdated()
+      return { snoozed, failed }
+    }
+  )
+
+  /** Everything currently asleep, so the UI can say when each is due back. */
+  ipcMain.handle('messages:listSnoozed', () =>
+    listActions('snooze').map((a) => ({
+      id: a.id,
+      accountId: a.accountId,
+      wakeAt: a.dueAt,
+      rfcMessageId: (a.payload as { rfcMessageId?: string })?.rfcMessageId ?? ''
+    }))
+  )
+
+  /** Bring one back now rather than waiting for it to be due. */
+  ipcMain.handle('messages:unsnooze', async (_, scheduledId: string) => {
+    const action = getAction(scheduledId)
+    if (!action || !cancelAction(scheduledId)) return false
+    // Reuse the handler's own logic by running it directly: due-now and
+    // asked-for-now should not be two different code paths.
+    await runSnoozeAction(action)
+    return true
   })
 
   // Undo: drop the pending send and hand back the draft to reopen. Returns

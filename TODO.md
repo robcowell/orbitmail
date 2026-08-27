@@ -111,6 +111,43 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Snooze** — the second of B5's three, on the scheduler from the first. A
+  message is **moved to a real `Snoozed` folder on the server**, not hidden
+  behind a local flag: a snooze that only hid mail in this app would leave the
+  inbox lying on your phone and in webmail, which is the opposite of the point.
+  It also means someone who stops using Orbit finds their mail somewhere obvious.
+
+  Keyed by **RFC Message-ID**, like undo and for the same reason — the local row
+  does not survive the move. A message with no Message-ID cannot be snoozed at
+  all and is reported rather than accepted and lost. If the folder it came from
+  has been deleted by the time it wakes, it goes to the inbox rather than
+  nowhere.
+
+  **The folder is not called "Snoozed" on every server.** One that puts new
+  mailboxes under the personal namespace creates `INBOX.Snoozed` — which is what
+  GreenMail does. The app copes because it matches the leaf name; the e2e suite
+  did not, and its first run reported an empty Snoozed folder for a message
+  sitting in it. Worth knowing before writing any other check against a folder
+  this app creates.
+
+  **Presets land on a whole hour.** A message snoozed at 09:47 until tomorrow
+  arrives at 08:00, not 09:47, or the inbox fills at times nobody chose. "Later
+  today" disappears in the evening rather than quietly meaning tomorrow, and
+  "this weekend" asked on a Saturday means the *next* Saturday — the rule that
+  stops a preset firing in the past, mutation-tested across every day and five
+  times of day.
+
+  **CI caught a locale-dependent assertion**, and chasing it found two more from
+  the list-header work that had been green since they were written. `12,000` is
+  `12.000` in German and `2 Apr` is `Apr 2` in CI, so three checks were testing
+  the machine rather than the code — one failed in CI, the other two would only
+  ever have failed for a contributor abroad. All three now compare against the
+  platform's own formatting, `test:store` passes under en_GB, en_US and de_DE,
+  and the trap is written into CLAUDE.md.
+
+  Remaining from B5: scheduled send, which is the same scheduler with a
+  user-chosen time instead of ten seconds.
+
 - **A scheduler, and undo send** — the first of B5's three features, and the
   foundation the other two run on. Undo send, scheduled send and snooze all
   need the same thing, so they share one table (`scheduled_actions`) and one

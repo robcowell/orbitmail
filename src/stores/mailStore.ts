@@ -30,6 +30,7 @@ import {
   scheduleSaveUiPreferences
 } from './persistence'
 import { findAccountFolder, findArchiveFolder } from '../utils/folders'
+import { formatWakeAt } from '../utils/snoozePresets'
 import { buildTasksMarkdown, buildTasksPrintHtml, defaultTasksFilename } from '../utils/taskExport'
 import { draftToHtml } from '../utils/replyDraft'
 
@@ -1168,6 +1169,46 @@ export async function undoSend(): Promise<void> {
     if (result.draftId) await window.orbitMail.drafts.open(result.draftId)
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Could not cancel that send')
+  }
+}
+
+/**
+ * Send a conversation away until `wakeAt`.
+ *
+ * Optimistic like every other relocation here: the rows leave the list at once
+ * and the server round-trip follows. A message with no Message-ID cannot be
+ * found again when it is due, so it cannot be snoozed — the count comes back in
+ * `failed` and is said out loud rather than quietly dropped.
+ */
+export async function snoozeThread(
+  accountId: string,
+  threadId: string,
+  wakeAt: number
+): Promise<void> {
+  const store = useMailStore.getState()
+  const messages =
+    store.selectedThreadId === threadId && store.selectedThread
+      ? store.selectedThread
+      : await window.orbitMail.messages.getThread(accountId, threadId)
+  if (messages.length === 0) return
+
+  const ids = messages.map((m) => m.id)
+  removeThreadAndAdvance(accountId, threadId)
+
+  try {
+    const result = await withPendingRemoval(ids, [expandKey(accountId, threadId)], () =>
+      window.orbitMail.messages.snooze(ids, wakeAt)
+    )
+    await refreshFoldersUnread()
+    const back = formatWakeAt(wakeAt)
+    store.setToast(
+      result.failed > 0
+        ? `Snoozed until ${back} — ${result.failed} could not be snoozed`
+        : `Snoozed until ${back}`
+    )
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not snooze that')
+    await refreshMessages()
   }
 }
 

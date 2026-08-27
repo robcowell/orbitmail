@@ -1,6 +1,7 @@
 import type { FlagColor, Folder } from '../../../shared/types'
 import { FLAG_COLORS } from '../../constants/flags'
 import type { ContextMenuItem } from '../ui/ContextMenu'
+import { snoozePresets, formatWakeAt } from '../../utils/snoozePresets'
 import {
   extractSenderEmail,
   foldersForAccount,
@@ -17,6 +18,7 @@ import {
   EnvelopeOpen,
   Envelope,
   BellSlash,
+  Clock,
   Trash,
   Prohibit,
   Flag,
@@ -56,6 +58,8 @@ export interface MailMenuActions {
   del: () => void | Promise<void>
   setFlag: (flagColor: FlagColor | null) => void | Promise<void>
   archive: () => void | Promise<void>
+  /** Optional: absent where snoozing makes no sense (Sent, Drafts, Snoozed). */
+  snooze?: (wakeAt: number) => void | Promise<void>
   move: (folderId: string) => void | Promise<void>
   copy: (folderId: string) => void | Promise<void>
   print: () => void | Promise<void>
@@ -76,6 +80,24 @@ function folderItems(
       id: `folder-${folder.id}`,
       label: folder.name,
       onClick: () => onSelect(folder.id)
+    }))
+}
+
+/**
+ * The snooze presets, minus any that have already passed today. "Later today"
+ * disappears in the evening rather than quietly meaning tomorrow — a preset
+ * that lies about when it will fire is worse than one that is missing.
+ */
+function snoozeItems(
+  snooze: (wakeAt: number) => void | Promise<void>,
+  run: RunFn
+): ContextMenuItem[] {
+  return snoozePresets(Date.now())
+    .filter((preset) => preset.wakeAt !== null)
+    .map((preset) => ({
+      id: `snooze-${preset.id}`,
+      label: `${preset.label} — ${formatWakeAt(preset.wakeAt as number)}`,
+      onClick: () => run(() => snooze(preset.wakeAt as number))
     }))
 }
 
@@ -216,6 +238,16 @@ export function buildMailMenuItems(
       icon: <Archive size={16} weight="duotone" />,
       onClick: () => run(actions.archive)
     },
+    ...(actions.snooze
+      ? [
+          {
+            id: 'snooze',
+            label: bulk ? `Snooze ${count} ${noun}` : 'Snooze',
+            icon: <Clock size={16} weight="duotone" />,
+            submenu: snoozeItems(actions.snooze, run)
+          }
+        ]
+      : []),
     {
       id: 'move-to',
       label: bulk ? `Move ${count} ${noun} to` : 'Move to',

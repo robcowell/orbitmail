@@ -111,6 +111,41 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **`npm run test:pure`, and mutation coverage for the main process** — the
+  second half of the testing work. The mutation check could only reach the
+  renderer, because a sweep against `test:imap` (Docker, Electron, ~90s a run)
+  would take hours.
+
+  **Four modules import nothing at all** — `attachment-safety.ts`,
+  `network-reachability.ts`, `sync-policy.ts`, `thread-util.ts`. They lived in
+  the integration suite because there was nowhere else to put them. They now run
+  under plain node in about a second, which makes them mutation-testable.
+  Coverage **moved** rather than duplicated, and the arithmetic was checked
+  across the move: 723 assertions before, 678 + 45 after. `test:imap` keeps what
+  needs a server — that a refused connection reaches the *account* as "did not
+  reach" is an integration fact; what counts as refused is arithmetic.
+
+  **Two of the four had no direct coverage at all.** `sync-policy.ts` and
+  `thread-util.ts` were exercised only through sync behaviour. `computeThreadId`
+  decides which messages form a conversation and nothing asserted its precedence
+  rules, its subject-key fallback, or that a word merely *starting* like "Re"
+  is not treated as a prefix.
+
+  **What the sweep then found in `network-reachability.ts`:** every existing
+  case passed an `Error`, so the shape-extraction helpers were untested. A
+  thrown string, a plain object with a `message`, an object carrying only a
+  `code`, a number — all reach that classifier in the wild, and one mutation
+  showed an unrecognised code would have been treated as an outage merely for
+  existing.
+
+  Whole set now: **125 mutants, 115 caught, 10 justified, 0 unjustified.**
+
+  **Still unmeasured, and worth saying plainly:** anything touching the
+  database, a socket or a window. That includes the three proxy-assertion
+  mistakes that happened in `test:e2e` — the disabled-button click, the
+  `scrollWidth` conflation, the dead auth guard. Narrowing the hole is not
+  closing it.
+
 - **`npm run test:mutants`, and the 32 gaps it found** — the answer to "you keep
   reporting tests that prove nothing; are the tests just bad?" Fair question, and
   adding another trap to CLAUDE.md was treating the symptom.

@@ -54,7 +54,16 @@ const ALLOW_PATH = join(ROOT, 'scripts', 'mutants.allow.json')
 // The pure modules `test:store` reaches. Deliberately not mailStore.ts: it is
 // large, mostly IPC orchestration, and a mutation run over it would take an
 // hour to tell us what its own targeted tests already do.
+// Renderer modules run against `test:store`; main-process ones against
+// `test:pure`. Both suites are ~1s, which is what makes this feasible at all.
+const SUITE_FOR = (file) =>
+  file.startsWith('electron/') ? 'npm run test:pure' : 'npm run test:store'
+
 const DEFAULT_TARGETS = [
+  'electron/services/network-reachability.ts',
+  'electron/services/attachment-safety.ts',
+  'electron/services/sync-policy.ts',
+  'electron/services/thread-util.ts',
   'src/utils/paneLayout.ts',
   'src/utils/syncStatus.ts',
   'src/utils/search.ts',
@@ -105,9 +114,9 @@ async function bundleOf(file) {
   return result.outputFiles[0].text
 }
 
-function runStoreTests() {
+function runSuite(file) {
   try {
-    execSync('npm run test:store', { cwd: ROOT, stdio: 'pipe', timeout: 180_000 })
+    execSync(SUITE_FOR(file), { cwd: ROOT, stdio: 'pipe', timeout: 180_000 })
     return true // suite passed — the mutant survived
   } catch {
     return false // suite failed — the mutant was caught
@@ -164,7 +173,7 @@ async function main() {
         }
 
         applied++
-        const survived = runStoreTests()
+        const survived = runSuite(file)
         if (!survived) {
           caught++
           continue
@@ -190,7 +199,7 @@ async function main() {
 
   console.log('\n=== mutation check ===')
   console.log(`mutants applied        : ${applied}`)
-  console.log(`caught by test:store   : ${caught}`)
+  console.log(`caught by the suite    : ${caught}`)
   console.log(`survived, justified    : ${justified.length}`)
   console.log(`survived, UNJUSTIFIED  : ${survivors.length}`)
   console.log(`skipped (no-op edits)  : ${skipped}`)

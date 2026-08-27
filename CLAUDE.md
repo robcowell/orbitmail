@@ -122,10 +122,17 @@ Two habits that prevent the worst of it:
 
 There is **no unit-test framework and no linter** in this repo. Verification = `npm run build` passes, plus three test commands.
 
-`npm run test:mutants` — changes one token at a time in the pure renderer
-modules and checks `test:store` notices. A surviving mutant is a decision no
+`npm run test:pure` — pure main-process logic under plain node (~1s, no Docker,
+no Electron). `attachment-safety.ts`, `network-reachability.ts`,
+`sync-policy.ts` and `thread-util.ts` import nothing, so they need neither — and
+living in `test:imap` made them impossible to mutation-test. **A module bundled
+here must import nothing**; the moment one needs the DB or Electron it goes back
+to `test:imap`.
+
+`npm run test:mutants` — changes one token at a time in the pure renderer and
+main-process modules and checks `test:store` notices. A surviving mutant is a decision no
 assertion depends on: the code could be wrong there and nothing would say. Run
-it after touching `src/utils/*.ts`; `--strict` exits non-zero on any survivor
+it after touching `src/utils/*.ts` or any module in `test:pure`; `--strict` exits non-zero on any survivor
 not justified in `scripts/mutants.allow.json`. This exists because several
 assertions here have asserted a *proxy* rather than the property —
 `scrollWidth > clientWidth` for "scrollable", a formatted string for "the right

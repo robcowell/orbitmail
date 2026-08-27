@@ -73,6 +73,10 @@ const SUITES = [
 ]
 
 const keep = process.argv.includes('--keep')
+// Run one suite by name: `npm run test:e2e -- --only window`. Ten suites take
+// several minutes, which is a poor loop when chasing a single flaky one.
+const onlyIdx = process.argv.indexOf('--only')
+const only = onlyIdx >= 0 ? process.argv[onlyIdx + 1] : null
 
 // Each suite gets its own app data, and the runner owns both: deleting a userData
 // directory from inside a still-running app just leaves SQLite to recreate the
@@ -170,7 +174,11 @@ console.log('[test:e2e] windows will appear briefly — that is expected')
 
 const failures = []
 try {
-  for (const suite of SUITES) {
+  const selected = only ? SUITES.filter((s) => s.name === only) : SUITES
+  if (only && selected.length === 0) {
+    fail(`No suite called "${only}". Known: ${SUITES.map((s) => s.name).join(', ')}`)
+  }
+  for (const suite of selected) {
     console.log(`\n[test:e2e] ${suite.name}`)
     const bundle = bundlePath(suite.name)
     buildHarness(suite.entry, bundle)
@@ -189,6 +197,6 @@ try {
 console.log(
   failures.length
     ? `\n[test:e2e] failed: ${failures.join(', ')}`
-    : `\n[test:e2e] all ${SUITES.length} suites passed`
+    : `\n[test:e2e] all ${selected.length} suite${selected.length === 1 ? '' : 's'} passed`
 )
 process.exit(failures.length ? 1 : 0)

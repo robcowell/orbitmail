@@ -3179,79 +3179,10 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
-  section('Attachments: opening one must not silently run code')
+  // 'Attachments: opening one must not silently run code' moved to test:pure.
+  // attachment-safety.ts imports nothing, so it needed neither Docker nor
+  // Electron — and living here made it impossible to mutation-test.
   // -------------------------------------------------------------------------
-  {
-    const { isExecutableAttachment, attachmentExtension, executableAttachmentWarning } =
-      await import('../electron/services/attachment-safety')
-
-    // The filename and its extension come from whoever sent the mail.
-    const risky = [
-      'invoice.pdf.exe', // reads as a PDF, ends in .exe
-      'Statement.desktop', // a launcher on Linux
-      'setup.sh',
-      'installer.run',
-      'tool.AppImage', // case must not matter
-      'macro.vbs',
-      'app.jar',
-      'script.py'
-    ]
-    for (const name of risky) {
-      ok(`warns before opening ${name}`, isExecutableAttachment(name))
-    }
-
-    const ordinary = [
-      'invoice.pdf',
-      'photo.jpeg',
-      'notes.txt',
-      'report.docx',
-      'archive.zip',
-      'sheet.xlsx',
-      'exec-summary.pdf' // must not match on a substring
-    ]
-    for (const name of ordinary) {
-      ok(`opens ${name} without a prompt`, !isExecutableAttachment(name))
-    }
-
-    ok('extension parsing takes the last segment',
-      attachmentExtension('a.tar.gz') === 'gz' && attachmentExtension('README') === '')
-
-    // The filename is the sender's, so it can be path-shaped, and the basename
-    // split is what makes the *directory's* extension not count. Both cases below
-    // fail without it: a plain lastIndexOf('.') reads "exe/readme" as an
-    // extension, and reads "x/.sh" as .sh — which flips the warning on.
-    ok('a directory carrying an extension does not lend it to the file',
-      attachmentExtension('setup.exe/README') === '',
-      attachmentExtension('setup.exe/README'))
-    ok('a basename that is only a dot-extension is a dotfile, not an extension',
-      !isExecutableAttachment('scripts/.sh') && attachmentExtension('scripts/.sh') === '')
-
-    // Path-shaped and still risky — the separator handling has to work in the
-    // ordinary direction too, for both kinds of slash.
-    ok('a path-shaped filename is still classified by its basename',
-      isExecutableAttachment('../../.local/share/applications/x.desktop') &&
-        isExecutableAttachment('C:\\Users\\rob\\AppData\\setup.exe'))
-    ok('and a risky-looking directory does not make an ordinary file risky',
-      !isExecutableAttachment('invoice.exe/report.pdf'))
-
-    // Neither of these is an extension, and treating them as one would either
-    // nag on every dotfile or match the empty string against the set.
-    ok('a leading dot is not an extension', attachmentExtension('.bashrc') === '')
-    ok('a trailing dot is not an extension', attachmentExtension('setup.exe.') === '')
-
-    // The warning is the whole mitigation — the dialog is what the user reads
-    // before deciding, and a `.pdf.exe` is built so the eye stops at `.pdf`.
-    const warning = executableAttachmentWarning('Invoice-2026.pdf.exe')
-    ok('the warning names the file in full',
-      warning.message.includes('Invoice-2026.pdf.exe'), warning.message)
-    ok('and states the extension that actually decides what runs',
-      warning.detail.includes('.exe') && !warning.detail.includes('.pdf file'),
-      warning.detail.slice(0, 60))
-    ok('the warning says opening may run a program, not that it will',
-      /may run/.test(warning.detail))
-    ok('and it names the sender as the reason to hesitate',
-      /sender/.test(warning.detail))
-  }
 
   // -------------------------------------------------------------------------
   section('Office attachments: analysis must read them, not name them')
@@ -5689,53 +5620,9 @@ async function main(): Promise<void> {
   section('Reachability: being refused is not being offline')
   // -------------------------------------------------------------------------
   {
-    // The offline banner used to come from navigator.onLine, which reports
-    // whether a network interface exists rather than whether anything is
-    // reachable over it. This classifier is the evidence that replaced it, and
-    // the distinction it has to get right is refused-vs-never-reached.
-    const { isUnreachableError, reachedServer } =
-      await import('../electron/services/network-reachability')
-
-    const code = (c: string) => Object.assign(new Error('boom'), { code: c })
-
-    for (const c of ['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'EAI_AGAIN']) {
-      ok(`${c} is a connection that never landed`, isUnreachableError(code(c)))
-    }
-    ok('the code is matched whatever its case', isUnreachableError(code('econnrefused')))
-
-    // Several layers here rethrow as plain Errors, so the code is usually gone
-    // by the time sync sees it — the message has to carry the classification.
-    ok('a bare message still classifies',
-      isUnreachableError(new Error('connect ECONNREFUSED 127.0.0.1:993')))
-    ok('so does a DNS failure with no code',
-      isUnreachableError(new Error('getaddrinfo ENOTFOUND imap.example.com')))
-    ok('and a socket that hung up', isUnreachableError(new Error('socket hang up')))
-    // The wording the libraries actually use. Matching only "socket timeout"
-    // and "connection timeout" missed all of these, so a real outage was read
-    // as "reached" and the banner never appeared.
-    ok('a bare timeout counts', isUnreachableError(new Error('Command failed: Timeout')))
-    ok('so does "timed out"', isUnreachableError(new Error('Timed out while connecting to server')))
-
-    // The rule that matters most: being told "no" means we got there. Calling
-    // this an outage sends the user to fix their wifi instead of their password.
-    ok('an authentication failure is NOT unreachable',
-      !isUnreachableError(new Error('Authentication failed: token expired')))
-    ok('nor is an invalid_grant', !isUnreachableError(new Error('invalid_grant')))
-    ok('nor a rejected password',
-      !isUnreachableError(new Error('[AUTHENTICATIONFAILED] Invalid credentials')))
-    // Auth errors that happen to name a host and a timeout-ish word must still
-    // read as reached, which is why the auth test runs first.
-    ok('an auth error mentioning a timeout is still not an outage',
-      !isUnreachableError(new Error('Login timeout: authentication failed for imap.example.com')))
-
-    ok('an unknown failure is treated as reached, not as an outage',
-      !isUnreachableError(new Error('Something else went wrong')))
-    ok('and so is a non-error value', !isUnreachableError(undefined))
-
-    ok('reachedServer is the inverse of the classifier',
-      reachedServer(new Error('invalid_grant')) === true &&
-      reachedServer(code('ECONNREFUSED')) === false)
-
+    // What counts as refused is arithmetic and lives in test:pure. What has to
+    // be proved here is that a real refused connection arrives at the *account*
+    // as 'did not reach' — which needs a server to refuse it.
     // End-to-end: a real refused connection has to arrive at the account as
     // "did not reach", not merely as an error string.
     const sync = await import('../electron/services/imap-sync')

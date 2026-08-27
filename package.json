@@ -29,6 +29,7 @@
     "postinstall": "electron-builder install-app-deps && bash scripts/install-electron.sh",
     "test:imap": "node scripts/imap-integration.mjs",
     "test:store": "node scripts/store-race.mjs",
+    "test:pure": "node scripts/pure-logic.mjs",
     "test:mutants": "node scripts/mutation-check.mjs",
     "test:e2e": "npm run build && node scripts/e2e.mjs",
     "ui:preview": "node scripts/ui-preview.mjs"

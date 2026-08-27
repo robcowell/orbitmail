@@ -3040,6 +3040,50 @@ textarea {
   justify-content: center;
 }
 
+/* The undo-send countdown. Sits above the toast rather than replacing it: the
+   two can be on screen together and say different things. */
+.pending-send {
+  position: fixed;
+  bottom: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--toast-bg);
+  color: white;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 201;
+  animation: fadeIn 0.2s ease;
+  box-shadow: var(--shadow-soft);
+}
+
+.pending-send-label {
+  font-variant-numeric: tabular-nums;
+}
+
+.pending-send-undo {
+  background: rgba(255, 255, 255, 0.16);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  padding: 3px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pending-send-undo:hover {
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.pending-send-undo:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 1px;
+}
+
 .toast-action {
   background: rgba(255, 255, 255, 0.16);
   color: inherit;

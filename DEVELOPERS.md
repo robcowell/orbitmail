@@ -797,6 +797,48 @@ the control, and the README says so.
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
 
+### Work the app owes the future (`scheduler.ts`)
+
+Three features need the same thing: a send held back so it can be undone, a
+send timed for later, and a snoozed message due to come home. They share one
+table (`scheduled_actions`) and one ticker rather than three timers, because the
+hard parts are identical — surviving a quit, and deciding what to do about
+something that fell due while the app was closed.
+
+**The honest bargain.** A desktop client has no server-side scheduler, so
+nothing happens while the app is shut. Anything overdue runs at the next start
+instead: late, but not lost. That is stated in the UI rather than hidden.
+
+Two rules the module exists to protect:
+
+- **A row is deleted *before* its handler runs.** A handler that throws halfway
+  — an SMTP failure *after* the message reached the server — must not leave a
+  row that sends it again on the next tick. Losing an action is recoverable by
+  the user; sending twice is not. `test:imap` mutation-tests this by moving the
+  delete after the handler.
+- **Overlapping runs are ignored, not queued.** The ticker and an explicit
+  `runDueActions()` can coincide, and running a send twice is the worst thing
+  this module can produce.
+
+The ticker is second-resolution because the shortest thing on the table is a
+ten-second undo-send window; a minute-resolution tick would make it feel broken.
+
+#### Undo send
+
+`compose:send` no longer sends. It saves the draft (so Undo has something to
+reopen, and so a quit inside the window loses nothing), schedules the send for
+ten seconds out, closes the composer, and tells the **main** window — which is
+where the offer to take it back has to live, because the composer has already
+gone.
+
+`compose:cancelSend` reports whether it actually won the race. `cancelled:
+false` means the hold expired first and the message is away, which the renderer
+surfaces as "Too late — that message has already been sent" rather than
+papering over. The draft is deleted only once the message is genuinely gone.
+
+The window is a constant rather than a setting, which is the usual next request
+— see TODO.md.
+
 ### The three panes adapt to the window
 
 There were no media queries anywhere, and the sidebar and list were both
@@ -2289,6 +2331,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
+| Scheduler | Something overdue runs at the next start, so a quit does not lose it, while something not yet due is left alone. A completed action is gone from the table and a second run does not repeat it. A handler that throws does not stall the queue and its row is **not** retried into a duplicate. Cancelling reports whether it won the race — twice, or after the action ran, both report false. An unparseable payload is dropped rather than wedging the queue. Removing an account cascades to its scheduled work. |
 | Undo lookup | A relocated message is findable by its RFC Message-ID and reports the folder it now sits in; every row for a Message-ID comes back, not just the first, so a Gmail row already in the destination can be told from one that is not; the lookup is scoped to one account, so an identical Message-ID in another account is not restored. |
 | Unified search | A null `accountId` searches every account and returns them interleaved newest-first, not grouped; an account id still scopes to that account alone; an **empty string** returns nothing rather than everything; the limit bounds the merged set rather than applying per account. |
 | Reachability | Connection-level failures (`ECONNREFUSED`, `ENOTFOUND`, `EHOSTUNREACH`, bare "Timeout"/"Timed out") classify as never-reached, by code and by bare message; authentication failures classify as *reached*, including one phrased as a login timeout; an unknown failure defaults to reached. End to end, a refused connection records `reachedServer: false` on the account and a successful sync records `true`. |

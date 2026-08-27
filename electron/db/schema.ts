@@ -145,6 +145,35 @@ export const appPreferences = sqliteTable('app_preferences', {
 // `completed` rows persist so the user keeps a history and the model can be told
 // not to resurface work already done. `id` is a stable dedupe key derived from
 // the source message + normalized task text.
+/**
+ * Work the app owes the future: a send held back so it can be undone, a send
+ * timed for later, a snoozed message due to come home.
+ *
+ * Persisted rather than kept in memory because the app is not always running —
+ * quitting inside an undo-send window must not lose the message, and a snooze
+ * set on Friday has to survive until Monday. Anything overdue at startup runs
+ * then, which is the honest bargain for a desktop client with no server-side
+ * scheduler: it happens when the app is next open, not necessarily on time.
+ */
+export const scheduledActions = sqliteTable(
+  'scheduled_actions',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    kind: text('kind', { enum: ['send', 'snooze'] }).notNull(),
+    /** When it should happen. Epoch ms. */
+    dueAt: integer('due_at').notNull(),
+    /** Kind-specific JSON: a draft id for a send, a Message-ID for a snooze. */
+    payload: text('payload').notNull(),
+    createdAt: integer('created_at').notNull()
+  },
+  (table) => ({
+    dueIdx: index('scheduled_actions_due_idx').on(table.dueAt)
+  })
+)
+
 export const sweepTasks = sqliteTable(
   'sweep_tasks',
   {

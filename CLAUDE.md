@@ -93,6 +93,10 @@ Two habits that prevent the worst of it:
   a confident, wrong "no". That has already produced a shipped commit deleting a
   true statement from DEVELOPERS.md and filing a gap that did not exist. Confirm
   any "nothing covers this" against the named file, or `rg --text`.
+- **`scrollWidth > clientWidth` is not "it scrolls".** With `overflow-x: hidden`
+  the metric stays true while the content is clipped and unreachable, so an
+  assertion written that way passes against broken CSS — it happened twice in
+  one sitting. Set `scrollLeft` and check it moved.
 - **Never assert on a formatted date or number.** `toLocaleString` follows the
   machine's locale, so `12,000` here is `12.000` in German and `2 Apr` is
   `Apr 2` in CI. Three assertions were written against a UK machine's output and
@@ -162,12 +166,14 @@ message is back **on the server** — the pure half is covered by `test:store` a
 the Message-ID lookup by `test:imap`, but neither can render a toast, click its
 button, or see where the mail actually ended up. **shortcuts** presses a real
 `a` and checks a reply-all composer opens addressed to everyone on the thread
-but us — asserting only that a window opened would prove nothing. All nine also
+but us — asserting only that a window opened would prove nothing. All ten also
 assert **nothing threw**. **snooze** moves a real message to the Snoozed folder
 and asserts against the *server* that it left the inbox and came back when due —
 the only thing snooze actually promises, and invisible from inside the app.
 **scheduled-send** proves a timed message waits past the undo window and that
-opening its draft takes it out of the queue.
+opening its draft takes it out of the queue. **reader-overflow** feeds the reader
+hostile-width HTML and checks a sender cannot push the app's own controls
+off-screen.
 Needs Docker *and* a display (headless Ozone segfaults on the
 first window), so it is **not in CI** — run it after touching the compose/send
 path, signatures, zoom, message actions, keyboard shortcuts, or anything

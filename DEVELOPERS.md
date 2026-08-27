@@ -797,6 +797,40 @@ the control, and the README says so.
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
 
+### A sender cannot move this app's controls
+
+Message bodies are attacker-controlled HTML, and nothing constrained their
+width. `.pane-reader` has `overflow-y: auto`, which makes `overflow-x` compute
+to `auto` as well — so a wide table from a stranger's newsletter scrolled the
+**whole pane**, taking the subject line and the Reply buttons with it.
+
+Three rules, each mutation-tested in `e2e-reader-overflow.suite.ts`:
+
+- **`.reader-body` is its own horizontal scroll container.** Wide content
+  scrolls there, inside the message, while the header stays put. Removing it
+  leaves the content clipped by the pane and **unreachable** — the rest of the
+  table cannot be read at all.
+- **`.pane-reader` sets `overflow-x: hidden` explicitly**, because
+  `overflow-y: auto` alone would compute it to `auto`.
+- **The reader header wraps.** Six buttons — Reply, Reply All, Forward, Print,
+  Draft reply, Update summary — do not fit a ~700px reader, and `flex-shrink: 0`
+  made overflowing the only available outcome. `.reader-header-top` and
+  `.reader-header-actions` both wrap now; either is enough at typical widths,
+  and the second is the backstop for when the buttons alone exceed the full
+  width. Removing **both** is what fails the check.
+
+Images are capped at `max-width: 100%`, and long unbreakable runs use
+`overflow-wrap: anywhere` — `anywhere` rather than `break-word` because it also
+shrinks the intrinsic min-content width, which is what stops one long tracking
+URL widening a table cell.
+
+**A measurement trap this cost two attempts.** `scrollWidth > clientWidth` says
+content is wider; it does **not** say the user can scroll to it. With
+`overflow-x: hidden` the metric is still true while the content is clipped and
+unreachable. Both assertions here were written the wrong way round first and
+passed against deliberately broken CSS. Assert what a person can do — set
+`scrollLeft` and see whether it moved.
+
 ### Work the app owes the future (`scheduler.ts`)
 
 Three features need the same thing: a send held back so it can be undone, a
@@ -2479,6 +2513,13 @@ everything around it — that `before-input-event` is registered at all, that th
 key reaches it, that the frame is actually zoomed rather than the level merely
 stored, that the level survives the reload used to recover a dead renderer, and
 that a composer opens at the same size as the window that spawned it.
+
+**`e2e-reader-overflow.suite.ts` — can a sender move this app's controls?**
+Syncs a message full of hostile-width content — a 40-column table, a 400-char
+URL, a 3000px image — and asserts nothing in the reader pane is wider than the
+pane, the app does not scroll sideways, the wide content is still *reachable* by
+scrolling the message body, and scrolling it leaves the Reply button exactly
+where it was.
 
 **`e2e-scheduled-send.suite.ts` — does a timed message wait, and can it be
 taken back?** Schedules a send for an hour out, waits past the undo window to

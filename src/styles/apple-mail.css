@@ -454,6 +454,10 @@ textarea {
 .pane-reader {
   flex: 1;
   overflow-y: auto;
+  /* Explicit, because `overflow-y: auto` alone computes overflow-x to `auto`
+     too — which is how message content came to scroll the pane. The body has
+     its own horizontal scroll; the pane must never have one. */
+  overflow-x: hidden;
   background: var(--bg-main);
 }
 
@@ -1263,9 +1267,40 @@ textarea {
      an escaped `position: fixed` resolves against the reader pane rather than
      the viewport. The sanitizer strips fixed/sticky/absolute positioning; this
      backstops it. Deliberately not `contain: paint` — that would clip wide
-     emails instead of letting them overflow. */
+     emails rather than letting them scroll. */
   position: relative;
   contain: layout;
+  /* Wide content scrolls *here*, inside the body. Without this the spill
+     reaches .pane-reader, whose overflow-y makes overflow-x compute to auto —
+     so a wide table from a stranger's newsletter scrolled the whole pane and
+     took the subject and the Reply buttons off-screen with it. A sender should
+     not be able to move this app's own controls. */
+  overflow-x: auto;
+}
+
+/* An image sized in pixels by the sender is scaled to fit rather than allowed
+   to force a scrollbar — what every mail client does, and the common case by
+   far. `height: auto` keeps the aspect ratio when only a width was set. */
+.reader-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* A long unbreakable run — a tracking URL, a base64 blob pasted as text — wraps
+   instead of overflowing. `anywhere` rather than `break-word` so it also
+   shrinks the element's intrinsic min-content width, which is what stops a
+   table cell being widened by one long link. */
+.reader-body,
+.reader-body p,
+.reader-body div,
+.reader-body td,
+.reader-body a {
+  overflow-wrap: anywhere;
+}
+
+/* A table cannot reflow, so it keeps its width and scrolls with the body. */
+.reader-body table {
+  max-width: 100%;
 }
 
 .reader-body-loading {
@@ -2222,6 +2257,10 @@ textarea {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  /* The subject and the action buttons stack rather than overflow once the
+     reader is narrow — which it now can be, since the panes adapt to the
+     window and the app can be snapped to half a screen. */
+  flex-wrap: wrap;
 }
 
 .reader-star-btn {
@@ -2244,7 +2283,12 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  /* Six buttons — Reply, Reply All, Forward, Print, Draft reply, Update
+     summary — do not fit a ~700px reader. They used to overflow the header
+     silently, which put the app's own controls outside its own pane; now they
+     wrap onto a second line. `flex-shrink: 0` was what made overflow the only
+     available outcome. */
+  flex-wrap: wrap;
 }
 
 .reader-ai-btn {

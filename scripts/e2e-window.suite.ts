@@ -76,6 +76,66 @@ async function main(): Promise<void> {
   if (!started) return
   const mainWin = BrowserWindow.getAllWindows()[0]
 
+  // ---- Responsive panes ------------------------------------------------
+  // fitPanes is pure and covered by test:store. What needs a window is whether
+  // the ResizeObserver fires at all and the widths it computes actually reach
+  // the DOM — before this the sidebar and list were flex-shrink:0, so the
+  // reader absorbed every pixel the window lost.
+  const readPanes = () =>
+    mainWin.webContents.executeJavaScript(
+      `(() => {
+         const w = (sel) => {
+           const el = document.querySelector(sel);
+           return el ? Math.round(el.getBoundingClientRect().width) : null;
+         };
+         return {
+           sidebar: w('.pane-sidebar'),
+           list: w('.pane-list'),
+           reader: w('.pane-reader'),
+           bodyOverflows: document.documentElement.scrollWidth > window.innerWidth + 1
+         };
+       })()`, true
+    ) as Promise<{
+      sidebar: number | null
+      list: number | null
+      reader: number | null
+      bodyOverflows: boolean
+    }>
+
+  mainWin.setBounds({ ...mainWin.getBounds(), width: 1500 })
+  await sleep(700)
+  const wide = await readPanes()
+  ok('at 1500px all three panes are shown',
+    wide.sidebar !== null && wide.list !== null && (wide.reader ?? 0) > 400,
+    JSON.stringify(wide))
+
+  // The width that used to leave the subject wrapping over three lines.
+  mainWin.setBounds({ ...mainWin.getBounds(), width: 1000 })
+  await sleep(700)
+  const squeezed = await readPanes()
+  ok('narrowing the window shrinks the list rather than crushing the reader',
+    (squeezed.reader ?? 0) >= 380, JSON.stringify(squeezed))
+  ok('and nothing overflows the window sideways', squeezed.bodyOverflows === false,
+    JSON.stringify(squeezed))
+
+  mainWin.setBounds({ ...mainWin.getBounds(), width: 760 })
+  await sleep(700)
+  const narrow = await readPanes()
+  ok('below the breakpoint the sidebar is gone rather than squeezing the reader',
+    narrow.sidebar === null, JSON.stringify(narrow))
+  ok('the reader still has room with the sidebar hidden', (narrow.reader ?? 0) >= 380,
+    JSON.stringify(narrow))
+  ok('and still nothing overflows sideways', narrow.bodyOverflows === false,
+    JSON.stringify(narrow))
+
+  // Widening brings it back on its own — a collapse the user cannot reverse
+  // would be worse than no collapse.
+  mainWin.setBounds({ ...mainWin.getBounds(), width: 1500 })
+  await sleep(700)
+  const restored = await readPanes()
+  ok('widening the window brings the sidebar back', restored.sidebar !== null,
+    JSON.stringify(restored))
+
   // Close-to-tray is on by default and *hides* the window, in which case it is
   // never destroyed and the state under test cannot arise — which is exactly why
   // this went unnoticed. Turning it off is a real setting, and also how the app

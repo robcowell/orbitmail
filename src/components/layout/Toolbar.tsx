@@ -18,6 +18,7 @@ import { AppBrand } from '../brand/AppBrand'
 import { resolveSearchScope, searchPlaceholder as buildSearchPlaceholder } from '../../utils/search'
 import {
   iconProps,
+  SidebarSimple,
   PencilLine,
   Trash,
   Archive,
@@ -134,6 +135,13 @@ export function Toolbar() {
 
   // `accountId: null` here means "every account", not "no scope" — the unified
   // inbox is searchable, which is the whole point of this scope object.
+  const sidebarVisible = useMailStore((s) => s.sidebarVisible)
+  const toggleSidebar = useMailStore((s) => s.toggleSidebar)
+  // What the button reflects is what is on screen, which below the breakpoint
+  // is "hidden" even though the user has expressed no preference.
+  const sidebarShown =
+    sidebarVisible ?? (typeof window !== 'undefined' && window.innerWidth >= 900)
+
   const searchScope = resolveSearchScope(selectedFolderId, folders, accounts)
   const searchAccountId = searchScope.accountId
   const searchEnabled = searchScope.enabled
@@ -260,6 +268,17 @@ export function Toolbar() {
   return (
     <div className="toolbar">
       <AppBrand compact />
+
+      {/* The sidebar collapses on its own below ~900px, so there has to be a way
+          back — and a way to reclaim its width deliberately at any size. */}
+      <button
+        className="toolbar-btn"
+        title={sidebarShown ? 'Hide folders' : 'Show folders'}
+        aria-pressed={sidebarShown}
+        onClick={toggleSidebar}
+      >
+        <SidebarSimple {...iconProps} weight={sidebarShown ? 'fill' : 'duotone'} />
+      </button>
 
       <div className="toolbar-divider" />
 

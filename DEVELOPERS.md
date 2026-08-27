@@ -797,6 +797,43 @@ the control, and the README says so.
   move to an ordinary label keeps every other label, so the "deleted" message
   stays in All Mail, in search, and in thread views.
 
+### The three panes adapt to the window
+
+There were no media queries anywhere, and the sidebar and list were both
+`flex-shrink: 0`. The reader was the only flexible pane, so **it absorbed every
+pixel the window lost**: narrowing the window shrank the reader toward nothing
+while the other two kept their full width. At around 1000px the subject wrapped
+across three lines with its message count stranded on a fourth.
+
+`fitPanes` (`src/utils/paneLayout.ts`) decides the widths, and the layout applies
+them from a `ResizeObserver` rather than only during a drag — the window can
+change size without anyone touching a divider, and before this the panes simply
+did not notice. The dragged widths are treated as **preferences, not promises**.
+
+Space is reclaimed in the order a person would give it up: the **list** first (a
+column of rows degrades gracefully; prose does not), then the **sidebar** down to
+its own minimum, then the sidebar **entirely** below 900px. A collapse is
+recoverable and deliberate-able from a toolbar toggle, and an explicit request
+for the sidebar still loses to arithmetic when showing it would leave no room for
+two usable panes — an unusable window is worse than a hidden folder list.
+
+Two things this change had to fix to be worth anything:
+
+- **`minWidth` was 900**, so the collapse breakpoint was unreachable and the
+  code would never have run. More to the point, the app could not be snapped to
+  half of a 1366-wide laptop screen at all. The floor is now 660: what two
+  usable panes need (`MIN_LIST` + `MIN_READER` + a divider = 581) plus room for
+  the toolbar.
+- **The toolbar then overflowed**, and because it is above the panes the *whole
+  app* scrolled sideways while the panes below it fitted perfectly. It now has
+  `min-width: 0; overflow: hidden`, and the search box is the shock absorber —
+  the one control that stays usable at any width, so it gives up room before the
+  buttons do.
+
+The pure half is covered by `test:store`; whether the observer fires and the
+widths reach the DOM is covered by `test:e2e` → window, which resizes a real
+window and reads the pane widths back.
+
 ### Sync status is per account
 
 `SyncStatus` used to be a single global object — one `syncing` flag, one
@@ -2496,6 +2533,7 @@ could only have been tested through a real window.
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| Pane layout | The reader keeps its minimum at every window width; a squeeze takes from the list first and the sidebar second; the sidebar collapses below 900px and returns above it; an explicit preference wins in both directions but loses to arithmetic when it cannot fit; the panes always sum exactly to the window, so nothing overflows sideways. |
 | List header | Names the folder and qualifies it by account only when more than one exists; reports how much of the list is loaded ("20 of 143 conversations") and stops claiming a full count while showing part of one; counts conversations or messages according to the view; folds an active unread filter into the noun ("3 unread conversations") rather than repeating it beside the count; groups large numbers; and still names an unresolvable folder rather than rendering an empty header. |
 | Undo eligibility | A move records one entry per message, each pointing back at the folder it came from. A message the server expunged is not offered for undo and is counted so the toast can say so; one with no Message-ID likewise; and when nothing can be restored, undo is not offered at all rather than being a no-op button. |
 | Search scope | "All Inboxes" is searchable and scopes to every account, with a placeholder that says so — it used to read "Select a folder to search". One account is named rather than called "all accounts". A folder still scopes to its account. An unresolvable folder is **not** silently promoted to searching everything, which matters now that null means "all". Cross-account results are qualified by account, single-account results are not. |

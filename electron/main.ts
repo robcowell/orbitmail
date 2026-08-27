@@ -634,7 +634,12 @@ function createMainWindow(): void {
     height: windowPrefs?.height ?? 800,
     x: windowPrefs?.x,
     y: windowPrefs?.y,
-    minWidth: 900,
+    // 900 made the sidebar's collapse breakpoint unreachable — the window
+    // could never get narrow enough to trigger it — and, more to the point,
+    // made the app impossible to snap to half of a 1366-wide laptop screen.
+    // The floor is what two usable panes need: MIN_LIST + MIN_READER + the
+    // divider, which is 581, plus room for the toolbar.
+    minWidth: 660,
     minHeight: 600,
     show: false,
     title: 'Orbit Mail',

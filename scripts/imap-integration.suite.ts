@@ -5444,6 +5444,86 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Reachability: being refused is not being offline')
+  // -------------------------------------------------------------------------
+  {
+    // The offline banner used to come from navigator.onLine, which reports
+    // whether a network interface exists rather than whether anything is
+    // reachable over it. This classifier is the evidence that replaced it, and
+    // the distinction it has to get right is refused-vs-never-reached.
+    const { isUnreachableError, reachedServer } =
+      await import('../electron/services/network-reachability')
+
+    const code = (c: string) => Object.assign(new Error('boom'), { code: c })
+
+    for (const c of ['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'EAI_AGAIN']) {
+      ok(`${c} is a connection that never landed`, isUnreachableError(code(c)))
+    }
+    ok('the code is matched whatever its case', isUnreachableError(code('econnrefused')))
+
+    // Several layers here rethrow as plain Errors, so the code is usually gone
+    // by the time sync sees it — the message has to carry the classification.
+    ok('a bare message still classifies',
+      isUnreachableError(new Error('connect ECONNREFUSED 127.0.0.1:993')))
+    ok('so does a DNS failure with no code',
+      isUnreachableError(new Error('getaddrinfo ENOTFOUND imap.example.com')))
+    ok('and a socket that hung up', isUnreachableError(new Error('socket hang up')))
+    // The wording the libraries actually use. Matching only "socket timeout"
+    // and "connection timeout" missed all of these, so a real outage was read
+    // as "reached" and the banner never appeared.
+    ok('a bare timeout counts', isUnreachableError(new Error('Command failed: Timeout')))
+    ok('so does "timed out"', isUnreachableError(new Error('Timed out while connecting to server')))
+
+    // The rule that matters most: being told "no" means we got there. Calling
+    // this an outage sends the user to fix their wifi instead of their password.
+    ok('an authentication failure is NOT unreachable',
+      !isUnreachableError(new Error('Authentication failed: token expired')))
+    ok('nor is an invalid_grant', !isUnreachableError(new Error('invalid_grant')))
+    ok('nor a rejected password',
+      !isUnreachableError(new Error('[AUTHENTICATIONFAILED] Invalid credentials')))
+    // Auth errors that happen to name a host and a timeout-ish word must still
+    // read as reached, which is why the auth test runs first.
+    ok('an auth error mentioning a timeout is still not an outage',
+      !isUnreachableError(new Error('Login timeout: authentication failed for imap.example.com')))
+
+    ok('an unknown failure is treated as reached, not as an outage',
+      !isUnreachableError(new Error('Something else went wrong')))
+    ok('and so is a non-error value', !isUnreachableError(undefined))
+
+    ok('reachedServer is the inverse of the classifier',
+      reachedServer(new Error('invalid_grant')) === true &&
+      reachedServer(code('ECONNREFUSED')) === false)
+
+    // End-to-end: a real refused connection has to arrive at the account as
+    // "did not reach", not merely as an error string.
+    const sync = await import('../electron/services/imap-sync')
+    const dead = db.saveManualAccount('imap', {
+      authType: 'password', email: 'unreachable@example.com', displayName: 'Dead',
+      username: 'rob', password: 'secret',
+      incoming: { host: HOST, port: 1, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    await sync.refreshAccount(dead.id, 'imap').catch(() => {})
+    ok('a refused connection records the account as not reached',
+      sync.getSyncStatus().accounts[dead.id]?.reachedServer === false,
+      String(sync.getSyncStatus().accounts[dead.id]?.reachedServer))
+
+    const live = db.saveManualAccount('imap', {
+      authType: 'password', email: 'reachable@example.com', displayName: 'Live',
+      username: 'rob', password: 'secret',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    await sync.refreshAccount(live.id, 'imap').catch(() => {})
+    ok('and a successful sync records that it was reached',
+      sync.getSyncStatus().accounts[live.id]?.reachedServer === true,
+      String(sync.getSyncStatus().accounts[live.id]?.reachedServer))
+
+    db.removeAccount(dead.id); sync.forgetAccountSyncStatus(dead.id)
+    db.removeAccount(live.id); sync.forgetAccountSyncStatus(live.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Sync status: one account failing must not speak for the others')
   // -------------------------------------------------------------------------
   {

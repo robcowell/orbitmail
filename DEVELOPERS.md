@@ -844,6 +844,44 @@ That key is also why `readRawState` has to list it: the state literal there *is*
 the whole state, so a key with no line is dropped on read (the integration suite
 checks exactly this, and caught it during this change).
 
+#### Offline is derived, not declared
+
+The offline banner used to come from `navigator.onLine`, which answers a
+different question than the one being asked: Chromium sets it from whether a
+network *interface* exists, not whether anything is reachable over it. A hotel
+captive portal, a dropped VPN, a DNS outage or a server refusing connections all
+read as **online**, so the app showed stale mail as though it were current —
+which is the one thing a mail client must not do.
+
+The evidence is now `AccountSyncStatus.reachedServer`, set from
+`electron/services/network-reachability.ts` on every attempt. The distinction it
+has to get right is **refused versus never reached**: an expired token is not an
+outage — the server answered, it just said no — and calling that offline sends
+someone to debug a working network instead of their credentials. So an auth
+failure counts as *reached*, and the classifier stays deliberately narrow:
+anything not recognised is treated as reached, because wrongly claiming an
+outage costs more than missing one (the mail is merely stale, which per-account
+status already says).
+
+Two traps, both found by mutation-testing rather than by reading:
+
+- **The auth guard was dead code as first written.** It only matters for a
+  message that looks like *both* — "Login timeout: authentication failed" — and
+  nothing in the pattern list matched a bare timeout, so the guard never fired.
+- **The list matched only `socket timeout` and `connection timeout`**, while
+  imapflow and node-pop3 actually emit "Command failed: Timeout" and "Timed out
+  while connecting". Every real timeout therefore classified as *reached*, and
+  the banner this feature exists for would never have appeared. Widening the
+  patterns fixed the false negative and made the auth guard load-bearing.
+
+`deriveConnectivity` in `src/utils/syncStatus.ts` turns that into what the bar
+says. `navigator.onLine` is still consulted, but trusted **only when it says
+no** — a negative is dependable, a positive is nearly meaningless. Otherwise:
+one account reaching its server proves the network works, so another's failure
+belongs on that account rather than in a banner; and an outage is never claimed
+from silence — no accounts, none yet attempted, or a sync still in flight all
+say nothing.
+
 The renderer's half lives in `src/utils/syncStatus.ts` as a pure function rather
 than inline in JSX, because the "last synced" bug was one JSX condition and
 nothing in this repo could reach it — `test:imap` is windowless. See Store tests.
@@ -2160,6 +2198,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
+| Reachability | Connection-level failures (`ECONNREFUSED`, `ENOTFOUND`, `EHOSTUNREACH`, bare "Timeout"/"Timed out") classify as never-reached, by code and by bare message; authentication failures classify as *reached*, including one phrased as a login timeout; an unknown failure defaults to reached. End to end, a refused connection records `reachedServer: false` on the account and a successful sync records `true`. |
 | Per-account sync status | Two accounts, one pointed at a closed port: the failing one carries its own error, the healthy one carries none and still reports a last-synced time, and the aggregate reports one too. A failure does not stamp freshness on the account that failed; a later success clears a stale error; removing an account stops it reporting. |
 | Inline images (inbound) | A `multipart/related` message parsed by the real mailparser: the referenced image is marked inline and *is* already a `data:` URI in the body, the `.pdf` beside it is not marked, and an `image/svg+xml` is left alone because mailparser did not embed it either. A message whose only part is a signature logo carries no attachments at all; without an HTML body nothing is hidden. |
 | Inline images (backfill) | Every copy of an embedded image is marked, not just the first — the parts outnumber the `data:` URIs, so consuming matches would leave half behind. A size match under a different image MIME counts; an image the body never embedded stays visible; a document of a colliding size is never touched. `has_attachments` clears only once nothing but embedded images is left, and a second run is a no-op. |
@@ -2374,6 +2413,7 @@ could only have been tested through a real window.
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| Connectivity | `navigator.onLine` saying *no* is taken at its word; saying *yes* is not. With every account failing to reach its server the bar says so ("Can't reach your mail servers"), which is the captive-portal/dropped-VPN case the old banner could never show. One reachable account means the network works, an account that was merely refused is not an outage, and nothing is claimed from silence — no accounts, none tried, or mid-sync. |
 | Sync status wording | A mailbox that synced a moment ago still reports its time while another account is failing; a failing account never lends its stale timestamp to that line; two failures are counted rather than concatenated, with the per-account detail kept for the tooltip; re-authentication is offered for credential errors and not for network ones. The bug this replaces lived in one JSX condition, which no test in this repo could reach — hence `summarizeSyncStatus` being a pure function. |
 | Rollback | A rejected delete releases the hold *before* the caller's rollback refresh, so the row comes back rather than staying invisible until the next folder switch. |
 | Selection advance | Deleting mid-list selects the row below; deleting the last row falls back to the row above. |

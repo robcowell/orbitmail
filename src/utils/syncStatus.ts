@@ -27,6 +27,25 @@ export interface SyncStatusSummary {
   mixed: boolean
 }
 
+/**
+ * What the app can honestly say about connectivity.
+ *
+ * - `online` — normal.
+ * - `offline` — the OS says there is no network. Reliable in this direction:
+ *   when `navigator.onLine` is false it really is false.
+ * - `unreachable` — the OS says there *is* a network, but every account that
+ *   has tried failed to reach its server. This is the state the old banner
+ *   could never show, and it is the common one: a captive portal, a dropped
+ *   VPN, a DNS outage. Mail looks current and is not.
+ */
+export type Connectivity = 'online' | 'offline' | 'unreachable'
+
+export interface ConnectivityView {
+  state: Connectivity
+  /** The banner text, or null when there is nothing to say. */
+  message: string | null
+}
+
 const REAUTH_PATTERN = /auth|token|login|expired|invalid_grant|consent/i
 
 export function summarizeSyncStatus(status: SyncStatus): SyncStatusSummary {
@@ -59,4 +78,40 @@ export function summarizeSyncStatus(status: SyncStatus): SyncStatusSummary {
 /** The full per-account detail, for the summary line's tooltip. */
 export function syncErrorDetail(failing: AccountSyncStatus[]): string {
   return failing.map((a) => `${a.email}: ${a.error}`).join('\n')
+}
+
+/**
+ * `navigator.onLine` is trusted only when it says *no*. Chromium sets it from
+ * whether a network interface exists, so a positive is nearly meaningless — it
+ * is true on a hotel wifi that has intercepted every request. A negative is
+ * dependable, so it short-circuits.
+ */
+export function deriveConnectivity(
+  status: SyncStatus,
+  navigatorOnline: boolean
+): ConnectivityView {
+  if (!navigatorOnline) {
+    return { state: 'offline', message: 'Offline — showing cached mail' }
+  }
+
+  const tried = Object.values(status.accounts ?? {}).filter(
+    (a) => a.reachedServer !== null
+  )
+
+  // Never claim an outage from silence. With no account configured, or none
+  // yet attempted, there is no evidence either way — and mid-sync an account
+  // has not finished failing yet.
+  if (tried.length === 0 || status.syncing) return { state: 'online', message: null }
+
+  // One account reaching its server proves the network works, so the others'
+  // failures are theirs alone and belong on those accounts, not in a banner.
+  if (tried.some((a) => a.reachedServer)) return { state: 'online', message: null }
+
+  return {
+    state: 'unreachable',
+    message:
+      tried.length === 1
+        ? "Can't reach your mail server — showing cached mail"
+        : "Can't reach your mail servers — showing cached mail"
+  }
 }

@@ -273,12 +273,16 @@ const OVERRIDES = {
     accounts: {
       'acc-1': {
         accountId: 'acc-1', email: 'you@example.com',
-        syncing: false, lastSyncAt: Date.now() - 120000, error: null
+        syncing: false, lastSyncAt: Date.now() - 120000, error: null,
+        reachedServer: true
       },
       'acc-2': {
         accountId: 'acc-2', email: 'you@work.example',
         syncing: false, lastSyncAt: Date.now() - 5400000,
-        error: 'Authentication failed: token expired'
+        error: 'Authentication failed: token expired',
+        // Refused, not unreachable — which is why the offline banner stays
+        // away here even though this account is failing.
+        reachedServer: true
       }
     }
   },

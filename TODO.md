@@ -111,6 +111,32 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Offline is derived from real connections, not `navigator.onLine`** — audit
+  finding A5, and the other half of the per-account status work. Chromium sets
+  `navigator.onLine` from whether a network *interface* exists, not whether
+  anything is reachable over it, so a captive portal, a dropped VPN, a DNS
+  outage or a server refusing connections all read as **online** and the app
+  showed stale mail as though it were current.
+
+  Each attempt now records `reachedServer` on its account. The distinction that
+  matters is **refused versus never reached**: an expired token is not an outage
+  — the server answered, it just said no — and calling it one sends you to debug
+  a working network instead of your credentials. The bar gains a third state,
+  "Can't reach your mail servers", for the case the old banner could never show.
+  `navigator.onLine` is still consulted but trusted **only when it says no**.
+
+  **Two bugs found by mutation-testing, not by reading.** The auth guard was
+  dead code as first written — it only matters for a message that looks like
+  both ("Login timeout: authentication failed"), and nothing in the pattern list
+  matched a bare timeout, so it never fired. Chasing that turned up the real
+  defect: the list matched only `socket timeout` and `connection timeout`, while
+  imapflow and node-pop3 actually emit "Command failed: Timeout" and "Timed out
+  while connecting" — so **every real timeout classified as reached** and the
+  banner this feature exists for would never have appeared. Worth recording as
+  the second time this session a plausible-looking check passed against
+  deliberately broken code; the fix is always to find the input that
+  discriminates rather than to trust the green.
+
 - **Sync status is per account** — the first item out of the daily-driver audit,
   and the one four other findings collapse into. `SyncStatus` was a single
   global object: one `syncing` flag, one `lastSyncAt`, one `error` for every

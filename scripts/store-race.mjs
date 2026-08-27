@@ -1174,6 +1174,65 @@ async function main() {
       summarizeSyncStatus(status([])).healthyLastSyncAt === null)
   }
 
+  // -------------------------------------------------------------------------
+  section('Connectivity: an outage is proved by failed connections, not a flag')
+  // -------------------------------------------------------------------------
+  {
+    const { deriveConnectivity } = require(join(outDir, 'syncStatus.cjs'))
+
+    const acct = (id, over = {}) => ({
+      accountId: id, email: id + '@x', syncing: false,
+      lastSyncAt: null, error: null, reachedServer: null, ...over
+    })
+    const status = (accounts, over = {}) => ({
+      syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0,
+      accounts: Object.fromEntries(accounts.map((a) => [a.accountId, a])), ...over
+    })
+
+    // navigator.onLine is trusted only when it says no.
+    ok('the OS reporting no network is taken at its word',
+      deriveConnectivity(status([acct('a', { reachedServer: true })]), false).state === 'offline')
+
+    // The case the old banner could never show: the OS says we are online and
+    // nothing is actually reachable. A captive portal, a dropped VPN, DNS gone.
+    const portal = deriveConnectivity(
+      status([acct('a', { reachedServer: false, error: 'ECONNREFUSED' })]), true)
+    ok('nothing reachable while the OS claims a network is an outage',
+      portal.state === 'unreachable', portal.state)
+    ok('and the wording says so rather than blaming the network',
+      portal.message === "Can't reach your mail server — showing cached mail", portal.message)
+    ok('the plural is used when more than one account has tried',
+      deriveConnectivity(status([
+        acct('a', { reachedServer: false }), acct('b', { reachedServer: false })
+      ]), true).message === "Can't reach your mail servers — showing cached mail")
+
+    // One account getting through proves the network works, so another's
+    // failure is that account's problem and belongs on the account.
+    ok('one reachable account means we are not offline',
+      deriveConnectivity(status([
+        acct('a', { reachedServer: true }),
+        acct('b', { reachedServer: false, error: 'ECONNREFUSED' })
+      ]), true).state === 'online')
+
+    // Being refused is being reached. Claiming an outage here would send the
+    // user to debug a working network instead of their expired credentials.
+    ok('an account that was refused is not an outage',
+      deriveConnectivity(status([
+        acct('a', { reachedServer: true, error: 'Authentication failed: token expired' })
+      ]), true).state === 'online')
+
+    // Never claim an outage from silence.
+    ok('no accounts at all says nothing',
+      deriveConnectivity(status([]), true).state === 'online')
+    ok('an account that has never been tried says nothing',
+      deriveConnectivity(status([acct('a')]), true).state === 'online')
+    ok('mid-sync says nothing — an account has not finished failing yet',
+      deriveConnectivity(
+        status([acct('a', { reachedServer: false })], { syncing: true }), true).state === 'online')
+    ok('and there is no banner text when everything is fine',
+      deriveConnectivity(status([acct('a', { reachedServer: true })]), true).message === null)
+  }
+
   console.log(
     `\n${failures === 0 ? 'all store checks passed' : `${failures} store check(s) FAILED`}`
   )

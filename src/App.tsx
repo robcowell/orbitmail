@@ -19,7 +19,8 @@ import {
   deleteThread,
   deleteSelectedThreads,
   openSettings,
-  composeAccountId
+  composeAccountId,
+  performUndo
 } from './stores/mailStore'
 import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
@@ -90,6 +91,7 @@ function StatusBar() {
 function Toast() {
   const toast = useMailStore((s) => s.toast)
   const setToast = useMailStore((s) => s.setToast)
+  const pendingUndo = useMailStore((s) => s.pendingUndo)
 
   useEffect(() => {
     if (!toast) return
@@ -97,12 +99,44 @@ function Toast() {
     // which checkbox to tick is ~190 characters and takes about 13 seconds to
     // read — it used to vanish after 4.
     const readMs = 4000 + toast.length * 45
-    const t = setTimeout(() => setToast(null), Math.min(readMs, 14000))
+    // An offer of Undo has to outlast reading the sentence that offers it, so
+    // a toast carrying one gets a floor rather than a length-derived guess.
+    const shownMs = pendingUndo ? Math.max(readMs, 9000) : readMs
+    const t = setTimeout(() => setToast(null), Math.min(shownMs, 14000))
     return () => clearTimeout(t)
-  }, [toast, setToast])
+  }, [toast, setToast, pendingUndo])
 
   if (!toast) return null
-  return <div className="toast">{toast}</div>
+  return (
+    <div className="toast">
+      <span className="toast-message">{toast}</span>
+      {pendingUndo && (
+        <button
+          type="button"
+          className="toast-action"
+          onClick={() => {
+            void performUndo()
+          }}
+        >
+          Undo
+        </button>
+      )}
+      {pendingUndo && pendingUndo.skipped > 0 && (
+        <span
+          className="toast-note"
+          title={
+            'Undo restores messages that were moved. A message deleted from Trash ' +
+            'is gone from the server, and one without a Message-ID header cannot be ' +
+            'found again.'
+          }
+        >
+          {pendingUndo.skipped === 1
+            ? '1 cannot be undone'
+            : `${pendingUndo.skipped} cannot be undone`}
+        </span>
+      )}
+    </div>
+  )
 }
 
 function MainApp() {

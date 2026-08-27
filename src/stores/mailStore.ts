@@ -15,7 +15,8 @@ import type {
   SweepScope,
   SearchField,
   DraftTone,
-  PlatformCapabilities
+  PlatformCapabilities,
+  UndoRelocateEntry
 } from '../../shared/types'
 import {
   DEFAULT_AI_DETAIL,
@@ -99,6 +100,8 @@ interface MailState {
   syncStatus: SyncStatus
   showAddAccount: boolean
   toast: string | null
+  /** The last reversible relocation, offered as Undo on the toast. */
+  pendingUndo: PendingUndo | null
   loading: boolean
   listLoading: boolean
   isOnline: boolean
@@ -192,6 +195,7 @@ interface MailState {
   setSyncStatus: (status: SyncStatus) => void
   setShowAddAccount: (show: boolean) => void
   setToast: (msg: string | null) => void
+  setPendingUndo: (undo: PendingUndo | null) => void
   setLoading: (loading: boolean) => void
   setListLoading: (loading: boolean) => void
   setIsOnline: (online: boolean) => void
@@ -257,6 +261,7 @@ export const useMailStore = create<MailState>((set) => ({
   syncStatus: { syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0, accounts: {} },
   showAddAccount: false,
   toast: null,
+  pendingUndo: null,
   loading: false,
   listLoading: false,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -329,7 +334,11 @@ export const useMailStore = create<MailState>((set) => ({
   setServerSearched: (searched) => set({ serverSearched: searched }),
   setSyncStatus: (status) => set({ syncStatus: status }),
   setShowAddAccount: (show) => set({ showAddAccount: show }),
-  setToast: (msg) => set({ toast: msg }),
+  // A new toast supersedes the old one, and the undo offer belongs to the
+  // action that raised it — so it is cleared here unless the caller sets it
+  // again immediately afterwards.
+  setToast: (msg) => set({ toast: msg, pendingUndo: null }),
+  setPendingUndo: (undo) => set({ pendingUndo: undo }),
   setLoading: (loading) => set({ loading }),
   setListLoading: (loading) => set({ listLoading: loading }),
   setIsOnline: (online) => set({ isOnline: online }),
@@ -1061,6 +1070,85 @@ async function selectThreadKeepingSelection(
 // single-thread delete uses, with all the rows resolved up front.
 type RelocateItem = { id: string; targetFolderId: string | null }
 
+/**
+ * A relocation that can be put back.
+ *
+ * Captured *after* the server confirms, so undo is never offered for an action
+ * that failed. Entries carry the RFC Message-ID rather than the local row id
+ * because a move deletes the row and the next poll re-imports the message under
+ * a new one — see UndoRelocateEntry.
+ */
+export interface PendingUndo {
+  /** What the toast's Undo puts back, e.g. "Deleted 3 conversations". */
+  label: string
+  entries: UndoRelocateEntry[]
+  /**
+   * Messages that cannot be put back: an outright delete (already in Trash, so
+   * the server expunged it) or a message whose headers carry no Message-ID.
+   * Surfaced rather than hidden — offering "Undo" that silently restores four
+   * of five messages would be worse than offering nothing.
+   */
+  skipped: number
+}
+
+/**
+ * Pair each relocated message with where it came from, keeping only what can
+ * actually be restored. Returns null when nothing can be, so the caller can
+ * leave the toast without an Undo rather than offering a no-op.
+ */
+export function buildUndo(
+  label: string,
+  messages: { id: string; accountId: string; folderId: string; messageId: string | null }[],
+  items: RelocateItem[]
+): PendingUndo | null {
+  const byId = new Map(messages.map((m) => [m.id, m]))
+  const entries: UndoRelocateEntry[] = []
+  let skipped = 0
+
+  for (const item of items) {
+    const message = byId.get(item.id)
+    // targetFolderId null means the server expunged it: there is nothing to
+    // move back, and pretending otherwise would be a lie.
+    if (!message || item.targetFolderId === null || !message.messageId) {
+      skipped++
+      continue
+    }
+    entries.push({
+      accountId: message.accountId,
+      rfcMessageId: message.messageId,
+      folderId: message.folderId
+    })
+  }
+
+  return entries.length > 0 ? { label, entries, skipped } : null
+}
+
+/** Put the last relocation back. Clears the offer either way — one undo, once. */
+export async function performUndo(): Promise<void> {
+  const store = useMailStore.getState()
+  const undo = store.pendingUndo
+  if (!undo) return
+
+  store.setPendingUndo(null)
+  store.setToast('Putting them back…')
+
+  try {
+    const result = await window.orbitMail.messages.undoRelocate(undo.entries)
+    await refreshMessages()
+    await refreshFoldersUnread()
+    store.setToast(
+      result.failed === 0
+        ? result.restored === 1
+          ? 'Put back'
+          : `Put ${result.restored} messages back`
+        : `Put ${result.restored} back — ${result.failed} could not be restored`
+    )
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not undo that')
+    await refreshMessages()
+  }
+}
+
 // Shared spine for the bulk conversation actions. They differ only in where each
 // message goes and what the toast says: delete sends messages to Trash (or
 // deletes them outright when already there), archive and move send them to a
@@ -1135,6 +1223,10 @@ async function relocateSelectedThreads(options: {
       () => options.invoke(items)
     )
     await refreshFoldersUnread()
+    // After the server confirms, never before: undo must not be offered for an
+    // action that failed. setToast clears the offer, so it is set again here.
+    store.setToast(options.toast(selected.length))
+    store.setPendingUndo(buildUndo(options.toast(selected.length), messages, items))
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : options.failure)
     await refreshMessages()
@@ -1226,6 +1318,7 @@ export async function deleteThread(accountId: string, threadId: string): Promise
   removeThreadAndAdvance(accountId, threadId)
   store.setToast(messages.length === 1 ? 'Deleted' : `Deleted ${messages.length} messages`)
 
+  const label = messages.length === 1 ? 'Deleted' : `Deleted ${messages.length} messages`
   try {
     await withPendingRemoval(
       items.map((i) => i.id),
@@ -1233,6 +1326,8 @@ export async function deleteThread(accountId: string, threadId: string): Promise
       () => window.orbitMail.messages.deleteMany(items)
     )
     await refreshFoldersUnread()
+    store.setToast(label)
+    store.setPendingUndo(buildUndo(label, messages, items))
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Delete failed')
     await refreshMessages()
@@ -1287,7 +1382,8 @@ export async function archiveThread(accountId: string, threadId: string): Promis
   }
 
   removeThreadAndAdvance(accountId, threadId)
-  store.setToast(moves.length === 1 ? 'Message archived' : `Archived ${moves.length} messages`)
+  const label = moves.length === 1 ? 'Message archived' : `Archived ${moves.length} messages`
+  store.setToast(label)
 
   try {
     await withPendingRemoval(
@@ -1297,6 +1393,8 @@ export async function archiveThread(accountId: string, threadId: string): Promis
         Promise.all(moves.map((mv) => window.orbitMail.messages.move(mv.id, mv.targetFolderId)))
     )
     await refreshFoldersUnread()
+    store.setToast(label)
+    store.setPendingUndo(buildUndo(label, messages, moves))
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Archive failed')
     await refreshMessages()
@@ -1381,11 +1479,11 @@ export async function moveThreadToFolder(
   const target = folders.find((f) => f.id === targetFolderId)
 
   removeThreadAndAdvance(accountId, threadId)
-  store.setToast(
+  const label =
     messages.length === 1
       ? `Message moved to ${target?.name ?? 'folder'}`
       : `${messages.length} messages moved to ${target?.name ?? 'folder'}`
-  )
+  store.setToast(label)
 
   try {
     await withPendingRemoval(
@@ -1394,6 +1492,10 @@ export async function moveThreadToFolder(
       () => Promise.all(messages.map((m) => window.orbitMail.messages.move(m.id, targetFolderId)))
     )
     await refreshFoldersUnread()
+    store.setToast(label)
+    store.setPendingUndo(
+      buildUndo(label, messages, messages.map((m) => ({ id: m.id, targetFolderId })))
+    )
   } catch (err) {
     store.setToast(err instanceof Error ? err.message : 'Move failed')
     await refreshMessages()

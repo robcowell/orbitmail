@@ -2596,6 +2596,29 @@ export function backfillSearchTextBatch(batchSize = 250): number {
   return rows.length
 }
 
+/**
+ * Rows for one RFC Message-ID within an account, with the folder each sits in.
+ *
+ * Undo needs this because a move does not preserve the local row: the message is
+ * deleted locally, moved on the server, and re-imported by the next poll with a
+ * new uid and a new id. The RFC Message-ID is the only handle that survives, and
+ * `messages_message_id_idx` already indexes it.
+ *
+ * Returns every row because Gmail stores one row per label — undoing an archive
+ * means putting the Inbox label back on a message that still exists under its
+ * other labels.
+ */
+export function findMessagesByRfcId(
+  accountId: string,
+  rfcMessageId: string
+): Array<{ id: string; folderId: string }> {
+  if (!accountId || !rfcMessageId) return []
+  const sqlite = getRawSqlite()
+  return sqlite
+    .prepare('SELECT id, folder_id AS folderId FROM messages WHERE account_id = ? AND message_id = ?')
+    .all(accountId, rfcMessageId) as Array<{ id: string; folderId: string }>
+}
+
 // Load specific messages as summaries, newest first. Used by the server-side
 // search fallback to return exactly the rows it just imported, preserving the
 // server's match (which may be a From/To hit that local search doesn't cover).

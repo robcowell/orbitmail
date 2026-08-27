@@ -111,6 +111,46 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Undo for delete, archive and move** — audit finding B2. Nothing in the app
+  was reversible, and `Delete` acts on a whole multi-selection, which is what
+  made bulk triage feel risky rather than fast.
+
+  **The mechanic that shaped the design:** a move does not preserve the local
+  row. `relocateMany` moves the message on the server and then deletes the row;
+  the next poll re-imports it under a new uid and a **new id**. So undo cannot
+  hold the id it acted on — it keys on the RFC **Message-ID**, which survives and
+  which `messages_message_id_idx` already indexes. `findMessagesByRfcId` returns
+  every row for a Message-ID because Gmail keeps one per label: undoing an
+  archive means finding the row *not* already in the folder being restored to.
+
+  **What it refuses to do, deliberately.** Delete only expunges when the message
+  is already in Trash, and an expunged message is gone — so it is skipped and the
+  toast says how many cannot be brought back, rather than restoring four of five
+  silently. Same for a message whose headers carry no Message-ID. When nothing
+  qualifies, no Undo is offered at all rather than a button that does nothing.
+  The offer is set **after** the server confirms, so a failed delete never
+  presents one.
+
+  Both honesty guards were mutation-tested: offering undo for expunged messages,
+  and offering it when nothing can be restored, each fail the assertions aimed at
+  them. `test:e2e` was run for this one — it does not exercise delete, but every
+  suite loads `App.tsx`, so it catches the Toast change breaking the renderer.
+
+  **That gap is now closed.** `e2e-undo.suite.ts` syncs a real message, clicks the
+  real Delete button and then the real Undo on the toast, and asserts **against
+  the server**: the message reaches Trash and leaves INBOX, then returns to INBOX
+  and leaves Trash. Two mutations confirm it earns its place — removing the Undo
+  button fails "the toast offers Undo", and a handler that reports success
+  without moving anything fails all three restore assertions, which is the
+  failure a local-state-only check would have missed.
+
+  Its own first run is worth recording: selecting the row and clicking Delete in
+  one evaluated block selected nothing, because React had not re-rendered and the
+  toolbar button was still disabled — so the click was a silent no-op and the
+  suite reported it as fine. The steps are now split with a wait between them.
+  That is the third time in this repo an e2e check has passed while proving
+  nothing.
+
 - **The unified inbox is searchable** — audit item 2, and the biggest day-to-day
   friction in the app. "All Inboxes" is the view you land on and it was the one
   view whose search box was **disabled**, reading "Select a folder to search":

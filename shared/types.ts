@@ -253,6 +253,28 @@ export interface AccountSyncStatus {
   reachedServer: boolean | null
 }
 
+/**
+ * One message to put back where it was.
+ *
+ * Identified by its **RFC Message-ID**, not its local row id, because a move
+ * does not preserve the row: the message is deleted locally, moved on the
+ * server, and re-imported by the next poll under a new uid and a new id. A
+ * message whose headers carry no Message-ID therefore cannot be undone, and is
+ * counted as skipped rather than silently dropped.
+ */
+export interface UndoRelocateEntry {
+  accountId: string
+  rfcMessageId: string
+  /** The folder it came from, and the folder undo puts it back in. */
+  folderId: string
+}
+
+export interface UndoRelocateResult {
+  restored: number
+  /** Could not be found, or the move back failed. */
+  failed: number
+}
+
 export interface SyncStatus {
   /** True while *any* account is syncing. */
   syncing: boolean
@@ -659,6 +681,13 @@ export interface OrbitMailAPI {
       items: { id: string; targetFolderId: string | null }[]
     ) => Promise<{ deleted: number; failed: number }>
     move: (messageId: string, targetFolderId: string) => Promise<void>
+    /**
+     * Put a batch of relocated messages back where they came from — the reverse
+     * of deleteMany/moveMany, and what the Undo action on the toast calls.
+     * Entries are keyed by RFC Message-ID because the local row does not survive
+     * a move; see UndoRelocateEntry.
+     */
+    undoRelocate: (entries: UndoRelocateEntry[]) => Promise<UndoRelocateResult>
     copy: (messageId: string, targetFolderId: string) => Promise<void>
     // Gmail only. The labels these messages carry, the labels the account has
     // to offer, and putting one on or taking one off the lot of them. Passing

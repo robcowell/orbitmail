@@ -6,6 +6,7 @@ import { statSync, writeFileSync, copyFileSync, existsSync, readFileSync } from 
 import type {
   ComposePayload,
   SyncStatus,
+  UndoRelocateEntry,
   ManualAccountInput,
   ManualAccountSettingsUpdate,
   FlagColor,
@@ -53,6 +54,7 @@ import {
   countThreads,
   getThread,
   getMessage,
+  findMessagesByRfcId,
   getMessageServerUid,
   setMessageRead,
   setMessageStarred,
@@ -1290,6 +1292,38 @@ function registerIpc(): void {
   ipcMain.handle('messages:deleteMany', (_, items: { id: string; targetFolderId: string | null }[]) =>
     relocateMany(items)
   )
+
+  // Undo: put relocated messages back. This is the same batch move in reverse,
+  // so it inherits relocateMany's per-item error handling and its single
+  // reconciliation poll.
+  //
+  // Entries arrive keyed by RFC Message-ID rather than local row id, because the
+  // row the caller acted on no longer exists — a move deletes it locally and the
+  // poll re-imports the message under a new uid and id.
+  ipcMain.handle('messages:undoRelocate', async (_, entries: UndoRelocateEntry[]) => {
+    const items: { id: string; targetFolderId: string | null }[] = []
+    let missing = 0
+
+    for (const entry of entries) {
+      const rows = findMessagesByRfcId(entry.accountId, entry.rfcMessageId)
+      // A row already sitting in the destination needs no move — on Gmail the
+      // message keeps a row per label, so undoing an archive means finding the
+      // one that is *not* already in the folder we are restoring to.
+      const row = rows.find((r) => r.folderId !== entry.folderId)
+      if (!row) {
+        // Either the message never came back from the server, or it is already
+        // where it belongs. Counted, not silently dropped.
+        missing++
+        continue
+      }
+      items.push({ id: row.id, targetFolderId: entry.folderId })
+    }
+
+    if (items.length === 0) return { restored: 0, failed: missing }
+
+    const result = await relocateMany(items)
+    return { restored: result.deleted, failed: result.failed + missing }
+  })
   ipcMain.handle('messages:moveMany', (_, items: { id: string; targetFolderId: string | null }[]) =>
     relocateMany(items)
   )

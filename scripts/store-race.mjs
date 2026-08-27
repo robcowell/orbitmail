@@ -1245,6 +1245,67 @@ async function main() {
   }
 
   // -------------------------------------------------------------------------
+  section('Undo: only what can actually be put back is offered')
+  // -------------------------------------------------------------------------
+  {
+    const msg = (id, over = {}) => ({
+      id, accountId: 'a1', folderId: 'inbox', messageId: '<' + id + '@x>', ...over
+    })
+
+    // The ordinary case: three messages moved to Trash, all restorable.
+    const deleted = store.buildUndo(
+      'Deleted 3 conversations',
+      [msg('m1'), msg('m2'), msg('m3')],
+      [
+        { id: 'm1', targetFolderId: 'trash' },
+        { id: 'm2', targetFolderId: 'trash' },
+        { id: 'm3', targetFolderId: 'trash' }
+      ]
+    )
+    ok('a move records one entry per message', deleted?.entries.length === 3,
+      String(deleted?.entries.length))
+    ok('and each entry points back at the folder it came from',
+      deleted?.entries.every((e) => e.folderId === 'inbox'),
+      JSON.stringify(deleted?.entries.map((e) => e.folderId)))
+    ok('nothing is reported as unrestorable', deleted?.skipped === 0, String(deleted?.skipped))
+
+    // targetFolderId null means the server expunged it — deleting from Trash.
+    // There is nothing to move back, and claiming otherwise would be a lie.
+    const expunged = store.buildUndo(
+      'Deleted 2 conversations',
+      [msg('m1'), msg('m2')],
+      [
+        { id: 'm1', targetFolderId: 'trash' },
+        { id: 'm2', targetFolderId: null }
+      ]
+    )
+    ok('an expunged message is not offered for undo', expunged?.entries.length === 1,
+      String(expunged?.entries.length))
+    ok('and is counted so the toast can say so', expunged?.skipped === 1,
+      String(expunged?.skipped))
+
+    // No Message-ID means no handle that survives the move.
+    const headerless = store.buildUndo(
+      'Deleted', [msg('m1', { messageId: null })], [{ id: 'm1', targetFolderId: 'trash' }])
+    ok('a message with no Message-ID cannot be undone', headerless === null,
+      JSON.stringify(headerless))
+
+    // Offering "Undo" that would restore nothing is worse than offering nothing.
+    const allExpunged = store.buildUndo(
+      'Deleted 2', [msg('m1'), msg('m2')],
+      [{ id: 'm1', targetFolderId: null }, { id: 'm2', targetFolderId: null }])
+    ok('undo is not offered at all when nothing can be restored', allExpunged === null,
+      JSON.stringify(allExpunged))
+
+    // An item with no matching message row is a bug, not a restorable entry.
+    const orphan = store.buildUndo('Deleted', [], [{ id: 'gone', targetFolderId: 'trash' }])
+    ok('an item with no message behind it is skipped, not guessed at', orphan === null)
+
+    ok('the label is carried through for the toast',
+      deleted?.label === 'Deleted 3 conversations', deleted?.label)
+  }
+
+  // -------------------------------------------------------------------------
   section('Search scope: the unified inbox is searchable')
   // -------------------------------------------------------------------------
   {

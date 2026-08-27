@@ -5444,6 +5444,81 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Undo: a moved message can be put back, an expunged one cannot')
+  // -------------------------------------------------------------------------
+  {
+    // Undo cannot use the local row id: a move deletes the row, and the next
+    // poll re-imports the message under a new uid and a new id. The RFC
+    // Message-ID is the only handle that survives, which is what
+    // findMessagesByRfcId looks up.
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+
+    const acct = db.saveManualAccount('imap', {
+      authType: 'password', email: 'undo@example.com', displayName: 'Undo',
+      username: 'u', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const inbox = db.upsertFolder(acct.id, 'INBOX', 'Inbox', 'inbox')
+    const trash = db.upsertFolder(acct.id, 'Trash', 'Trash', 'trash')
+
+    const mk = (id: string, folderId: string, uid: number, rfc: string | null) =>
+      raw.prepare(
+        `INSERT INTO messages (id, folder_id, account_id, uid, message_id, from_addr,
+                               to_addr, subject, snippet, date)
+         VALUES (?, ?, ?, ?, ?, 'a@b.c', 'd@e.f', 'subj', 'snip', ?)`
+      ).run(id, folderId, acct.id, uid, rfc, 1_700_000_000 + uid)
+
+    // The message as it looks *after* a delete: sitting in Trash, under a new
+    // local id, with the Message-ID it has always had.
+    mk('undo-moved', trash.id, 10, '<keeper@example.com>')
+
+    const found = db.findMessagesByRfcId(acct.id, '<keeper@example.com>')
+    ok('a relocated message is findable by its RFC Message-ID',
+      found.length === 1 && found[0].id === 'undo-moved', JSON.stringify(found))
+    ok('and reports the folder it is currently in',
+      found[0].folderId === trash.id, found[0].folderId)
+
+    // Gmail keeps one row per label, so undoing an archive has to find the row
+    // that is NOT already in the folder being restored to.
+    mk('undo-gmail-inbox', inbox.id, 11, '<multi@example.com>')
+    mk('undo-gmail-other', trash.id, 12, '<multi@example.com>')
+    const multi = db.findMessagesByRfcId(acct.id, '<multi@example.com>')
+    ok('every row for a Message-ID comes back, not just the first',
+      multi.length === 2, String(multi.length))
+    ok('so a row already in the destination can be told apart from one that is not',
+      multi.filter((r) => r.folderId !== inbox.id).length === 1)
+
+    // Scoping: another account's identical Message-ID must not be restored.
+    const other = db.saveManualAccount('imap', {
+      authType: 'password', email: 'undo-other@example.com', displayName: 'Other',
+      username: 'u', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const otherInbox = db.upsertFolder(other.id, 'INBOX', 'Inbox', 'inbox')
+    raw.prepare(
+      `INSERT INTO messages (id, folder_id, account_id, uid, message_id, from_addr,
+                             to_addr, subject, snippet, date)
+       VALUES ('undo-other', ?, ?, 13, '<keeper@example.com>', 'a@b.c', 'd@e.f', 's', 's', 0)`
+    ).run(otherInbox.id, other.id)
+    ok('the lookup is scoped to one account',
+      db.findMessagesByRfcId(acct.id, '<keeper@example.com>').length === 1,
+      JSON.stringify(db.findMessagesByRfcId(acct.id, '<keeper@example.com>')))
+
+    // A message with no Message-ID cannot be found again, so it cannot be
+    // undone — the renderer counts these as skipped rather than pretending.
+    mk('undo-headerless', trash.id, 14, null)
+    ok('a message with no Message-ID is not findable',
+      db.findMessagesByRfcId(acct.id, '').length === 0)
+
+    raw.prepare('DELETE FROM messages WHERE account_id IN (?, ?)').run(acct.id, other.id)
+    db.removeAccount(acct.id)
+    db.removeAccount(other.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Search: the unified scope spans accounts, a folder scope does not')
   // -------------------------------------------------------------------------
   {

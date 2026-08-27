@@ -495,7 +495,12 @@ function notifySendCompleted(subject: string): void {
  * has to live in the main window — which otherwise would not know a send had
  * been scheduled at all.
  */
-function notifySendScheduled(info: { scheduledId: string; dueAt: number; subject: string }): void {
+function notifySendScheduled(info: {
+  scheduledId: string
+  dueAt: number
+  subject: string
+  scheduled: boolean
+}): void {
   const win = liveMainWindow()
   if (win) win.webContents.send('compose:scheduled', info)
 }
@@ -1492,6 +1497,21 @@ function registerIpc(): void {
     }
   }
 
+  /** Cancel any timed send waiting on this draft. Returns true if there was one. */
+  const unscheduleSendForDraft = (draftId: string): boolean => {
+    for (const action of listActions('send')) {
+      const compose = (action.payload as { compose?: ComposePayload } | null)?.compose
+      if (compose?.draftId === draftId) {
+        if (cancelAction(action.id)) {
+          const win = liveMainWindow()
+          if (win) win.webContents.send('compose:unscheduled', draftId)
+          return true
+        }
+      }
+    }
+    return false
+  }
+
   registerHandler('send', async (action) => {
     const payload = action.payload as { compose?: ComposePayload } | null
     if (!payload?.compose) return
@@ -1499,9 +1519,12 @@ function registerIpc(): void {
     notifySendCompleted(payload.compose.subject ?? '')
   })
 
-  ipcMain.handle('compose:send', async (_, payload: ComposePayload) => {
+  ipcMain.handle('compose:send', async (_, payload: ComposePayload, sendAt?: number) => {
     const account = listAccounts().find((a) => a.id === payload.accountId)
     if (!account) throw new Error('Account not found')
+    // A send in the past is a send now; the scheduler would run it on its next
+    // tick anyway, and pretending otherwise would show a countdown to nothing.
+    const scheduled = typeof sendAt === 'number' && sendAt > Date.now()
 
     // Kept as a draft for the length of the undo window, so Undo has something
     // to reopen and a quit inside the window loses nothing. The scheduled
@@ -1509,7 +1532,7 @@ function registerIpc(): void {
     const draftId = payload.draftId ?? saveDraft(payload) ?? undefined
     const compose: ComposePayload = { ...payload, draftId }
 
-    const dueAt = Date.now() + UNDO_SEND_MS
+    const dueAt = scheduled ? (sendAt as number) : Date.now() + UNDO_SEND_MS
     const scheduledId = scheduleAction({
       accountId: account.id,
       kind: 'send',
@@ -1526,7 +1549,14 @@ function registerIpc(): void {
       composeWindow.close()
     }
 
-    notifySendScheduled({ scheduledId, dueAt, subject: payload.subject ?? '' })
+    notifySendScheduled({
+      scheduledId,
+      dueAt,
+      subject: payload.subject ?? '',
+      // A ten-second hold and a send timed for Monday want different UI: a
+      // countdown with Undo, versus a note saying when it will go.
+      scheduled
+    })
 
     return { scheduledId, dueAt, draftId: draftId ?? null }
   })
@@ -1885,6 +1915,11 @@ function registerIpc(): void {
   ipcMain.handle('drafts:open', async (_, draftId: string) => {
     const draft = getDraftPayload(draftId)
     if (!draft) throw new Error('That draft no longer exists')
+    // A message timed for later stays in Drafts, which is the only place it is
+    // visible. Opening it takes it out of the queue: editing a message that is
+    // still going to send itself, unedited, at the old time is the worst
+    // outcome available here. The renderer says so.
+    unscheduleSendForDraft(draftId)
     // The attachment allowlist is per-session, and this draft may predate a
     // restart — main read these paths from its own database and checked they
     // still exist, so main approves them. Paths that arrived from the renderer

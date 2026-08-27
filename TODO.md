@@ -111,6 +111,32 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Scheduled send** — the last of B5's three, and the same scheduler with a
+  time you chose instead of ten seconds. A time in the past is treated as "now",
+  because the scheduler would run it on the next tick anyway and a countdown to
+  nothing would be a lie.
+
+  **The design decision worth recording:** a scheduled message waits in
+  **Drafts** — the only place it is visible — and **opening it takes it out of
+  the queue**. Without that second half, editing a message that is still going
+  to send itself, unedited, at the old time is the worst outcome available.
+  Both halves are mutation-tested: ignoring the chosen time, and leaving a draft
+  queued when it is opened, each fail the assertions aimed at them.
+
+  The e2e suite waits **past the ten-second undo window** before checking that
+  nothing has gone, because a scheduled send that quietly used the hold instead
+  of the chosen time would otherwise slip through. It also lets the scheduled
+  time pass after unscheduling and checks nothing is sent — asserting only that
+  the row vanished would not catch a send already handed to something else.
+
+  **The suite caught a CSS mistake this repo had already made once**: I wrote
+  `var(--bg-hover, …)`, a variable that has never existed, so the literal
+  fallback would have shown instead of a themed colour. There is a comment
+  elsewhere in the stylesheet about the same error, and a check that fails on
+  it. Now `var(--hover-overlay)`.
+
+  B5 is complete: undo send, snooze and scheduled send, all on one scheduler.
+
 - **Snooze** — the second of B5's three, on the scheduler from the first. A
   message is **moved to a real `Snoozed` folder on the server**, not hidden
   behind a local flag: a snooze that only hid mail in this app would leave the

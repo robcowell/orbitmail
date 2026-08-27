@@ -6,7 +6,9 @@ Deleting, archiving or moving a conversation can be undone from the message
 that confirms it, and a message you have just sent can be taken back for ten
 seconds. A conversation you cannot deal with now can be snoozed until later —
 it moves to a Snoozed folder, so it leaves your inbox on your phone too, and
-comes back when you asked for it (as long as Orbit is running). Your mail is cached on your machine, so search is instant — across one account
+comes back when you asked for it (as long as Orbit is running). A message can
+also be written now and sent later; it waits in Drafts until then, and opening
+it there takes it back out of the queue. Your mail is cached on your machine, so search is instant — across one account
 or all of them at once — and you can read offline — and when it can't reach a mail server it says so, per account, rather
 than showing you old mail as though it were current. Optional AI features — off unless you add your own API key — summarise
 messages and pull out what you still need to do.

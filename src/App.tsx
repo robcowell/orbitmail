@@ -27,6 +27,7 @@ import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
 import { printMessageDetail, printThreadDetails } from './utils/printMessage'
 import { summarizeSyncStatus, syncErrorDetail, deriveConnectivity } from './utils/syncStatus'
+import { formatWakeAt } from './utils/snoozePresets'
 
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
@@ -229,7 +230,18 @@ function MainApp() {
     // A send is held for a few seconds so it can be taken back. The composer
     // has already closed, so the offer lives here.
     const unsubScheduled = window.orbitMail.compose.onSendScheduled((info) => {
-      useMailStore.getState().setPendingSend(info)
+      const store = useMailStore.getState()
+      if (info.scheduled) {
+        // Timed for later: no countdown to watch. It waits in Drafts, and
+        // opening it there is how you change your mind.
+        store.setToast(`Scheduled to send ${formatWakeAt(info.dueAt)} — it waits in Drafts`)
+        return
+      }
+      store.setPendingSend(info)
+    })
+
+    const unsubUnscheduled = window.orbitMail.compose.onSendUnscheduled(() => {
+      useMailStore.getState().setToast('Opened for editing — no longer scheduled to send')
     })
 
     const unsubSent = window.orbitMail.compose.onSent(() => {
@@ -253,6 +265,7 @@ function MainApp() {
       unsubStatus()
       unsubMessages()
       unsubScheduled()
+      unsubUnscheduled()
       unsubSent()
       unsubError()
       unsubToast()

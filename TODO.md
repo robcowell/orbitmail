@@ -111,6 +111,33 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **A sender can no longer move this app's controls** — audit finding C3, which
+  turned out to be two separate problems and not the one I filed.
+
+  The filed symptom was a 19px overflow on the default fixture. That was gone by
+  the time I looked, most likely absorbed by the responsive-layout work. The
+  real defect was the one behind it: **nothing constrained message width at
+  all**. `.pane-reader` has `overflow-y: auto`, which makes `overflow-x` compute
+  to `auto`, so a wide table from a stranger's newsletter scrolled the *whole
+  pane* and took the subject and the Reply buttons with it.
+
+  Fixed at three levels — the body is its own horizontal scroll container, the
+  pane sets `overflow-x: hidden` explicitly, and the reader header wraps. All
+  three mutation-tested.
+
+  **The second problem was ours, not a sender's.** The reader header holds six
+  buttons and `flex-shrink: 0` made overflowing the only available outcome; at
+  ~700px the app's own controls sat outside its own pane. Only visible now
+  because C1 lets the window get that narrow. Found by a diagnostic that listed
+  what was actually wider than the pane, rather than by assuming the message was
+  to blame — the message wasn't.
+
+  **A measurement trap, hit twice in one sitting:** `scrollWidth > clientWidth`
+  says content is wider, not that anyone can scroll to it. With
+  `overflow-x: hidden` the metric stays true while the content is clipped and
+  unreachable. Both assertions here were written the wrong way round first and
+  passed against deliberately broken CSS. Now in CLAUDE.md.
+
 - **Scheduled send** — the last of B5's three, and the same scheduler with a
   time you chose instead of ten seconds. A time in the past is treated as "now",
   because the scheduler would run it on the next tick anyway and a countdown to

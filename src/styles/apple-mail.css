@@ -125,6 +125,11 @@ textarea {
   background: var(--bg-main);
   flex-shrink: 0;
   box-shadow: var(--shadow-soft);
+  /* The window can now be as narrow as 660px. Without this the toolbar is
+     wider than the window and the *whole app* scrolls sideways — the panes
+     below it fit perfectly and the horizontal scrollbar comes from up here. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .app-brand {
@@ -245,6 +250,10 @@ textarea {
   position: relative;
   display: flex;
   align-items: center;
+  /* The search box is the toolbar's shock absorber: it is the one control that
+     stays usable at any width, so it gives up room before the buttons do. */
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .search-icon {
@@ -256,6 +265,7 @@ textarea {
 
 .search-input {
   width: 240px;
+  min-width: 0;
   height: 34px;
   padding: 0 32px 0 34px;
   border: 1px solid var(--border);

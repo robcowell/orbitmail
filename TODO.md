@@ -111,6 +111,30 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **The three panes adapt to the window** — audit finding C1. There were no
+  media queries anywhere, and the sidebar and list were both `flex-shrink: 0`,
+  so the reader was the only flexible pane and **absorbed every pixel the window
+  lost**. `fitPanes` now decides the widths and a `ResizeObserver` applies them;
+  the dragged widths are preferences, not promises. Space is reclaimed in the
+  order a person would give it up — list, then sidebar, then sidebar entirely —
+  with a toolbar toggle so a collapse is recoverable and deliberate-able.
+
+  **Two things had to change for it to be worth anything, and both were found by
+  the checks rather than by design.** `minWidth` was **900**, which made the
+  collapse breakpoint unreachable — the code would never have run — and meant
+  the app could not be snapped to half of a 1366-wide laptop screen at all. It
+  is now 660: what two usable panes need (581) plus room for the toolbar. That
+  exposed the second: **the toolbar overflowed**, and because it sits above the
+  panes the *whole app* scrolled sideways while the panes below fitted
+  perfectly. It now shrinks, with the search box as the shock absorber.
+
+  **A correction to the audit itself:** C1 said the panes were "at fixed widths".
+  They were already drag-resizable — what was missing was any response to the
+  *window* changing size. The finding stands in substance; the wording did not.
+
+  Still not done: the dragged widths are not persisted, so a resize is lost on
+  restart. Related but separate, and not what C1 was about.
+
 - **The list header says what you are looking at, and `a` replies to everyone** —
   audit findings C2 and B3, the last two "bites daily" items.
 

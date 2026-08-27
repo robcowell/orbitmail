@@ -100,6 +100,11 @@ interface MailState {
   syncStatus: SyncStatus
   showAddAccount: boolean
   toast: string | null
+  /**
+   * Whether the sidebar is shown. `null` means the user has not said, so the
+   * window's width decides — see fitPanes.
+   */
+  sidebarVisible: boolean | null
   /** The last reversible relocation, offered as Undo on the toast. */
   pendingUndo: PendingUndo | null
   loading: boolean
@@ -195,6 +200,7 @@ interface MailState {
   setSyncStatus: (status: SyncStatus) => void
   setShowAddAccount: (show: boolean) => void
   setToast: (msg: string | null) => void
+  toggleSidebar: () => void
   setPendingUndo: (undo: PendingUndo | null) => void
   setLoading: (loading: boolean) => void
   setListLoading: (loading: boolean) => void
@@ -262,6 +268,7 @@ export const useMailStore = create<MailState>((set) => ({
   showAddAccount: false,
   toast: null,
   pendingUndo: null,
+  sidebarVisible: null,
   loading: false,
   listLoading: false,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -339,6 +346,15 @@ export const useMailStore = create<MailState>((set) => ({
   // again immediately afterwards.
   setToast: (msg) => set({ toast: msg, pendingUndo: null }),
   setPendingUndo: (undo) => set({ pendingUndo: undo }),
+  // From "no preference" the first toggle means "the opposite of what I can see",
+  // which at a wide window is hide and at a narrow one is show.
+  toggleSidebar: () =>
+    set((s) => ({
+      sidebarVisible:
+        s.sidebarVisible === null
+          ? window.innerWidth < 900
+          : !s.sidebarVisible
+    })),
   setLoading: (loading) => set({ loading }),
   setListLoading: (loading) => set({ listLoading: loading }),
   setIsOnline: (online) => set({ isOnline: online }),

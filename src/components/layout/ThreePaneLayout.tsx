@@ -1,4 +1,12 @@
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import { useMailStore } from '../../stores/mailStore'
+import {
+  fitPanes,
+  MIN_SIDEBAR_WIDTH,
+  MIN_LIST_WIDTH,
+  MIN_READER_WIDTH,
+  DIVIDER_COUNT
+} from '../../utils/paneLayout'
 
 interface ThreePaneLayoutProps {
   sidebar: ReactNode
@@ -8,10 +16,6 @@ interface ThreePaneLayoutProps {
 
 const DEFAULT_SIDEBAR_WIDTH = 240
 const DEFAULT_LIST_WIDTH = 320
-const MIN_SIDEBAR_WIDTH = 180
-const MIN_LIST_WIDTH = 200
-const MIN_READER_WIDTH = 280
-const DIVIDER_COUNT = 2
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
@@ -31,6 +35,26 @@ export function ThreePaneLayout({ sidebar, list, reader }: ThreePaneLayoutProps)
   const dragRef = useRef<DragState | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_SIDEBAR_WIDTH)
   const [listWidth, setListWidth] = useState(DEFAULT_LIST_WIDTH)
+  // Measured rather than assumed: the window can change size without a drag,
+  // and before this the panes simply did not notice.
+  const [containerWidth, setContainerWidth] = useState(0)
+  const sidebarPreference = useMailStore((s) => s.sidebarVisible)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (typeof width === 'number') setContainerWidth(width)
+    })
+    observer.observe(el)
+    setContainerWidth(el.getBoundingClientRect().width)
+    return () => observer.disconnect()
+  }, [])
+
+  // The widths above are what the user dragged to — preferences, not promises.
+  // What actually gets applied is whatever still leaves the reader usable.
+  const fit = fitPanes({ containerWidth, sidebarWidth, listWidth, sidebarPreference })
 
   const endDrag = useCallback(() => {
     dragRef.current = null
@@ -109,19 +133,23 @@ export function ThreePaneLayout({ sidebar, list, reader }: ThreePaneLayoutProps)
       className="three-pane"
       style={
         {
-          '--sidebar-width': `${sidebarWidth}px`,
-          '--list-width': `${listWidth}px`
+          '--sidebar-width': `${fit.sidebar}px`,
+          '--list-width': `${fit.list}px`
         } as React.CSSProperties
       }
     >
-      <div className="pane pane-sidebar">{sidebar}</div>
-      <div
-        className="pane-divider"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize sidebar"
-        onPointerDown={startDrag('sidebar')}
-      />
+      {!fit.sidebarHidden && (
+        <>
+          <div className="pane pane-sidebar">{sidebar}</div>
+          <div
+            className="pane-divider"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            onPointerDown={startDrag('sidebar')}
+          />
+        </>
+      )}
       <div className="pane pane-list">{list}</div>
       <div
         className="pane-divider"

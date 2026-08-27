@@ -3,6 +3,7 @@
 // These variants read weight/size from props (we never use IconContext).
 import type { IconProps } from '@phosphor-icons/react'
 import { Tray } from '@phosphor-icons/react/dist/ssr/Tray'
+import { SidebarSimple } from '@phosphor-icons/react/dist/ssr/SidebarSimple'
 import { PaperPlaneTilt } from '@phosphor-icons/react/dist/ssr/PaperPlaneTilt'
 import { NotePencil } from '@phosphor-icons/react/dist/ssr/NotePencil'
 import { Trash } from '@phosphor-icons/react/dist/ssr/Trash'
@@ -80,6 +81,7 @@ export {
   NotePencil,
   Trash,
   WarningCircle,
+  SidebarSimple,
   Folder,
   TrayArrowDown,
   PlusCircle,

@@ -341,6 +341,17 @@ async function main() {
 
   // The status-bar wording is a pure function for exactly this reason: the bug
   // it replaces lived in JSX, where no test in this repo could reach it.
+  // How the three panes share the window — the reader is defended, the list
+  // and sidebar give way.
+  await build({
+    entryPoints: [join(root, 'src/utils/paneLayout.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'paneLayout.cjs'),
+    logLevel: 'silent'
+  })
+
   // The list header's wording: which folder, how much of it is loaded, and
   // whether a filter is hiding the rest.
   await build({
@@ -1253,6 +1264,88 @@ async function main() {
         status([acct('a', { reachedServer: false })], { syncing: true }), true).state === 'online')
     ok('and there is no banner text when everything is fine',
       deriveConnectivity(status([acct('a', { reachedServer: true })]), true).message === null)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Pane layout: the reader is defended, not sacrificed')
+  // -------------------------------------------------------------------------
+  {
+    const {
+      fitPanes, MIN_SIDEBAR_WIDTH, MIN_LIST_WIDTH, MIN_READER_WIDTH, DIVIDER_COUNT
+    } = require(join(outDir, 'paneLayout.cjs'))
+
+    const fit = (containerWidth, over = {}) => fitPanes({
+      containerWidth, sidebarWidth: 240, listWidth: 320, sidebarPreference: null, ...over
+    })
+
+    // The bug: sidebar and list were flex-shrink:0, so the reader absorbed
+    // every pixel the window lost and could be squeezed to nothing.
+    const wide = fit(1600)
+    ok('a wide window gives everyone their preferred width',
+      wide.sidebar === 240 && wide.list === 320, JSON.stringify(wide))
+    ok('and the reader takes the remainder',
+      wide.reader === 1600 - DIVIDER_COUNT - 240 - 320, String(wide.reader))
+
+    // 1000px still fits everyone at their preferred widths — worth pinning, so
+    // that "responsive" does not come to mean "fidgets when it need not".
+    const roomy = fit(1000)
+    ok('a window that still fits is left alone',
+      roomy.sidebar === 240 && roomy.list === 320, JSON.stringify(roomy))
+
+    // Squeeze: the list gives way first — a column of rows degrades gracefully,
+    // prose does not.
+    const medium = fit(900)
+    ok('a squeezed window takes it from the list first',
+      medium.list < 320 && medium.sidebar === 240, JSON.stringify(medium))
+    ok('and the reader keeps its minimum', medium.reader >= MIN_READER_WIDTH,
+      String(medium.reader))
+
+    // Then the sidebar, once the list is at its own minimum.
+    const tight = fit(820, { sidebarPreference: true })
+    ok('once the list is at its minimum the sidebar gives way next',
+      tight.list === MIN_LIST_WIDTH && tight.sidebar < 240, JSON.stringify(tight))
+    ok('the sidebar never goes below its own minimum',
+      tight.sidebar >= MIN_SIDEBAR_WIDTH, String(tight.sidebar))
+
+    // At no width does the reader come out worse than it needs to while there
+    // is still room to take from someone else.
+    for (const w of [900, 1000, 1100, 1200, 1400, 1920]) {
+      const f = fit(w)
+      ok(`at ${w}px the reader is not squeezed below its minimum`,
+        f.reader >= MIN_READER_WIDTH, JSON.stringify(f))
+    }
+
+    // Below the breakpoint the sidebar is not worth 180px — the folder list is
+    // one click away behind the toggle, the reader is not.
+    ok('the sidebar collapses on its own at narrow widths', fit(700).sidebarHidden === true)
+    ok('and stays visible above the breakpoint', fit(1200).sidebarHidden === false)
+    ok('a hidden sidebar takes no width', fit(700).sidebar === 0, String(fit(700).sidebar))
+
+    // The preference wins over the breakpoint, in both directions.
+    ok('asking for it keeps it at a narrow width',
+      fit(1000, { sidebarPreference: true }).sidebarHidden === false)
+    ok('and hiding it is respected at a wide one',
+      fit(1600, { sidebarPreference: false }).sidebarHidden === true)
+
+    // ...but not into an unusable window: asking for a sidebar that cannot fit
+    // alongside two usable panes loses to arithmetic.
+    const impossible = fit(600, { sidebarPreference: true })
+    ok('a sidebar that cannot fit is hidden even when asked for',
+      impossible.sidebarHidden === true, JSON.stringify(impossible))
+
+    // Nothing may overflow the window — a horizontal scrollbar on the whole app
+    // is worse than a narrow reader.
+    for (const w of [400, 600, 700, 900, 1000, 1600]) {
+      const f = fit(w)
+      const dividers = f.sidebarHidden ? 1 : DIVIDER_COUNT
+      ok(`at ${w}px the panes add up to the window`,
+        f.sidebar + f.list + f.reader + dividers === w,
+        JSON.stringify({ ...f, sum: f.sidebar + f.list + f.reader + dividers }))
+    }
+
+    // Before the first measurement there is nothing sensible to compute.
+    ok('an unmeasured container does not produce negative widths',
+      fit(0).reader >= 0 && fit(-5).reader >= 0)
   }
 
   // -------------------------------------------------------------------------

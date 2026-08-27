@@ -96,7 +96,21 @@ const api: OrbitMailAPI = {
   },
   compose: {
     open: (payload) => ipcRenderer.invoke('compose:open', payload),
-    send: (payload) => ipcRenderer.invoke('compose:send', payload),
+    scheduleSend: (payload) => ipcRenderer.invoke('compose:send', payload),
+    cancelSend: (scheduledId) => ipcRenderer.invoke('compose:cancelSend', scheduledId),
+    onSent: (callback) => {
+      const listener = (_e: unknown, subject: string) => callback(subject)
+      ipcRenderer.on('compose:sent', listener)
+      return () => ipcRenderer.removeListener('compose:sent', listener)
+    },
+    onSendScheduled: (callback) => {
+      const listener = (
+        _e: unknown,
+        info: { scheduledId: string; dueAt: number; subject: string }
+      ) => callback(info)
+      ipcRenderer.on('compose:scheduled', listener)
+      return () => ipcRenderer.removeListener('compose:scheduled', listener)
+    },
     pickAttachments: () => ipcRenderer.invoke('compose:pickAttachments'),
     statAttachments: (paths: string[]) => ipcRenderer.invoke('compose:statAttachments', paths),
     // webUtils yields a path only for a genuine dropped file — a File the

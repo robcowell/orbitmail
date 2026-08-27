@@ -84,6 +84,16 @@ function initTables(db: Database.Database): void {
       sweep_cache_at INTEGER
     );
 
+    CREATE TABLE IF NOT EXISTS scheduled_actions (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      due_at INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS scheduled_actions_due_idx ON scheduled_actions(due_at);
+
     CREATE INDEX IF NOT EXISTS messages_folder_date_idx ON messages(folder_id, date);
     CREATE INDEX IF NOT EXISTS messages_account_date_idx ON messages(account_id, date);
 
@@ -384,6 +394,21 @@ function migrateSchema(db: Database.Database): void {
     db.exec('ALTER TABLE attachments ADD COLUMN is_inline INTEGER NOT NULL DEFAULT 0')
   }
   backfillInlineAttachments(db)
+
+  // Work the app owes the future: held sends, timed sends, snoozed messages.
+  // CREATE TABLE IF NOT EXISTS is idempotent, so this is safe to run on every
+  // start alongside the ALTER steps above.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS scheduled_actions (
+      id TEXT PRIMARY KEY,
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      due_at INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS scheduled_actions_due_idx ON scheduled_actions(due_at);
+  `)
 }
 
 // Decoded byte length of a base64 payload of `length` characters, `padding` of

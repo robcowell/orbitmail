@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { ThreePaneLayout } from './components/layout/ThreePaneLayout'
 import { Toolbar } from './components/layout/Toolbar'
 import { Sidebar } from './components/sidebar/Sidebar'
@@ -20,7 +20,8 @@ import {
   deleteSelectedThreads,
   openSettings,
   composeAccountId,
-  performUndo
+  performUndo,
+  undoSend
 } from './stores/mailStore'
 import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
@@ -84,6 +85,45 @@ function StatusBar() {
           {new Date(summary.healthyLastSyncAt).toLocaleTimeString()}
         </span>
       )}
+    </div>
+  )
+}
+
+/**
+ * The offer to take a send back, with the time remaining. Separate from the
+ * toast because the two can be on screen at once — sending a message and then
+ * deleting something are unrelated actions — and because this one is a
+ * countdown rather than a notice.
+ */
+function PendingSendBar() {
+  const pendingSend = useMailStore((s) => s.pendingSend)
+  const [remaining, setRemaining] = useState(0)
+
+  useEffect(() => {
+    if (!pendingSend) return
+    const update = () =>
+      setRemaining(Math.max(0, Math.ceil((pendingSend.dueAt - Date.now()) / 1000)))
+    update()
+    const t = setInterval(update, 250)
+    return () => clearInterval(t)
+  }, [pendingSend])
+
+  if (!pendingSend) return null
+
+  return (
+    <div className="pending-send" role="status">
+      <span className="pending-send-label">
+        {remaining > 0 ? `Sending in ${remaining}s…` : 'Sending…'}
+      </span>
+      <button
+        type="button"
+        className="pending-send-undo"
+        onClick={() => {
+          void undoSend()
+        }}
+      >
+        Undo
+      </button>
     </div>
   )
 }
@@ -186,6 +226,18 @@ function MainApp() {
       scheduleRefreshMessages()
     })
 
+    // A send is held for a few seconds so it can be taken back. The composer
+    // has already closed, so the offer lives here.
+    const unsubScheduled = window.orbitMail.compose.onSendScheduled((info) => {
+      useMailStore.getState().setPendingSend(info)
+    })
+
+    const unsubSent = window.orbitMail.compose.onSent(() => {
+      const store = useMailStore.getState()
+      store.setPendingSend(null)
+      store.setToast('Message sent')
+    })
+
     // Main hit something nobody caught. Mail on disk is fine, but the process
     // is in an unknown state, so say so rather than degrading silently.
     const unsubToast = window.orbitMail.app.onToast((message) => {
@@ -200,6 +252,8 @@ function MainApp() {
       unsubSyncComplete()
       unsubStatus()
       unsubMessages()
+      unsubScheduled()
+      unsubSent()
       unsubError()
       unsubToast()
       window.removeEventListener('online', updateOnline)
@@ -329,6 +383,7 @@ function MainApp() {
       <AddAccountWizard />
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
       {showTasks && <TasksDialog onClose={() => setShowTasks(false)} />}
+      <PendingSendBar />
       <Toast />
     </div>
   )
@@ -347,7 +402,8 @@ export default function App() {
     return (
       <div className="app-shell" style={{ height: '100%' }}>
         <ComposeWindow />
-        <Toast />
+        <PendingSendBar />
+      <Toast />
       </div>
     )
   }

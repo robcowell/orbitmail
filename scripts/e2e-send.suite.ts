@@ -183,17 +183,36 @@ async function main(): Promise<void> {
     `${BrowserWindow.getAllWindows().length} window(s) left`)
   ok('no save-as-draft question is asked', dialogs.length === 0,
     dialogs.join(' | ') || 'none')
-  ok('the draft is gone', drafts.countDrafts(account.id) === 0,
+
+  // A send is now *held* for a few seconds so it can be taken back. Two things
+  // follow, and both are asserted rather than waited out silently:
+  //
+  //  - the message has NOT gone yet, which is the entire guarantee. Without
+  //    this the suite would pass just as well against a build that sent
+  //    immediately, and undo-send would be untested here.
+  //  - the draft survives the window, because Undo has to have something to
+  //    reopen. It is deleted only once the message is actually away.
+  ok('the message is held rather than sent at once',
+    drafts.countDrafts(account.id) === 1,
+    `drafts=${drafts.countDrafts(account.id)}`)
+
+  // Now let the hold expire. Waiting on the outcome rather than sleeping a
+  // fixed 10s, so a slower machine does not make this flaky.
+  const sent = await waitFor(() => drafts.countDrafts(account.id) === 0, 30_000)
+  ok('the draft is gone once the hold expires and the message goes', sent,
     `count=${drafts.countDrafts(account.id)}`)
 
   // compose:send syncs Sent itself, so the filed copy is already in the local
   // database — read back through the app's own query, not straight off IMAP.
   const folders = db.listFolders(account.id)
   const sentFolder = folders.find((f) => f.type === 'sent' || f.name === 'Sent')
-  const filed = sentFolder
-    ? db.listMessages(sentFolder.id, 50, 0).filter((m) => m.subject === subject)
-    : []
-  ok('the sent message is filed in Sent', filed.length === 1, `copies=${filed.length}`)
+  const filedCount = () =>
+    sentFolder ? db.listMessages(sentFolder.id, 50, 0).filter((m) => m.subject === subject).length : 0
+  // The draft is deleted *before* the Sent sync runs — losing the draft matters
+  // more than filing the copy, so that order is deliberate. It means the draft
+  // disappearing is not the signal that filing has finished; wait for the copy.
+  await waitFor(() => filedCount() === 1, 20_000)
+  ok('the sent message is filed in Sent', filedCount() === 1, `copies=${filedCount()}`)
 
   // And it really left: GreenMail delivered it to the recipient, who is the
   // same test user, so the copy comes back to this INBOX.

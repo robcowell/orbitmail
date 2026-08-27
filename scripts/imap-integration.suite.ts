@@ -5444,6 +5444,105 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Scheduler: work the app owes the future')
+  // -------------------------------------------------------------------------
+  {
+    // One table and one ticker behind undo-send, scheduled send and snooze.
+    // The rules worth pinning are about *not* doing something twice and not
+    // losing something across a quit.
+    const sched = await import('../electron/services/scheduler')
+    sched.resetHandlersForTests()
+
+    const acct = db.saveManualAccount('imap', {
+      authType: 'password', email: 'sched@example.com', displayName: 'Sched',
+      username: 'u', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+
+    const ran: string[] = []
+    sched.registerHandler('send', async (action) => {
+      ran.push(String((action.payload as { tag?: string })?.tag))
+    })
+
+    // Due in the past: the "app was closed when it fell due" case, which is the
+    // whole reason this lives on disk rather than in a setTimeout.
+    const overdue = sched.scheduleAction({
+      accountId: acct.id, kind: 'send', dueAt: Date.now() - 60_000, payload: { tag: 'overdue' }
+    })
+    const future = sched.scheduleAction({
+      accountId: acct.id, kind: 'send', dueAt: Date.now() + 3_600_000, payload: { tag: 'future' }
+    })
+
+    ok('an action is readable after scheduling', !!sched.getAction(overdue))
+    ok('only what is due comes back as due',
+      sched.dueActions().filter((a) => a.accountId === acct.id).length === 1,
+      JSON.stringify(sched.dueActions().map((a) => a.id)))
+
+    await sched.runDueActions()
+    ok('something overdue runs — a quit does not lose it', ran.includes('overdue'),
+      JSON.stringify(ran))
+    ok('and something not yet due is left alone', !ran.includes('future'), JSON.stringify(ran))
+    ok('a completed action is gone from the table', sched.getAction(overdue) === null)
+    ok('the pending one is still there', !!sched.getAction(future))
+
+    // The rule the whole module exists to protect: never run twice. A row is
+    // deleted before its handler runs, so a handler that throws halfway --
+    // an SMTP failure *after* the message reached the server -- cannot be
+    // retried into a duplicate send.
+    ran.length = 0
+    await sched.runDueActions()
+    ok('running again does not repeat what already ran', ran.length === 0, JSON.stringify(ran))
+
+    const boom = sched.scheduleAction({
+      accountId: acct.id, kind: 'snooze', dueAt: Date.now() - 1, payload: { tag: 'boom' }
+    })
+    sched.registerHandler('snooze', async () => {
+      throw new Error('handler exploded after doing half its work')
+    })
+    await sched.runDueActions()
+    ok('a handler that throws does not stall the scheduler', true)
+    ok('and its row is gone rather than retried into a duplicate',
+      sched.getAction(boom) === null)
+
+    // Cancelling is what Undo does, and it has to report whether it won the race.
+    const cancellable = sched.scheduleAction({
+      accountId: acct.id, kind: 'send', dueAt: Date.now() + 3_600_000, payload: { tag: 'c' }
+    })
+    ok('cancelling a pending action reports success', sched.cancelAction(cancellable) === true)
+    ok('cancelling it twice reports that there was nothing left to cancel',
+      sched.cancelAction(cancellable) === false)
+    ok('cancelling something that already ran also reports false',
+      sched.cancelAction(overdue) === false)
+
+    // A row we cannot parse can never run; it must not wedge the queue behind it.
+    const raw = (await import('../electron/db')).getRawSqlite()
+    raw.prepare(
+      `INSERT INTO scheduled_actions (id, account_id, kind, due_at, payload, created_at)
+       VALUES ('bad-json', ?, 'send', 0, '{not json', 0)`
+    ).run(acct.id)
+    ran.length = 0
+    sched.registerHandler('send', async (action) => {
+      if (action.payload === null) throw new Error('unusable payload')
+      ran.push('ok')
+    })
+    await sched.runDueActions()
+    ok('an unparseable payload is dropped rather than wedging the queue',
+      sched.getAction('bad-json') === null)
+
+    // Account removal has to take its scheduled work with it, or a send would
+    // be attempted for an account that no longer exists.
+    const orphan = sched.scheduleAction({
+      accountId: acct.id, kind: 'send', dueAt: Date.now() + 3_600_000, payload: { tag: 'o' }
+    })
+    db.removeAccount(acct.id)
+    ok('removing an account cascades to its scheduled work',
+      sched.getAction(orphan) === null, JSON.stringify(sched.getAction(orphan)))
+
+    sched.resetHandlersForTests()
+  }
+
+  // -------------------------------------------------------------------------
   section('Undo: a moved message can be put back, an expunged one cannot')
   // -------------------------------------------------------------------------
   {

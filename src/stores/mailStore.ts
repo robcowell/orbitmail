@@ -105,6 +105,8 @@ interface MailState {
    * window's width decides — see fitPanes.
    */
   sidebarVisible: boolean | null
+  /** A send being held, offered as Undo until it goes. */
+  pendingSend: { scheduledId: string; dueAt: number; subject: string } | null
   /** The last reversible relocation, offered as Undo on the toast. */
   pendingUndo: PendingUndo | null
   loading: boolean
@@ -201,6 +203,7 @@ interface MailState {
   setShowAddAccount: (show: boolean) => void
   setToast: (msg: string | null) => void
   toggleSidebar: () => void
+  setPendingSend: (send: { scheduledId: string; dueAt: number; subject: string } | null) => void
   setPendingUndo: (undo: PendingUndo | null) => void
   setLoading: (loading: boolean) => void
   setListLoading: (loading: boolean) => void
@@ -269,6 +272,7 @@ export const useMailStore = create<MailState>((set) => ({
   toast: null,
   pendingUndo: null,
   sidebarVisible: null,
+  pendingSend: null,
   loading: false,
   listLoading: false,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -346,6 +350,7 @@ export const useMailStore = create<MailState>((set) => ({
   // again immediately afterwards.
   setToast: (msg) => set({ toast: msg, pendingUndo: null }),
   setPendingUndo: (undo) => set({ pendingUndo: undo }),
+  setPendingSend: (send) => set({ pendingSend: send }),
   // From "no preference" the first toggle means "the opposite of what I can see",
   // which at a wide window is hide and at a narrow one is show.
   toggleSidebar: () =>
@@ -1137,6 +1142,33 @@ export function buildUndo(
   }
 
   return entries.length > 0 ? { label, entries, skipped } : null
+}
+
+/**
+ * Take back a send that has not gone yet, and reopen it for editing.
+ *
+ * The hold can expire between the click and the IPC landing, so `cancelled:
+ * false` is a real answer and is reported rather than swallowed — telling
+ * someone their message was recalled when it was not would be the worst
+ * possible outcome here.
+ */
+export async function undoSend(): Promise<void> {
+  const store = useMailStore.getState()
+  const pending = store.pendingSend
+  if (!pending) return
+
+  store.setPendingSend(null)
+  try {
+    const result = await window.orbitMail.compose.cancelSend(pending.scheduledId)
+    if (!result.cancelled) {
+      store.setToast('Too late — that message has already been sent')
+      return
+    }
+    store.setToast('Send cancelled')
+    if (result.draftId) await window.orbitMail.drafts.open(result.draftId)
+  } catch (err) {
+    store.setToast(err instanceof Error ? err.message : 'Could not cancel that send')
+  }
 }
 
 /** Put the last relocation back. Clears the offer either way — one undo, once. */

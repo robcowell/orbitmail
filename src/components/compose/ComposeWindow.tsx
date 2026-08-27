@@ -383,7 +383,7 @@ export function ComposeWindow() {
     )
     setSending(true)
     try {
-      await window.orbitMail.compose.send({
+      await window.orbitMail.compose.scheduleSend({
         accountId: payload.accountId,
         to: payload.to,
         cc: showCc ? payload.cc : undefined,
@@ -395,7 +395,8 @@ export function ComposeWindow() {
         references: payload.references,
         mode: payload.mode,
         originalMessageId: payload.originalMessageId,
-        // Main deletes this draft once the send succeeds, not before.
+        // Main holds this draft for the length of the undo window and deletes
+        // it once the message is actually away, not before.
         draftId: draftIdRef.current ?? undefined,
         attachmentPaths: attachments.length ? attachments.map((a) => a.path) : undefined
       })

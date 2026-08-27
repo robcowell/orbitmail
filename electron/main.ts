@@ -108,6 +108,14 @@ import {
   searchServerMessages
 } from './services/imap-sync'
 import {
+  scheduleAction,
+  cancelAction,
+  getAction,
+  registerHandler,
+  startScheduler,
+  stopScheduler
+} from './services/scheduler'
+import {
   startIdleMonitoring,
   stopIdleMonitoring,
   restartIdleMonitoring,
@@ -457,6 +465,30 @@ function senderName(from: string): string {
   const name = match?.[1]?.trim()
   if (name) return name
   return from.replace(/[<>]/g, '').trim()
+}
+
+/**
+ * How long a send is held so it can be taken back. Ten seconds is long enough
+ * to notice the mistake you make as you click, and short enough that nobody
+ * wonders whether the message went. Fixed for now — see TODO.md for making it a
+ * setting, which is what people eventually want from it.
+ */
+const UNDO_SEND_MS = 10_000
+
+/** Told the renderer once the message is actually away, so it can say so. */
+function notifySendCompleted(subject: string): void {
+  const win = liveMainWindow()
+  if (win) win.webContents.send('compose:sent', subject)
+}
+
+/**
+ * The composer closes the moment Send is pressed, so the offer to take it back
+ * has to live in the main window — which otherwise would not know a send had
+ * been scheduled at all.
+ */
+function notifySendScheduled(info: { scheduledId: string; dueAt: number; subject: string }): void {
+  const win = liveMainWindow()
+  if (win) win.webContents.send('compose:scheduled', info)
 }
 
 function showNewMailNotification(count: number): void {
@@ -1430,9 +1462,11 @@ function registerIpc(): void {
     await createComposeWindow(payload)
   })
 
-  ipcMain.handle('compose:send', async (_, payload: ComposePayload) => {
-    const accounts = listAccounts()
-    const account = accounts.find((a) => a.id === payload.accountId)
+  // The send itself, with no scheduling around it. Called by the scheduler when
+  // an undo window closes or a timed send falls due — never directly by the
+  // renderer, which now only ever *schedules* a send.
+  const performSend = async (payload: ComposePayload): Promise<void> => {
+    const account = listAccounts().find((a) => a.id === payload.accountId)
     if (!account) throw new Error('Account not found')
     await sendMail(payload, account.provider)
     // The draft has been sent, so it is no longer a draft. Deliberately after
@@ -1447,6 +1481,33 @@ function registerIpc(): void {
     } catch {
       // Sending succeeded; a Sent-folder sync hiccup shouldn't fail the send.
     }
+  }
+
+  registerHandler('send', async (action) => {
+    const payload = action.payload as { compose?: ComposePayload } | null
+    if (!payload?.compose) return
+    await performSend(payload.compose)
+    notifySendCompleted(payload.compose.subject ?? '')
+  })
+
+  ipcMain.handle('compose:send', async (_, payload: ComposePayload) => {
+    const account = listAccounts().find((a) => a.id === payload.accountId)
+    if (!account) throw new Error('Account not found')
+
+    // Kept as a draft for the length of the undo window, so Undo has something
+    // to reopen and a quit inside the window loses nothing. The scheduled
+    // handler deletes it once the message is actually away.
+    const draftId = payload.draftId ?? saveDraft(payload) ?? undefined
+    const compose: ComposePayload = { ...payload, draftId }
+
+    const dueAt = Date.now() + UNDO_SEND_MS
+    const scheduledId = scheduleAction({
+      accountId: account.id,
+      kind: 'send',
+      dueAt,
+      payload: { compose }
+    })
+
     // Tells the close handler this close is the tail of a send, not someone
     // abandoning a message — see composeSentAndClosing. Set only alongside a
     // close that will actually happen, so the flag cannot outlive this window
@@ -1454,6 +1515,23 @@ function registerIpc(): void {
     if (composeWindow) {
       composeSentAndClosing = true
       composeWindow.close()
+    }
+
+    notifySendScheduled({ scheduledId, dueAt, subject: payload.subject ?? '' })
+
+    return { scheduledId, dueAt, draftId: draftId ?? null }
+  })
+
+  // Undo: drop the pending send and hand back the draft to reopen. Returns
+  // false when the window has already closed and the message is gone — the one
+  // answer the renderer must not paper over.
+  ipcMain.handle('compose:cancelSend', (_, scheduledId: string) => {
+    const action = getAction(scheduledId)
+    const cancelled = cancelAction(scheduledId)
+    const payload = action?.payload as { compose?: ComposePayload } | null
+    return {
+      cancelled,
+      draftId: cancelled ? (payload?.compose?.draftId ?? null) : null
     }
   })
 
@@ -1856,6 +1934,9 @@ if (!gotSingleInstanceLock) {
     // cached mail from the local DB. Local-only setup (mailto handler, badge)
     // stays here since it's cheap.
     initSyncFromPersistence()
+    // Anything that fell due while the app was closed runs on this first tick:
+    // a send held when the app quit, a snooze that came due overnight.
+    startScheduler()
     createMainWindow()
     // Tray before the first badge update, so that update paints the count.
     initTray(() => liveMainWindow())
@@ -1957,6 +2038,11 @@ let isQuitting = false
 app.on('before-quit', (event) => {
   isQuitting = true
   const teardown = (): void => {
+    // Stop the ticker rather than let it fire mid-shutdown. Pending work is on
+    // disk, so a send held when the app quits is dispatched at the next start
+    // instead — late, but not lost. Sending it *during* quit would mean an
+    // outbound SMTP connection racing the process teardown.
+    stopScheduler()
     destroyTray()
     // The raw .eml files written for forward-as-attachment are whole emails.
     cleanupExportDir()

@@ -111,6 +111,39 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **A scheduler, and undo send** — the first of B5's three features, and the
+  foundation the other two run on. Undo send, scheduled send and snooze all
+  need the same thing, so they share one table (`scheduled_actions`) and one
+  ticker rather than three timers: the hard parts are surviving a quit and
+  deciding what to do about something that fell due while the app was closed.
+
+  **The honest bargain** is that a desktop client has no server-side scheduler,
+  so nothing happens while the app is shut and anything overdue runs at the next
+  start — late, but not lost. Persisted for exactly that reason; a `setTimeout`
+  would lose a held send on quit.
+
+  **A row is deleted before its handler runs.** A handler that throws halfway —
+  an SMTP failure *after* the message reached the server — must not leave a row
+  that sends it again on the next tick. Losing an action is recoverable by the
+  user; sending twice is not. Mutation-tested by moving the delete after the
+  handler, which fails two assertions.
+
+  `compose:send` now *schedules* rather than sends: it keeps the draft (so Undo
+  has something to reopen), holds for ten seconds, closes the composer, and
+  tells the main window, which is where the offer has to live. `cancelSend`
+  reports whether it won the race — an expired hold says "Too late" rather than
+  claiming a recall that did not happen.
+
+  **The send e2e suite had to learn about the hold**, and is better for it: it
+  now asserts the message is *not* sent at once, which is the whole guarantee,
+  before waiting for it to go. Without that it would have passed just as well
+  against a build with no undo-send at all. It also exposed a real ordering
+  detail worth knowing: the draft is deleted *before* the Sent sync runs, so
+  the draft disappearing is not the signal that filing has finished.
+
+  Not done: making the ten seconds a setting, which is what people eventually
+  want from this. Scheduled send and snooze are next, on this scheduler.
+
 - **The three panes adapt to the window** — audit finding C1. There were no
   media queries anywhere, and the sidebar and list were both `flex-shrink: 0`,
   so the reader was the only flexible pane and **absorbed every pixel the window

@@ -275,6 +275,21 @@ export interface UndoRelocateResult {
   failed: number
 }
 
+/** A send that has been accepted but not yet performed. */
+export interface ScheduledSend {
+  scheduledId: string
+  /** When the message will actually go. Epoch ms. */
+  dueAt: number
+  /** The draft held for the length of the window, so Undo can reopen it. */
+  draftId: string | null
+}
+
+export interface CancelSendResult {
+  /** False when the hold had already expired — the message is gone. */
+  cancelled: boolean
+  draftId: string | null
+}
+
 export interface SyncStatus {
   /** True while *any* account is syncing. */
   syncing: boolean
@@ -723,7 +738,27 @@ export interface OrbitMailAPI {
   }
   compose: {
     open: (payload?: Partial<ComposePayload>) => Promise<void>
-    send: (payload: ComposePayload) => Promise<void>
+    /**
+     * Schedules the send rather than performing it. The message goes out after
+     * a short hold so it can be taken back; the composer closes immediately
+     * either way. Resolving does **not** mean the mail has left.
+     */
+    scheduleSend: (payload: ComposePayload) => Promise<ScheduledSend>
+    /**
+     * Take back a send that has not gone yet. `cancelled: false` means the hold
+     * had already expired and the message is away — the one answer the UI must
+     * not paper over.
+     */
+    cancelSend: (scheduledId: string) => Promise<CancelSendResult>
+    /** Fires when a held send has actually gone. */
+    onSent: (callback: (subject: string) => void) => () => void
+    /**
+     * Fires in the **main** window when a send is scheduled. The composer has
+     * already closed by then, so this is where the offer to take it back lives.
+     */
+    onSendScheduled: (
+      callback: (info: { scheduledId: string; dueAt: number; subject: string }) => void
+    ) => () => void
     pickAttachments: () => Promise<AttachmentDraft[]>
     statAttachments: (paths: string[]) => Promise<AttachmentDraft[]>
     // Resolves a dropped File to a path *and* approves it for attachment; the

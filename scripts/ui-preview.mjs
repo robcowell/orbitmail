@@ -145,6 +145,9 @@ const OVERRIDES = {
       flagColor: null, hasAttachments: false, threadId: null
     }
   ],
+  'messages.deleteMany': { deleted: 2, failed: 0 },
+  'messages.moveMany': { deleted: 2, failed: 0 },
+  'messages.undoRelocate': { restored: 2, failed: 0 },
   'messages.list': [],
   'messages.count': 0,
   // One conversation, so the thread reader — and the conversation summary that

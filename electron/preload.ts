@@ -62,6 +62,7 @@ const api: OrbitMailAPI = {
     delete: (messageId) => ipcRenderer.invoke('messages:delete', messageId),
     deleteMany: (items) => ipcRenderer.invoke('messages:deleteMany', items),
     moveMany: (items) => ipcRenderer.invoke('messages:moveMany', items),
+    undoRelocate: (entries) => ipcRenderer.invoke('messages:undoRelocate', entries),
     move: (messageId, targetFolderId) =>
       ipcRenderer.invoke('messages:move', messageId, targetFolderId),
     copy: (messageId, targetFolderId) =>

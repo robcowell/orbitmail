@@ -111,6 +111,37 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Undo for delete, archive and move** — audit finding B2. Nothing in the app
+  was reversible, and `Delete` acts on a whole multi-selection, which is what
+  made bulk triage feel risky rather than fast.
+
+  **The mechanic that shaped the design:** a move does not preserve the local
+  row. `relocateMany` moves the message on the server and then deletes the row;
+  the next poll re-imports it under a new uid and a **new id**. So undo cannot
+  hold the id it acted on — it keys on the RFC **Message-ID**, which survives and
+  which `messages_message_id_idx` already indexes. `findMessagesByRfcId` returns
+  every row for a Message-ID because Gmail keeps one per label: undoing an
+  archive means finding the row *not* already in the folder being restored to.
+
+  **What it refuses to do, deliberately.** Delete only expunges when the message
+  is already in Trash, and an expunged message is gone — so it is skipped and the
+  toast says how many cannot be brought back, rather than restoring four of five
+  silently. Same for a message whose headers carry no Message-ID. When nothing
+  qualifies, no Undo is offered at all rather than a button that does nothing.
+  The offer is set **after** the server confirms, so a failed delete never
+  presents one.
+
+  Both honesty guards were mutation-tested: offering undo for expunged messages,
+  and offering it when nothing can be restored, each fail the assertions aimed at
+  them. `test:e2e` was run for this one — it does not exercise delete, but every
+  suite loads `App.tsx`, so it catches the Toast change breaking the renderer.
+
+  **Not covered:** the toast markup itself was only style-checked by injecting it
+  into the preview DOM. The preview's stubbed IPC cannot complete a delete
+  round-trip, so the button's wiring is proven by `test:store` rather than by
+  clicking it. A real click needs a window, which is `test:e2e` territory and
+  would want a message-actions suite that does not exist yet.
+
 - **The unified inbox is searchable** — audit item 2, and the biggest day-to-day
   friction in the app. "All Inboxes" is the view you land on and it was the one
   view whose search box was **disabled**, reading "Select a folder to search":

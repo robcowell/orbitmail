@@ -2,7 +2,8 @@
 
 A desktop email client for Linux, with the three-pane layout Apple Mail users
 will recognise. It handles Gmail, Microsoft 365, and any IMAP or POP3 account.
-Your mail is cached on your machine, so search is instant — across one account
+Deleting, archiving or moving a conversation can be undone from the message
+that confirms it. Your mail is cached on your machine, so search is instant — across one account
 or all of them at once — and you can read offline — and when it can't reach a mail server it says so, per account, rather
 than showing you old mail as though it were current. Optional AI features — off unless you add your own API key — summarise
 messages and pull out what you still need to do.

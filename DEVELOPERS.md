@@ -886,6 +886,40 @@ The renderer's half lives in `src/utils/syncStatus.ts` as a pure function rather
 than inline in JSX, because the "last synced" bug was one JSX condition and
 nothing in this repo could reach it — `test:imap` is windowless. See Store tests.
 
+### Undo, and why it is keyed by Message-ID
+
+Delete, archive and move are all *relocations*: the message goes to Trash, to an
+Archive folder, or to a named one. Delete only expunges outright when the message
+is **already in Trash** — that is what `destination` returning `null` means in
+`relocateSelectedThreads`. So the common cases are reversible, and until this
+change none of them was.
+
+The obstacle is that **a move does not preserve the local row**. `relocateMany`
+calls `moveMessageOnServer` and then `deleteMessage(id)`; the next
+`pollForNewMessages` re-imports the message into its new folder under a new uid
+and a **new local id**. Undo therefore cannot hold onto the id it acted on.
+
+The RFC **Message-ID** is the handle that survives, and
+`messages_message_id_idx` already indexes it. `findMessagesByRfcId` returns
+*every* row for one Message-ID within an account, because Gmail stores one row
+per label — undoing an archive means finding the row that is **not** already in
+the folder being restored to, and putting the Inbox label back.
+
+Three things undo deliberately refuses to do:
+
+- **Offer to restore what the server expunged.** A message deleted from Trash is
+  gone; `buildUndo` skips it and the toast says how many cannot be brought back,
+  rather than restoring four of five silently.
+- **Offer to restore a message with no Message-ID.** There is no way to find it
+  again. Also counted as skipped.
+- **Offer Undo at all when nothing qualifies.** `buildUndo` returns null, and the
+  toast is a plain sentence.
+
+The offer is set **after** the server confirms, never before, so a failed delete
+never presents an Undo that would do nothing. `setToast` clears `pendingUndo` —
+the offer belongs to the action that raised it, and a later toast must not
+inherit it — which is why each call site sets the toast and the undo together.
+
 ### Inline images are not attachments
 
 A signature logo is not a file the sender attached, but mailparser hands it over
@@ -2218,6 +2252,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
+| Undo lookup | A relocated message is findable by its RFC Message-ID and reports the folder it now sits in; every row for a Message-ID comes back, not just the first, so a Gmail row already in the destination can be told from one that is not; the lookup is scoped to one account, so an identical Message-ID in another account is not restored. |
 | Unified search | A null `accountId` searches every account and returns them interleaved newest-first, not grouped; an account id still scopes to that account alone; an **empty string** returns nothing rather than everything; the limit bounds the merged set rather than applying per account. |
 | Reachability | Connection-level failures (`ECONNREFUSED`, `ENOTFOUND`, `EHOSTUNREACH`, bare "Timeout"/"Timed out") classify as never-reached, by code and by bare message; authentication failures classify as *reached*, including one phrased as a login timeout; an unknown failure defaults to reached. End to end, a refused connection records `reachedServer: false` on the account and a successful sync records `true`. |
 | Per-account sync status | Two accounts, one pointed at a closed port: the failing one carries its own error, the healthy one carries none and still reports a last-synced time, and the aggregate reports one too. A failure does not stamp freshness on the account that failed; a later success clears a stale error; removing an account stops it reporting. |
@@ -2434,6 +2469,7 @@ could only have been tested through a real window.
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| Undo eligibility | A move records one entry per message, each pointing back at the folder it came from. A message the server expunged is not offered for undo and is counted so the toast can say so; one with no Message-ID likewise; and when nothing can be restored, undo is not offered at all rather than being a no-op button. |
 | Search scope | "All Inboxes" is searchable and scopes to every account, with a placeholder that says so — it used to read "Select a folder to search". One account is named rather than called "all accounts". A folder still scopes to its account. An unresolvable folder is **not** silently promoted to searching everything, which matters now that null means "all". Cross-account results are qualified by account, single-account results are not. |
 | Connectivity | `navigator.onLine` saying *no* is taken at its word; saying *yes* is not. With every account failing to reach its server the bar says so ("Can't reach your mail servers"), which is the captive-portal/dropped-VPN case the old banner could never show. One reachable account means the network works, an account that was merely refused is not an outage, and nothing is claimed from silence — no accounts, none tried, or mid-sync. |
 | Sync status wording | A mailbox that synced a moment ago still reports its time while another account is failing; a failing account never lends its stale timestamp to that line; two failures are counted rather than concatenated, with the per-account detail kept for the tooltip; re-authentication is offered for credential errors and not for network ones. The bug this replaces lived in one JSX condition, which no test in this repo could reach — hence `summarizeSyncStatus` being a pure function. |

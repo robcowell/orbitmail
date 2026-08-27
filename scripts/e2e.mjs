@@ -21,6 +21,10 @@
 //   the toast actually puts the mail back. The pure half is covered by
 //   test:store and the lookup by test:imap; neither can render a toast, click
 //   its button, or check the server afterwards. Needs the mail server.
+// - `e2e-shortcuts.suite.ts` — the reader's keys, through real keystrokes:
+//   pressing `a` opens a reply-all composer addressed to everyone on the thread
+//   but us. Whether a key reaches the handler needs a window, and a reply-all
+//   that quietly drops the other recipients looks like it worked.
 // - `e2e-window.suite.ts` — window lifecycle: closing the main window with a
 //   composer open must not use the window after it is gone. Ends with every
 //   window destroyed, which is why it cannot share a process with the above.
@@ -58,7 +62,8 @@ const SUITES = [
   { name: 'format', entry: 'e2e-format.suite.ts' },
   { name: 'window', entry: 'e2e-window.suite.ts' },
   { name: 'zoom', entry: 'e2e-zoom.suite.ts' },
-  { name: 'undo', entry: 'e2e-undo.suite.ts' }
+  { name: 'undo', entry: 'e2e-undo.suite.ts' },
+  { name: 'shortcuts', entry: 'e2e-shortcuts.suite.ts' }
 ]
 
 const keep = process.argv.includes('--keep')

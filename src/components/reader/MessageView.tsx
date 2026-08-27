@@ -111,7 +111,7 @@ function DraftReplyButton({ messageId }: { messageId: string }) {
               role="radio"
               aria-checked={!isAll}
               className={`draft-reply-mode${isAll ? '' : ' active'}`}
-              title="Reply to the sender only"
+              title="Reply to the sender only (R)"
               onClick={() => setDraftReplyMode('reply')}
             >
               <ArrowBendUpLeft size={14} weight="duotone" />
@@ -122,7 +122,7 @@ function DraftReplyButton({ messageId }: { messageId: string }) {
               role="radio"
               aria-checked={isAll}
               className={`draft-reply-mode${isAll ? ' active' : ''}`}
-              title="Reply to everyone on the message"
+              title="Reply to everyone on the message (A)"
               onClick={() => setDraftReplyMode('reply-all')}
             >
               <ArrowBendDoubleUpLeft size={14} weight="duotone" />
@@ -506,7 +506,7 @@ export function MessageView() {
             <button
               type="button"
               className="reader-ai-btn primary"
-              title="Reply to this message"
+              title="Reply to this message (R)"
               onClick={handleReply}
             >
               <ArrowBendUpLeft size={16} weight="duotone" />
@@ -515,7 +515,7 @@ export function MessageView() {
             <button
               type="button"
               className="reader-ai-btn"
-              title="Reply to everyone"
+              title="Reply to everyone (A)"
               onClick={handleReplyAll}
             >
               <ArrowBendDoubleUpLeft size={16} weight="duotone" />
@@ -524,7 +524,7 @@ export function MessageView() {
             <button
               type="button"
               className="reader-ai-btn"
-              title="Forward this message"
+              title="Forward this message (F)"
               onClick={handleForward}
             >
               <ArrowBendUpRight size={16} weight="duotone" />
@@ -1026,7 +1026,7 @@ function ThreadView({ messages, threadId }: { messages: MessageDetail[]; threadI
             <button
               type="button"
               className="reader-ai-btn primary"
-              title="Reply to the latest message"
+              title="Reply to the latest message (R)"
               onClick={handleReply}
             >
               <ArrowBendUpLeft size={16} weight="duotone" />
@@ -1035,7 +1035,7 @@ function ThreadView({ messages, threadId }: { messages: MessageDetail[]; threadI
             <button
               type="button"
               className="reader-ai-btn"
-              title="Reply to everyone"
+              title="Reply to everyone (A)"
               onClick={handleReplyAll}
             >
               <ArrowBendDoubleUpLeft size={16} weight="duotone" />
@@ -1044,7 +1044,7 @@ function ThreadView({ messages, threadId }: { messages: MessageDetail[]; threadI
             <button
               type="button"
               className="reader-ai-btn"
-              title="Forward the latest message"
+              title="Forward the latest message (F)"
               onClick={handleForward}
             >
               <ArrowBendUpRight size={16} weight="duotone" />

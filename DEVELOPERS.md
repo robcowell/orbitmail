@@ -2348,6 +2348,13 @@ key reaches it, that the frame is actually zoomed rather than the level merely
 stored, that the level survives the reload used to recover a dead renderer, and
 that a composer opens at the same size as the window that spawned it.
 
+**`e2e-shortcuts.suite.ts` — the reader's keys, through real keystrokes.**
+`sendInputEvent` delivers `a` the way Chromium would; a compose window has to
+open in reply-all mode. The assertion that matters is the composer's actual
+To/Cc: everyone on the thread **except us**. A reply-all that quietly addresses
+only the sender looks like it worked, and the people who needed the reply never
+see it — so asserting "a window opened" would prove nothing.
+
 **`e2e-undo.suite.ts` — does clicking Undo put the mail back?** A real message
 is appended to INBOX and synced, the row is selected, the real **Delete** button
 in the toolbar is clicked, and then the real **Undo** on the toast. The
@@ -2489,6 +2496,7 @@ could only have been tested through a real window.
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| List header | Names the folder and qualifies it by account only when more than one exists; reports how much of the list is loaded ("20 of 143 conversations") and stops claiming a full count while showing part of one; counts conversations or messages according to the view; folds an active unread filter into the noun ("3 unread conversations") rather than repeating it beside the count; groups large numbers; and still names an unresolvable folder rather than rendering an empty header. |
 | Undo eligibility | A move records one entry per message, each pointing back at the folder it came from. A message the server expunged is not offered for undo and is counted so the toast can say so; one with no Message-ID likewise; and when nothing can be restored, undo is not offered at all rather than being a no-op button. |
 | Search scope | "All Inboxes" is searchable and scopes to every account, with a placeholder that says so — it used to read "Select a folder to search". One account is named rather than called "all accounts". A folder still scopes to its account. An unresolvable folder is **not** silently promoted to searching everything, which matters now that null means "all". Cross-account results are qualified by account, single-account results are not. |
 | Connectivity | `navigator.onLine` saying *no* is taken at its word; saying *yes* is not. With every account failing to reach its server the bar says so ("Can't reach your mail servers"), which is the captive-portal/dropped-VPN case the old banner could never show. One reachable account means the network works, an account that was merely refused is not an outage, and nothing is claimed from silence — no accounts, none tried, or mid-sync. |

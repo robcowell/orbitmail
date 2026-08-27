@@ -15,7 +15,7 @@ import {
 } from '../../stores/mailStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { AppBrand } from '../brand/AppBrand'
-import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
+import { resolveSearchScope, searchPlaceholder as buildSearchPlaceholder } from '../../utils/search'
 import {
   iconProps,
   PencilLine,
@@ -132,9 +132,11 @@ export function Toolbar() {
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  const searchAccountId = resolveSearchAccountId(selectedFolderId, folders)
-  const searchScopeLabel = searchAccountLabel(searchAccountId, accounts)
-  const searchEnabled = searchAccountId != null
+  // `accountId: null` here means "every account", not "no scope" — the unified
+  // inbox is searchable, which is the whole point of this scope object.
+  const searchScope = resolveSearchScope(selectedFolderId, folders, accounts)
+  const searchAccountId = searchScope.accountId
+  const searchEnabled = searchScope.enabled
 
   useEffect(() => {
     return () => {
@@ -216,7 +218,7 @@ export function Toolbar() {
   }
 
   const handleSearch = (value: string) => {
-    if (!searchAccountId) {
+    if (!searchEnabled) {
       if (value.trim()) clearSearch()
       return
     }
@@ -245,7 +247,7 @@ export function Toolbar() {
   // Changing scope re-runs the current query immediately against the new field.
   const handleScopeChange = (field: SearchField) => {
     useMailStore.getState().setSearchField(field)
-    if (searchAccountId && searchQuery.trim()) {
+    if (searchEnabled && searchQuery.trim()) {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
       void runSearch(searchQuery, searchAccountId, field).catch((err) => {
         setToast(err instanceof Error ? err.message : 'Search failed')
@@ -253,11 +255,7 @@ export function Toolbar() {
     }
   }
 
-  const searchPlaceholder = searchEnabled
-    ? searchScopeLabel
-      ? `Search ${searchScopeLabel}…`
-      : 'Search this account…'
-    : 'Select a folder to search'
+  const searchPlaceholder = buildSearchPlaceholder(searchScope)
 
   return (
     <div className="toolbar">

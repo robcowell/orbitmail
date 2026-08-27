@@ -2512,15 +2512,25 @@ const SEARCH_META_COLUMNS: Record<SearchField, string[]> = {
 const SEARCH_FIELDS_WITH_BODY: ReadonlySet<SearchField> = new Set<SearchField>(['all', 'body'])
 const SEARCH_LIMIT_MAX = 200
 
+/**
+ * Search the local cache.
+ *
+ * `accountId` of **null** searches every account — what the unified inbox needs.
+ * It used to be required, which is why "All Inboxes" had its search box
+ * disabled: the view you would naturally live in was the one view you could not
+ * search from.
+ */
 export function searchMessages(
   text: string,
-  accountId: string,
+  accountId: string | null,
   field: SearchField = 'all',
   limit = 50
 ): MessageSummary[] {
   const sqlite = getRawSqlite()
   const likePattern = buildLikePattern(text)
-  if (!likePattern || !accountId) return []
+  // An empty-string accountId is a caller bug, not a request to search
+  // everything — only an explicit null means that.
+  if (!likePattern || accountId === '') return []
 
   // `limit` crosses the IPC boundary from the renderer; clamp it so a bad value
   // cannot ask the main process to marshal an unbounded result set.
@@ -2529,7 +2539,8 @@ export function searchMessages(
   const clauses = (SEARCH_META_COLUMNS[field] ?? SEARCH_META_COLUMNS.all).map(
     (col) => `${col} LIKE ? COLLATE NOCASE ESCAPE '\\'`
   )
-  const args: unknown[] = [accountId, ...clauses.map(() => likePattern)]
+  const args: unknown[] = accountId === null ? [] : [accountId]
+  args.push(...clauses.map(() => likePattern))
 
   if (SEARCH_FIELDS_WITH_BODY.has(field)) {
     // search_text is the stripped plain-text body (~10x smaller than raw HTML
@@ -2548,11 +2559,16 @@ export function searchMessages(
   const block = blockedSqlFragment(getBlockedSenders().slice(0, MAX_BLOCKED_PREDICATES), 'm.from_addr')
   args.push(...block.params, safeLimit)
 
+  // Unified search drops the account predicate rather than looping per account:
+  // one query, one ORDER BY, one LIMIT — so the newest N across all accounts is
+  // what comes back, not the newest N of each merged and re-truncated.
+  const scope = accountId === null ? '' : 'm.account_id = ? AND '
+
   const rows = sqlite
     .prepare(
       `${SEARCH_SELECT}
        FROM messages m
-       WHERE m.account_id = ? AND (${clauses.join(' OR ')})${block.clause}
+       WHERE ${scope}(${clauses.join(' OR ')})${block.clause}
        ORDER BY m.date DESC
        LIMIT ?`
     )

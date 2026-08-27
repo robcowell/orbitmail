@@ -2402,7 +2402,7 @@ export async function updateSenderList(
 
 export async function runSearch(
   query: string,
-  accountId: string,
+  accountId: string | null,
   field: SearchField = 'all'
 ): Promise<void> {
   const store = useMailStore.getState()
@@ -2438,7 +2438,10 @@ export async function runSearch(
 // Live "search the entire mailbox" on the server, merged into the current
 // results (deduped by id, newest first). Reachable both as the empty-result
 // fallback and as an explicit action from the search-results banner.
-export async function searchWholeMailbox(query: string, accountId: string): Promise<void> {
+export async function searchWholeMailbox(
+  query: string,
+  accountId: string | null
+): Promise<void> {
   const store = useMailStore.getState()
   const q = query.trim()
   if (!q) return

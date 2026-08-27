@@ -119,7 +119,8 @@ resurrect the row, a rejected op must release the hold so the rollback restores
 it, and the selection advances to the next row down. It also bundles
 `RecipientInput.tsx` for the address-token math behind recipient autocomplete,
 `src/utils/syncStatus.ts` for the status-bar wording that turns per-account sync
-state into one line, and `src/utils/emailColorScheme.ts` for the dark-mode
+state into one line, `src/utils/search.ts` for which account(s) a query runs
+against, and `src/utils/emailColorScheme.ts` for the dark-mode
 contrast rule that decides whether a message renders on a light surface — the same trick works for any pure
 renderer logic, which is why that classifier is string work and not a DOM walk.
 Run it after touching `src/stores/`, any of those three, or the reader's

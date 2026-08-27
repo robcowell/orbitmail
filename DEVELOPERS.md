@@ -1104,6 +1104,23 @@ before this column existed has no `server_uid`, so a server-side delete of it
 
 ### Search
 
+- **Account scope** — `searchMessages` takes an `accountId` that may be **null**,
+  meaning every account. That is the unified-inbox scope, and it used to be
+  impossible: `accountId` was required, so "All Inboxes" — the view you land on —
+  was the one view whose search box was disabled, reading "Select a folder to
+  search". Unified search drops the `account_id` predicate rather than looping
+  per account, so one `ORDER BY` and one `LIMIT` return the newest N *across* all
+  accounts instead of the newest N of each, merged and re-truncated. An **empty
+  string** is a caller bug and returns nothing; only an explicit `null` means
+  everything, and `test:imap` pins that distinction because conflating them would
+  turn a mistake into a silent cross-account leak.
+  `resolveSearchScope` (`src/utils/search.ts`) is the renderer half, and returns
+  `enabled` separately from `accountId` for exactly this reason — "no account"
+  previously meant both "search everything" and "nothing to search".
+  Cross-account results are labelled by `searchFolderLabels`, which qualifies a
+  folder with its account (`Inbox · Work`) **only** when the results actually
+  span accounts: nearly every account has an "Inbox", and two unqualified rows
+  are indistinguishable, but qualifying a single-account search is noise.
 - **Local search** — scope-aware substring `LIKE` over the cached `messages` table
   (`searchMessages` in `db-service.ts`). The scope (`SearchField`) selects the
   columns matched: `all` (From/To/Subject/Snippet/Body), `from`, `to`, `subject`,
@@ -1114,6 +1131,9 @@ before this column existed has no `server_uid`, so a server-side delete of it
   on upsert and backfilled in the background for old rows; search falls back to
   `body_html` for any row not yet backfilled, so it is correct throughout. The
   renderer-supplied result `limit` is clamped (≤200).
+  A null `accountId` here asks **every** account concurrently and merges the
+  results newest-first, with a per-account `catch` so one unreachable server does
+  not lose the others' matches.
 - **Server-side fallback** — when local search returns nothing (or on the explicit
   *Search whole mailbox* action), `searchServerMessages` (`imap-sync.ts`) runs a
   live IMAP search — Gmail `X-GM-RAW` over *All Mail*, or `from`/`to`/`subject`/`body`
@@ -2198,6 +2218,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
+| Unified search | A null `accountId` searches every account and returns them interleaved newest-first, not grouped; an account id still scopes to that account alone; an **empty string** returns nothing rather than everything; the limit bounds the merged set rather than applying per account. |
 | Reachability | Connection-level failures (`ECONNREFUSED`, `ENOTFOUND`, `EHOSTUNREACH`, bare "Timeout"/"Timed out") classify as never-reached, by code and by bare message; authentication failures classify as *reached*, including one phrased as a login timeout; an unknown failure defaults to reached. End to end, a refused connection records `reachedServer: false` on the account and a successful sync records `true`. |
 | Per-account sync status | Two accounts, one pointed at a closed port: the failing one carries its own error, the healthy one carries none and still reports a last-synced time, and the aggregate reports one too. A failure does not stamp freshness on the account that failed; a later success clears a stale error; removing an account stops it reporting. |
 | Inline images (inbound) | A `multipart/related` message parsed by the real mailparser: the referenced image is marked inline and *is* already a `data:` URI in the body, the `.pdf` beside it is not marked, and an `image/svg+xml` is left alone because mailparser did not embed it either. A message whose only part is a signature logo carries no attachments at all; without an HTML body nothing is hidden. |
@@ -2413,6 +2434,7 @@ could only have been tested through a real window.
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| Search scope | "All Inboxes" is searchable and scopes to every account, with a placeholder that says so — it used to read "Select a folder to search". One account is named rather than called "all accounts". A folder still scopes to its account. An unresolvable folder is **not** silently promoted to searching everything, which matters now that null means "all". Cross-account results are qualified by account, single-account results are not. |
 | Connectivity | `navigator.onLine` saying *no* is taken at its word; saying *yes* is not. With every account failing to reach its server the bar says so ("Can't reach your mail servers"), which is the captive-portal/dropped-VPN case the old banner could never show. One reachable account means the network works, an account that was merely refused is not an outage, and nothing is claimed from silence — no accounts, none tried, or mid-sync. |
 | Sync status wording | A mailbox that synced a moment ago still reports its time while another account is failing; a failing account never lends its stale timestamp to that line; two failures are counted rather than concatenated, with the per-account detail kept for the tooltip; re-authentication is offered for credential errors and not for network ones. The bug this replaces lived in one JSX condition, which no test in this repo could reach — hence `summarizeSyncStatus` being a pure function. |
 | Rollback | A rejected delete releases the hold *before* the caller's rollback refresh, so the row comes back rather than staying invisible until the next folder switch. |

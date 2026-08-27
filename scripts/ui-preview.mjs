@@ -123,6 +123,28 @@ const OVERRIDES = {
     hasPassword: true
   },
   'folders.list': folders,
+  // Two hits from two different accounts, so the unified search's folder
+  // qualifier ("Inbox · Personal" vs "Inbox · Work") is actually visible. The
+  // generic fallback below returns [] for anything starting with "search",
+  // which would show the box working but prove nothing about the labels.
+  'search.query': [
+    {
+      id: 'sr-1', folderId: 'acc-1-inbox', accountId: 'acc-1', uid: 90,
+      messageId: '<sr1@example.com>', from: 'Jan <jan@work.example>',
+      to: 'you@example.com', subject: 'Invoice for August',
+      snippet: 'Attached is the invoice you asked about.',
+      date: Date.now() - 7200000, isRead: true, isStarred: false,
+      flagColor: null, hasAttachments: true, threadId: null
+    },
+    {
+      id: 'sr-2', folderId: 'acc-2-inbox', accountId: 'acc-2', uid: 91,
+      messageId: '<sr2@example.com>', from: 'Accounts <ap@supplier.example>',
+      to: 'you@work.example', subject: 'Invoice reminder',
+      snippet: 'A gentle nudge about invoice 4471.',
+      date: Date.now() - 90000000, isRead: false, isStarred: false,
+      flagColor: null, hasAttachments: false, threadId: null
+    }
+  ],
   'messages.list': [],
   'messages.count': 0,
   // One conversation, so the thread reader — and the conversation summary that

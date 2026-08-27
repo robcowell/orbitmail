@@ -111,6 +111,36 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **The unified inbox is searchable** — audit item 2, and the biggest day-to-day
+  friction in the app. "All Inboxes" is the view you land on and it was the one
+  view whose search box was **disabled**, reading "Select a folder to search":
+  `resolveSearchAccountId` returned null for the unified case, and the IPC method
+  required an `accountId`, so cross-account search did not exist at any layer.
+
+  `searchMessages` now takes `accountId: string | null`, where null means every
+  account. It drops the `account_id` predicate rather than looping per account,
+  so one `ORDER BY` and one `LIMIT` return the newest N *across* accounts rather
+  than the newest N of each merged and re-truncated. The server-side fallback
+  fans out concurrently with a per-account `catch`, so one unreachable server
+  does not lose the others' matches.
+
+  **The renderer needed a real type, not a nullable id.** "No account" used to
+  mean both "search everything" and "nothing to search", and the ambiguity had
+  been resolved the unhelpful way. `resolveSearchScope` returns `enabled`
+  separately, so an unresolvable folder id — mid-load, or a stale preference —
+  stays unsearchable instead of being silently promoted into a search across
+  every account.
+
+  **A problem unified search introduces:** nearly every account has a folder
+  called "Inbox", so two results were indistinguishable. `searchFolderLabels`
+  qualifies with the account (`Inbox · Work`) only when the results actually span
+  accounts — qualifying a single-account search is noise the placeholder has
+  already covered.
+
+  Three mutations confirmed the checks discriminate, the important one being
+  treating a falsy `accountId` as "everything": that would turn a caller passing
+  `''` into a silent cross-account leak, and `test:imap` fails it.
+
 - **Offline is derived from real connections, not `navigator.onLine`** — audit
   finding A5, and the other half of the per-account status work. Chromium sets
   `navigator.onLine` from whether a network *interface* exists, not whether

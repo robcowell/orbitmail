@@ -1379,11 +1379,11 @@ function registerIpc(): void {
 
   ipcMain.handle(
     'search:query',
-    (_, text: string, accountId: string, field?: SearchField, limit?: number) =>
+    (_, text: string, accountId: string | null, field?: SearchField, limit?: number) =>
       searchMessages(text, accountId, field, limit)
   )
 
-  ipcMain.handle('search:server', (_, text: string, accountId: string, field?: SearchField) =>
+  ipcMain.handle('search:server', (_, text: string, accountId: string | null, field?: SearchField) =>
     searchServerMessages(text, accountId, field)
   )
 

@@ -4,7 +4,7 @@
   "desktopName": "orbit-mail.desktop",
   "description": "Orbit Mail — a polished desktop email client for Linux",
   "main": "out/main/index.js",
-  "homepage": "https://github.com/orbit-mail/orbit-mail",
+  "homepage": "https://robcowell.github.io/orbit-website/",
   "author": {
     "name": "Orbit Mail",
     "email": "orbit-mail@localhost"

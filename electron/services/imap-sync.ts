@@ -871,11 +871,24 @@ function buildServerSearchQuery(field: SearchField, query: string, provider: Pro
 // return them as summaries. POP3 has no server-side search, so it returns [].
 export async function searchServerMessages(
   text: string,
-  accountId: string,
+  accountId: string | null,
   field: SearchField = 'all'
 ): Promise<MessageSummary[]> {
   const query = text.trim()
   if (!query) return []
+
+  // Unified scope: ask every account at once. Each has its own pooled
+  // connection, so these are genuinely concurrent rather than serialised, and
+  // one account being unreachable must not lose the others' matches — hence
+  // per-account catch rather than a bare Promise.all.
+  if (accountId === null) {
+    const results = await Promise.all(
+      listAccounts().map((account) =>
+        searchServerMessages(text, account.id, field).catch(() => [] as MessageSummary[])
+      )
+    )
+    return results.flat().sort((a, b) => b.date - a.date).slice(0, SERVER_SEARCH_LIMIT)
+  }
 
   const account = getAccountById(accountId)
   if (!account || account.provider === 'pop3') return []

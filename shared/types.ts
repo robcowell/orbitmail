@@ -676,15 +676,21 @@ export interface OrbitMailAPI {
     onMessagesUpdated: (callback: () => void) => () => void
   }
   search: {
+    /** `accountId` of null searches every account — the unified inbox scope. */
     query: (
       text: string,
-      accountId: string,
+      accountId: string | null,
       field?: SearchField,
       limit?: number
     ) => Promise<MessageSummary[]>
     // Live IMAP search on the server, used as a fallback when the local cache
-    // has no match. Returns [] for POP3 accounts.
-    server: (text: string, accountId: string, field?: SearchField) => Promise<MessageSummary[]>
+    // has no match. Returns [] for POP3 accounts. A null accountId asks every
+    // account concurrently and merges the results newest-first.
+    server: (
+      text: string,
+      accountId: string | null,
+      field?: SearchField
+    ) => Promise<MessageSummary[]>
   }
   compose: {
     open: (payload?: Partial<ComposePayload>) => Promise<void>

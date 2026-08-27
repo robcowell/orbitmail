@@ -341,6 +341,17 @@ async function main() {
 
   // The status-bar wording is a pure function for exactly this reason: the bug
   // it replaces lived in JSX, where no test in this repo could reach it.
+  // Search scope is pure: which account (or all of them) a query runs against,
+  // and how a cross-account result names its folder.
+  await build({
+    entryPoints: [join(root, 'src/utils/search.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'search.cjs'),
+    logLevel: 'silent'
+  })
+
   await build({
     entryPoints: [join(root, 'src/utils/syncStatus.ts')],
     bundle: true,
@@ -1231,6 +1242,73 @@ async function main() {
         status([acct('a', { reachedServer: false })], { syncing: true }), true).state === 'online')
     ok('and there is no banner text when everything is fine',
       deriveConnectivity(status([acct('a', { reachedServer: true })]), true).message === null)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Search scope: the unified inbox is searchable')
+  // -------------------------------------------------------------------------
+  {
+    const { resolveSearchScope, searchPlaceholder, searchFolderLabels } =
+      require(join(outDir, 'search.cjs'))
+
+    const accounts = [
+      { id: 'a1', email: 'me@personal.example', displayName: 'Personal' },
+      { id: 'a2', email: 'me@work.example', displayName: 'Work' }
+    ]
+    const folders = [
+      { id: 'f1', accountId: 'a1', name: 'Inbox' },
+      { id: 'f2', accountId: 'a2', name: 'Inbox' },
+      { id: 'f3', accountId: 'a1', name: 'Receipts' }
+    ]
+
+    // The regression this exists for. "All Inboxes" is the view you land on,
+    // and it was the one view whose search box was disabled.
+    const unified = resolveSearchScope('unified', folders, accounts)
+    ok('the unified inbox is searchable', unified.enabled === true)
+    ok('and its scope is every account, not none',
+      unified.accountId === null, String(unified.accountId))
+    ok('the placeholder says so rather than telling you to pick a folder',
+      searchPlaceholder(unified) === 'Search all accounts…', searchPlaceholder(unified))
+
+    // With one account "all accounts" reads oddly, and the unified view exists
+    // regardless of how many there are.
+    const single = resolveSearchScope('unified', [folders[0]], [accounts[0]])
+    ok('one account is named rather than called "all accounts"',
+      searchPlaceholder(single) === 'Search Personal…', searchPlaceholder(single))
+
+    // A folder still scopes to its own account.
+    const scoped = resolveSearchScope('f2', folders, accounts)
+    ok('a folder scopes the search to its account', scoped.accountId === 'a2', scoped.accountId)
+    ok('and the placeholder names that account',
+      searchPlaceholder(scoped) === 'Search Work…', searchPlaceholder(scoped))
+
+    // null now means "everything", so an unresolvable folder must not be
+    // silently promoted into a search across every account.
+    const stale = resolveSearchScope('folder-that-went-away', folders, accounts)
+    ok('an unknown folder is not searchable', stale.enabled === false)
+    ok('and is not quietly promoted to searching everything',
+      stale.accountId === null && stale.enabled === false)
+    ok('no accounts at all is not searchable',
+      resolveSearchScope('unified', [], []).enabled === false)
+
+    // Cross-account results: nearly every account has an "Inbox", so an
+    // unqualified label leaves two rows looking identical.
+    const spanning = searchFolderLabels(
+      [{ folderId: 'f1', accountId: 'a1' }, { folderId: 'f2', accountId: 'a2' }],
+      folders, accounts)
+    ok('a folder shared across accounts is qualified by account',
+      spanning.get('f1') === 'Inbox · Personal' && spanning.get('f2') === 'Inbox · Work',
+      JSON.stringify([...spanning]))
+
+    // ...but qualifying a single-account search is noise; the placeholder has
+    // already said whose mail is being searched.
+    const oneAccount = searchFolderLabels(
+      [{ folderId: 'f1', accountId: 'a1' }, { folderId: 'f3', accountId: 'a1' }],
+      folders, accounts)
+    ok('results within one account are left unqualified',
+      oneAccount.get('f1') === 'Inbox' && oneAccount.get('f3') === 'Receipts',
+      JSON.stringify([...oneAccount]))
+    ok('no results produces no labels', searchFolderLabels([], folders, accounts).size === 0)
   }
 
   console.log(

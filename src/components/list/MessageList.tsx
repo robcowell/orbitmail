@@ -23,7 +23,7 @@ import {
   searchWholeMailbox,
   openDraft
 } from '../../stores/mailStore'
-import { resolveSearchAccountId, searchAccountLabel } from '../../utils/search'
+import { resolveSearchScope, searchFolderLabels } from '../../utils/search'
 import { EmptyState } from '../EmptyState'
 import { MessageContextMenu } from '../messages/MessageContextMenu'
 import { ThreadContextMenu } from '../messages/ThreadContextMenu'
@@ -279,8 +279,9 @@ export function MessageList() {
   const vlistRef = useRef<VListHandle>(null)
 
   const isSearching = searchQuery.trim().length > 0
-  const searchAccountId = resolveSearchAccountId(selectedFolderId, folders)
-  const searchScopeLabel = searchAccountLabel(searchAccountId, accounts)
+  const searchScope = resolveSearchScope(selectedFolderId, folders, accounts)
+  const searchAccountId = searchScope.accountId
+  const searchScopeLabel = searchScope.label
 
   const folderNameById = useMemo(
     () => new Map(folders.map((folder) => [folder.id, folder.name])),
@@ -321,10 +322,22 @@ export function MessageList() {
     [folderNameById, rowDisplayName]
   )
 
+  // Unified search can return "Inbox" from two different accounts, which are
+  // indistinguishable unqualified — so the folder label carries the account
+  // when, and only when, the results actually span accounts.
+  const searchFolderLabel = useMemo(
+    () => searchFolderLabels(searchResults, folders, accounts),
+    [searchResults, folders, accounts]
+  )
+
   // Search always shows the folder; the flat folder view only shows it in unified.
   const messageRows = useMemo(
-    () => searchResults.map((m) => buildFlatRow(m, true)),
-    [searchResults, buildFlatRow]
+    () =>
+      searchResults.map((m) => ({
+        ...buildFlatRow(m, true),
+        folderName: searchFolderLabel.get(m.folderId) ?? 'Mailbox'
+      })),
+    [searchResults, buildFlatRow, searchFolderLabel]
   )
   const flatRows = useMemo(
     () => messages.map((m) => buildFlatRow(m, selectedFolderId === 'unified')),

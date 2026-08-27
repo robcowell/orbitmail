@@ -5444,6 +5444,74 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Search: the unified scope spans accounts, a folder scope does not')
+  // -------------------------------------------------------------------------
+  {
+    // searchMessages used to require an accountId, which is why "All Inboxes"
+    // had its search box disabled — the view you land on was the one you could
+    // not search from. A null accountId now means every account.
+    const { getRawSqlite } = await import('../electron/db')
+    const raw = getRawSqlite()
+
+    const mk = (accountId: string, folderId: string, id: string, uid: number,
+                subject: string, body: string, frm = 'sender@example.com') =>
+      raw.prepare(
+        `INSERT INTO messages (id, folder_id, account_id, uid, from_addr, to_addr,
+                               subject, snippet, date, search_text)
+         VALUES (?, ?, ?, ?, ?, 'me@example.com', ?, ?, ?, ?)`
+      ).run(id, folderId, accountId, uid, frm, subject, subject, 1_700_000_000 + uid, body)
+
+    const one = db.saveManualAccount('imap', {
+      authType: 'password', email: 'search-one@example.com', displayName: 'One',
+      username: 'u', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const two = db.saveManualAccount('imap', {
+      authType: 'password', email: 'search-two@example.com', displayName: 'Two',
+      username: 'u', password: 'p',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const f1 = db.upsertFolder(one.id, 'INBOX', 'Inbox', 'inbox')
+    const f2 = db.upsertFolder(two.id, 'INBOX', 'Inbox', 'inbox')
+
+    mk(one.id, f1.id, 'us-1', 1, 'Quarterly zarblex report', 'nothing here')
+    mk(two.id, f2.id, 'us-2', 2, 'Unrelated', 'the word zarblex is in this body')
+    mk(two.id, f2.id, 'us-3', 3, 'Also unrelated', 'no match at all')
+
+    const unified = db.searchMessages('zarblex', null)
+    ok('a null accountId searches every account', unified.length === 2, `hits=${unified.length}`)
+    ok('and spans them — one hit from each',
+      new Set(unified.map((m) => m.accountId)).size === 2,
+      JSON.stringify(unified.map((m) => m.accountId)))
+    ok('newest first across accounts, not grouped by account',
+      unified[0].id === 'us-2' && unified[1].id === 'us-1',
+      JSON.stringify(unified.map((m) => m.id)))
+
+    // The existing behaviour has to survive: a folder scope stays scoped.
+    const scoped = db.searchMessages('zarblex', one.id)
+    ok('an account id still scopes to that account alone',
+      scoped.length === 1 && scoped[0].id === 'us-1', JSON.stringify(scoped.map((m) => m.id)))
+
+    // An empty string is a caller bug, not a request to search everything —
+    // the distinction that makes `null` safe to mean "all".
+    ok('an empty accountId returns nothing rather than everything',
+      db.searchMessages('zarblex', '').length === 0)
+    ok('an empty query still returns nothing even unscoped',
+      db.searchMessages('   ', null).length === 0)
+
+    // The limit applies across the merged set, so unified search cannot return
+    // limit-per-account.
+    ok('the limit bounds the unified result set',
+      db.searchMessages('zarblex', null, 'all', 1).length === 1)
+
+    raw.prepare('DELETE FROM messages WHERE id IN (?, ?, ?)').run('us-1', 'us-2', 'us-3')
+    db.removeAccount(one.id)
+    db.removeAccount(two.id)
+  }
+
+  // -------------------------------------------------------------------------
   section('Reachability: being refused is not being offline')
   // -------------------------------------------------------------------------
   {

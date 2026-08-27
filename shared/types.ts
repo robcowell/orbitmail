@@ -240,6 +240,17 @@ export interface AccountSyncStatus {
   lastSyncAt: number | null
   /** This account's own failure, unjoined with anyone else's. */
   error: string | null
+  /**
+   * Whether the last attempt reached the server at all. An account that was
+   * refused — an expired token, a wrong password — counts as **reached**: the
+   * server answered, it just said no, and that is not an outage.
+   *
+   * `null` until an attempt has been made. This is the evidence the offline
+   * banner is built from, because `navigator.onLine` reports only that a
+   * network interface exists — a captive portal, a dropped VPN or a DNS failure
+   * all read as online there.
+   */
+  reachedServer: boolean | null
 }
 
 export interface SyncStatus {

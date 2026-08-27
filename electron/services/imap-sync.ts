@@ -62,6 +62,7 @@ import {
   syncPop3Account,
   deletePop3MessageOnServer
 } from './pop3-sync'
+import { reachedServer } from './network-reachability'
 import { withImapClient } from './imap-pool'
 import { computeThreadId, normalizeReferences } from './thread-util'
 
@@ -132,7 +133,8 @@ function accountEntry(accountId: string): AccountSyncStatus {
     email: getAccountTokens(accountId)?.email ?? accountId,
     syncing: false,
     lastSyncAt: null,
-    error: null
+    error: null,
+    reachedServer: null
   }
   accountStatus.set(accountId, created)
   return created
@@ -150,7 +152,10 @@ export function initSyncFromPersistence(): void {
       email: account.email,
       syncing: false,
       lastSyncAt: perAccount[account.id] ?? legacy,
-      error: null
+      error: null,
+      // Nothing has been attempted this run, so reachability is unknown rather
+      // than good: a restart must not assert the servers are up.
+      reachedServer: null
     })
   }
 }
@@ -1123,7 +1128,8 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
     setAccountStatus(accountId, {
       syncing: false,
       lastSyncAt: Date.now(),
-      error: null
+      error: null,
+      reachedServer: true
     })
 
     if (fetched > 0) {
@@ -1139,7 +1145,11 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
     )
     // The failure is recorded against this account only. Its lastSyncAt is left
     // alone: the mailbox is stale, not un-synced, and the UI says how stale.
-    setAccountStatus(accountId, { syncing: false, error: message })
+    setAccountStatus(accountId, {
+      syncing: false,
+      error: message,
+      reachedServer: reachedServer(err)
+    })
     throw err instanceof Error ? err : new Error(message)
   }
 }
@@ -1152,6 +1162,9 @@ export async function refreshAllAccounts(): Promise<void> {
   // Which accounts failed, so a success can clear a *stale* error and a failure
   // can be attributed to the mailbox that actually produced it.
   const failed = new Map<string, string>()
+  // Whether each failure was "refused" or "never got there" — the offline
+  // banner is derived from this, not from navigator.onLine.
+  const unreachable = new Set<string>()
 
   resetSyncProgress()
   setManyAccountStatus(
@@ -1169,6 +1182,7 @@ export async function refreshAllAccounts(): Promise<void> {
         const message = accountSyncError(account.email, err)
         errors.push(message)
         failed.set(account.id, message)
+        if (!reachedServer(err)) unreachable.add(account.id)
         return 0
       }
     })
@@ -1187,6 +1201,7 @@ export async function refreshAllAccounts(): Promise<void> {
         const message = accountSyncError(account.email, err)
         errors.push(message)
         failed.set(account.id, message)
+        if (!reachedServer(err)) unreachable.add(account.id)
         return 0
       }
     })
@@ -1208,7 +1223,8 @@ export async function refreshAllAccounts(): Promise<void> {
       email: account.email,
       syncing: false,
       error: message ?? null,
-      lastSyncAt: message ? accountEntry(account.id).lastSyncAt : now
+      lastSyncAt: message ? accountEntry(account.id).lastSyncAt : now,
+      reachedServer: message ? !unreachable.has(account.id) : true
     })
     if (!message) setAccountLastSyncAt(account.id, now)
   }
@@ -1240,24 +1256,34 @@ export async function pollForNewMessages(
   const accounts = options.filter ? listAccounts().filter(options.filter) : listAccounts()
   if (accounts.length === 0) return
 
+  const unreachable = new Set<string>()
   const estimates = await Promise.all(
     accounts.map(async (account) => {
       try {
         return await countNewMessagesForAccount(account.id, account.provider)
-      } catch {
-        // polling should not surface transient errors in the UI
+      } catch (err) {
+        // Polling still does not surface transient errors in the UI, but it is
+        // the pass that runs constantly, so it is where an outage actually
+        // shows up first. Record whether we got there; say nothing else.
+        if (!reachedServer(err)) unreachable.add(account.id)
         return 0
       }
     })
   )
   const estimatedTotal = estimates.reduce((sum, n) => sum + n, 0)
+  if (unreachable.size > 0) {
+    const ids: string[] = []
+    unreachable.forEach((id) => ids.push(id))
+    setManyAccountStatus(ids, { reachedServer: false })
+  }
 
   if (estimatedTotal === 0) {
     // Nothing to fetch still means these mailboxes were reached just now, which
     // is exactly what "last synced" is claiming.
     const checkedAt = Date.now()
     for (const account of accounts) {
-      setAccountStatus(account.id, { lastSyncAt: checkedAt })
+      if (unreachable.has(account.id)) continue
+      setAccountStatus(account.id, { lastSyncAt: checkedAt, reachedServer: true })
     }
     return
   }
@@ -1275,12 +1301,12 @@ export async function pollForNewMessages(
           onProgress: incrementSyncProgress,
           silent: true
         })
-        return { id: account.id, fetched: n, ok: true }
-      } catch {
+        return { id: account.id, fetched: n, ok: true, reached: true }
+      } catch (err) {
         // Polling stays quiet: a transient failure here must not raise an error
         // in the UI, and must not stamp a fresh timestamp on a mailbox we did
         // not actually reach. Retried on the next interval.
-        return { id: account.id, fetched: 0, ok: false }
+        return { id: account.id, fetched: 0, ok: false, reached: reachedServer(err) }
       }
     })
   )
@@ -1295,7 +1321,8 @@ export async function pollForNewMessages(
     accountStatus.set(result.id, {
       ...accountEntry(result.id),
       syncing: false,
-      lastSyncAt: result.ok ? polledAt : accountEntry(result.id).lastSyncAt
+      lastSyncAt: result.ok ? polledAt : accountEntry(result.id).lastSyncAt,
+      reachedServer: result.reached
     })
     if (result.ok) setAccountLastSyncAt(result.id, polledAt)
   }

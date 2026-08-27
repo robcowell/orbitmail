@@ -24,7 +24,7 @@ import {
 import { SecureStorageBanner } from './components/SecureStorageBanner'
 import { exposeFlushHook } from './stores/persistence'
 import { printMessageDetail, printThreadDetails } from './utils/printMessage'
-import { summarizeSyncStatus, syncErrorDetail } from './utils/syncStatus'
+import { summarizeSyncStatus, syncErrorDetail, deriveConnectivity } from './utils/syncStatus'
 
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
@@ -48,10 +48,15 @@ function StatusBar() {
   }
 
   const summary = summarizeSyncStatus(syncStatus)
+  // `isOnline` is navigator.onLine, which only earns trust when it says no;
+  // the rest comes from whether syncs actually reached a server.
+  const connectivity = deriveConnectivity(syncStatus, isOnline)
 
   return (
     <div className="status-bar">
-      {!isOnline && <span className="status-offline">Offline — showing cached mail</span>}
+      {connectivity.message && (
+        <span className="status-offline">{connectivity.message}</span>
+      )}
       {syncStatus.syncing && <span className="status-syncing">{syncLabel}</span>}
       {summary.errorLabel && (
         <span className="status-error-wrap">

@@ -17,6 +17,10 @@
 // - `e2e-zoom.suite.ts` — zoom, through real keystrokes: the pure helpers are
 //   covered by test:imap, but whether the key reaches the handler and the frame
 //   is actually zoomed needs a window to send a key to.
+// - `e2e-undo.suite.ts` — undo, through a real click: whether pressing Undo on
+//   the toast actually puts the mail back. The pure half is covered by
+//   test:store and the lookup by test:imap; neither can render a toast, click
+//   its button, or check the server afterwards. Needs the mail server.
 // - `e2e-window.suite.ts` — window lifecycle: closing the main window with a
 //   composer open must not use the window after it is gone. Ends with every
 //   window destroyed, which is why it cannot share a process with the above.
@@ -53,7 +57,8 @@ const SUITES = [
   { name: 'signature', entry: 'e2e-signature.suite.ts' },
   { name: 'format', entry: 'e2e-format.suite.ts' },
   { name: 'window', entry: 'e2e-window.suite.ts' },
-  { name: 'zoom', entry: 'e2e-zoom.suite.ts' }
+  { name: 'zoom', entry: 'e2e-zoom.suite.ts' },
+  { name: 'undo', entry: 'e2e-undo.suite.ts' }
 ]
 
 const keep = process.argv.includes('--keep')

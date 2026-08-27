@@ -136,11 +136,20 @@ does. Preserving that needs prefix or trigram tokenisation.
   them. `test:e2e` was run for this one — it does not exercise delete, but every
   suite loads `App.tsx`, so it catches the Toast change breaking the renderer.
 
-  **Not covered:** the toast markup itself was only style-checked by injecting it
-  into the preview DOM. The preview's stubbed IPC cannot complete a delete
-  round-trip, so the button's wiring is proven by `test:store` rather than by
-  clicking it. A real click needs a window, which is `test:e2e` territory and
-  would want a message-actions suite that does not exist yet.
+  **That gap is now closed.** `e2e-undo.suite.ts` syncs a real message, clicks the
+  real Delete button and then the real Undo on the toast, and asserts **against
+  the server**: the message reaches Trash and leaves INBOX, then returns to INBOX
+  and leaves Trash. Two mutations confirm it earns its place — removing the Undo
+  button fails "the toast offers Undo", and a handler that reports success
+  without moving anything fails all three restore assertions, which is the
+  failure a local-state-only check would have missed.
+
+  Its own first run is worth recording: selecting the row and clicking Delete in
+  one evaluated block selected nothing, because React had not re-rendered and the
+  toolbar button was still disabled — so the click was a silent no-op and the
+  suite reported it as fine. The steps are now split with a wait between them.
+  That is the third time in this repo an e2e check has passed while proving
+  nothing.
 
 - **The unified inbox is searchable** — audit item 2, and the biggest day-to-day
   friction in the app. "All Inboxes" is the view you land on and it was the one

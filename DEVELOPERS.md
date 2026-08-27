@@ -2348,6 +2348,26 @@ key reaches it, that the frame is actually zoomed rather than the level merely
 stored, that the level survives the reload used to recover a dead renderer, and
 that a composer opens at the same size as the window that spawned it.
 
+**`e2e-undo.suite.ts` — does clicking Undo put the mail back?** A real message
+is appended to INBOX and synced, the row is selected, the real **Delete** button
+in the toolbar is clicked, and then the real **Undo** on the toast. The
+assertions that matter are made **against the server**, not against local rows:
+the message reaches Trash and leaves INBOX, then comes back to INBOX and leaves
+Trash. `buildUndo` is pure and covered by `test:store`; `findMessagesByRfcId` is
+covered by `test:imap`; neither can render a toast, click its button, or see
+where the mail ended up.
+
+Two traps it was written against, both confirmed by mutation:
+
+- **Selecting and clicking in one evaluated block selects nothing.** React has
+  not re-rendered by the time the second line runs, so the toolbar button is
+  still `disabled` and `.click()` on it is silently a no-op. The suite's first
+  run reported the click as fine while deleting nothing — the steps are split,
+  with a wait for the button to become enabled between them.
+- **Asserting on local rows only would miss an undo that does nothing.** Breaking
+  the handler so it reports success without moving anything leaves the local
+  state plausible; only the server check fails.
+
 **`e2e-send.suite.ts` — the send path.** `drafts.open` → the composer loads the
 draft → a click on the real **Send** button → `handleSend` → preload →
 `ipcMain('compose:send')` → `smtp-send` → GreenMail → draft row deleted → Sent

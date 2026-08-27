@@ -148,10 +148,15 @@ it and nothing throws. **zoom** sends real
 `Ctrl` `=` / `_` / `-` / `0` keystrokes and reads `getZoomLevel()` back — the key
 matching is pure and covered by `test:imap`, but whether the key reaches the
 handler, whether the frame is actually zoomed, and whether the level survives a
-reload need a window to send a key to. All five also assert **nothing threw**.
+reload need a window to send a key to. **undo** syncs a real message, clicks the
+real Delete button and then the real **Undo** on the toast, and checks the
+message is back **on the server** — the pure half is covered by `test:store` and
+the Message-ID lookup by `test:imap`, but neither can render a toast, click its
+button, or see where the mail actually ended up. All six also assert **nothing
+threw**.
 Needs Docker *and* a display (headless Ozone segfaults on the
 first window), so it is **not in CI** — run it after touching the compose/send
-path, signatures, zoom, or anything window-lifecycle. Windows appear on screen for a few seconds.
+path, signatures, zoom, message actions, or anything window-lifecycle. Windows appear on screen for a few seconds.
 Read the traps in DEVELOPERS.md → End-to-end first: the send suite has twice
 passed while proving nothing, once from picking windows by index and once from a
 composer that never loaded its draft. When you report a check, say which of the

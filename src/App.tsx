@@ -248,6 +248,16 @@ function MainApp() {
           originalMessageId: activeMessage.id
         })
       }
+      // `a` for reply-all, the shortcut every other mail client binds. The mode
+      // has always existed and the reader has always had the button; only the
+      // key was missing, on one of the most-used actions in work mail.
+      if (e.key === 'a' && !e.metaKey && !e.ctrlKey && activeMessage) {
+        window.orbitMail.compose.open({
+          accountId: activeMessage.accountId,
+          mode: 'reply-all',
+          originalMessageId: activeMessage.id
+        })
+      }
       if (e.key === 'f' && !e.metaKey && !e.ctrlKey && activeMessage) {
         window.orbitMail.compose.open({
           accountId: activeMessage.accountId,

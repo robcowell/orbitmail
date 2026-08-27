@@ -111,6 +111,38 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **The list header says what you are looking at, and `a` replies to everyone** —
+  audit findings C2 and B3, the last two "bites daily" items.
+
+  **C2.** The header was four icon toggles and no words: no folder name, no
+  count, no unread count. With "unread only" active the only cue was a button's
+  pressed state, which is easy to leave on and then wonder where the mail went.
+  The totals already existed in the store — they simply had nowhere to appear
+  except the *"Load more (20 of 143)"* button, which is absent once a folder is
+  fully loaded. `describeListHeader` is pure and covered by `test:store`.
+
+  **A first attempt was wrong and the preview caught it.** The filter started as
+  a separate "UNREAD ONLY" badge beside the count; at the list pane's real width
+  (~320px) it was clipped to "UNREAD ON" by the toggles. Folding it into the noun
+  — *"1 unread conversation"* — cannot be clipped, says the same thing in fewer
+  words, and removed a rule rather than adding one.
+
+  **B3.** Reply-all has always been a compose mode with a button in the reader;
+  only the key was missing, on one of the most-used actions in work mail. `a` is
+  now bound, and every reply/forward affordance names its key the way the Compose
+  button already did.
+
+  Covered by a new `e2e-shortcuts.suite.ts`, because whether a key *reaches* the
+  handler cannot be answered without a window — the same reason the zoom suite
+  exists. It asserts on the composer's actual To/Cc rather than on a window
+  having opened: a reply-all that quietly addresses only the sender looks like it
+  worked, and the people who needed the reply never see it. Mutation-verified by
+  unbinding the key.
+
+  Still unbound, and deliberately not done here: archive, star, mark-unread and
+  `j`/`k`. Each is a decision about which key, not a one-liner, and B3 as filed
+  was reply-all.
+
 - **Undo for delete, archive and move** — audit finding B2. Nothing in the app
   was reversible, and `Delete` acts on a whole multi-selection, which is what
   made bulk triage feel risky rather than fast.

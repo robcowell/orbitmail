@@ -341,6 +341,17 @@ async function main() {
 
   // The status-bar wording is a pure function for exactly this reason: the bug
   // it replaces lived in JSX, where no test in this repo could reach it.
+  // The list header's wording: which folder, how much of it is loaded, and
+  // whether a filter is hiding the rest.
+  await build({
+    entryPoints: [join(root, 'src/utils/listHeader.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'listHeader.cjs'),
+    logLevel: 'silent'
+  })
+
   // Search scope is pure: which account (or all of them) a query runs against,
   // and how a cross-account result names its folder.
   await build({
@@ -1242,6 +1253,92 @@ async function main() {
         status([acct('a', { reachedServer: false })], { syncing: true }), true).state === 'online')
     ok('and there is no banner text when everything is fine',
       deriveConnectivity(status([acct('a', { reachedServer: true })]), true).message === null)
+  }
+
+  // -------------------------------------------------------------------------
+  section('List header: says which folder, how much of it, and what is hidden')
+  // -------------------------------------------------------------------------
+  {
+    const { describeListHeader } = require(join(outDir, 'listHeader.cjs'))
+
+    const accounts = [
+      { id: 'a1', email: 'me@personal.example', displayName: 'Personal', provider: 'imap' },
+      { id: 'a2', email: 'me@work.example', displayName: 'Work', provider: 'imap' }
+    ]
+    const folders = [
+      { id: 'f1', accountId: 'a1', name: 'Inbox', type: 'inbox', unreadCount: 3, isVirtualView: false },
+      { id: 'f2', accountId: 'a2', name: 'Inbox', type: 'inbox', unreadCount: 5, isVirtualView: false }
+    ]
+    const base = {
+      folders, accounts, threadedView: true, unreadOnly: false,
+      loaded: 20, total: 143, searching: false
+    }
+
+    const folderView = describeListHeader({ ...base, selectedFolderId: 'f1' })
+    ok('the folder is named', folderView.title === 'Inbox', folderView.title)
+    ok('and qualified by account when there is more than one',
+      folderView.subtitle === 'Personal', String(folderView.subtitle))
+    ok('a partly-loaded list says so rather than claiming the full count',
+      folderView.count === '20 of 143 conversations', folderView.count)
+    ok('unread is reported for that folder alone',
+      folderView.unread === '3 unread', String(folderView.unread))
+
+    // With one account the answer to "whose folder?" is never in doubt.
+    const single = describeListHeader({
+      ...base, selectedFolderId: 'f1', accounts: [accounts[0]], folders: [folders[0]] })
+    ok('a single account is not spelled out on every folder',
+      single.subtitle === null, String(single.subtitle))
+
+    const unified = describeListHeader({ ...base, selectedFolderId: 'unified' })
+    ok('the unified view names itself', unified.title === 'All Inboxes', unified.title)
+    ok('and totals unread across accounts', unified.unread === '8 unread', String(unified.unread))
+
+    // A fully-loaded folder still reports its size — this is what was missing
+    // entirely, since the count only ever appeared on the "Load more" button.
+    const full = describeListHeader({ ...base, selectedFolderId: 'f1', loaded: 143 })
+    ok('a fully-loaded list still reports how many there are',
+      full.count === '143 conversations', full.count)
+
+    ok('flat view counts messages, not conversations',
+      describeListHeader({ ...base, selectedFolderId: 'f1', threadedView: false, loaded: 143 })
+        .count === '143 messages')
+    ok('one is singular',
+      describeListHeader({ ...base, selectedFolderId: 'f1', loaded: 1, total: 1 })
+        .count === '1 conversation')
+    ok('empty says so in words',
+      describeListHeader({ ...base, selectedFolderId: 'f1', loaded: 0, total: 0 })
+        .count === 'no conversations')
+    ok('and large counts are grouped for reading',
+      describeListHeader({ ...base, selectedFolderId: 'f1', loaded: 12000, total: 12000 })
+        .count === '12,000 conversations')
+
+    // The filter had no textual cue at all: a pressed toggle was the only sign,
+    // which is easy to leave on and then wonder where the mail went. It is
+    // folded into the noun rather than shown as a badge, because a badge beside
+    // the count was clipped away at the list pane's real width.
+    const filtered = describeListHeader({
+      ...base, selectedFolderId: 'f1', unreadOnly: true, loaded: 3, total: 3 })
+    ok('an active unread filter is stated in the count itself',
+      filtered.count === '3 unread conversations', filtered.count)
+    ok('and unread is not repeated beside a count that already means unread',
+      filtered.unread === null, String(filtered.unread))
+    ok('the filtered singular reads properly',
+      describeListHeader({ ...base, selectedFolderId: 'f1', unreadOnly: true, loaded: 1, total: 1 })
+        .count === '1 unread conversation')
+    ok('and an empty filtered folder says so',
+      describeListHeader({ ...base, selectedFolderId: 'f1', unreadOnly: true, loaded: 0, total: 0 })
+        .count === 'no unread conversations')
+    ok('a folder with nothing unread says nothing about unread',
+      describeListHeader({
+        ...base, selectedFolderId: 'f1',
+        folders: [{ ...folders[0], unreadCount: 0 }, folders[1]]
+      }).unread === null)
+    ok('searching is not described as a filtered folder',
+      describeListHeader({
+        ...base, selectedFolderId: 'f1', unreadOnly: true, searching: true, loaded: 143
+      }).count === '143 conversations')
+    ok('an unknown folder still gets a title rather than an empty header',
+      describeListHeader({ ...base, selectedFolderId: 'gone' }).title === 'Mailbox')
   }
 
   // -------------------------------------------------------------------------

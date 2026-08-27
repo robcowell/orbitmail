@@ -2665,6 +2665,32 @@ Things worth knowing before touching these:
 - Docker orchestration is shared with `test:imap` in `scripts/greenmail.mjs`;
   each runner brings its own container name and host ports.
 
+## Pure main-process logic (`test:pure`)
+
+```bash
+npm run test:pure    # ~1s, no Docker, no Electron
+```
+
+`test:imap` is the integration suite: it needs Docker for GreenMail and a
+windowless Electron process for the database. Several modules it covered need
+neither — `attachment-safety.ts`, `network-reachability.ts`, `sync-policy.ts`
+and `thread-util.ts` **import nothing at all**. They lived there because there
+was nowhere else to put them, which made them slow to run and impossible to
+mutation-test: a full sweep against `test:imap` would take hours.
+
+Those sections moved here, whole. `test:imap` keeps the parts that genuinely
+need a server — that a refused connection reaches the *account* as "did not
+reach" is an integration fact, while what counts as refused is arithmetic. The
+totals were checked across the move: 723 assertions before, 678 + 45 after.
+
+**Every module bundled here must import nothing.** The moment one needs the
+database or Electron it belongs back in `test:imap`, where those exist.
+
+Two of the four had **no direct coverage at all** before this — `sync-policy.ts`
+and `thread-util.ts` were exercised only through sync behaviour. `computeThreadId`
+decides which messages form a conversation, and nothing asserted its precedence
+rules.
+
 ## Mutation check (`test:mutants`)
 
 ```bash
@@ -2701,10 +2727,14 @@ line changes — the justification should be re-read, not inherited.
 
 ### What it found
 
-| | before | after |
+| | first sweep | now |
 |---|---|---|
-| Mutants caught | 74 / 106 | **98 / 107** |
+| Mutants caught | 74 / 106 | **115 / 125** |
 | Unjustified survivors | 32 | **0** |
+
+Renderer modules are mutated against `test:store`, main-process ones against
+`test:pure`; the harness picks the suite from the path. Both are ~1s, which is
+the only reason this is feasible.
 
 Nine survivors are recorded as equivalent, each with the evidence: an sRGB knee
 at a channel value integers cannot produce, a four-digit hex alpha that can only
@@ -2718,9 +2748,11 @@ at a comfortable width.
 
 ### Its limits, stated plainly
 
-- **Only the pure modules `test:store` covers.** Mutating `test:imap` or
-  `test:e2e` would take hours per run. Most of the proxy-assertion mistakes have
-  been in pure logic, so that is where the value is.
+- **Only modules with no imports**, covered by `test:store` or `test:pure`.
+  Mutating `test:imap` or `test:e2e` directly would take hours per run. Anything
+  that touches the database, a socket or a window is still measured only by
+  those suites — including the three proxy-assertion mistakes that happened in
+  `test:e2e`, which remain unmeasured.
 - **Not in CI, and not a gate.** A slow check that fails for defensible reasons
   is a check people learn to skip. Run it deliberately after changing one of
   these modules.

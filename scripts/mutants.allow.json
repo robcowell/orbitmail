@@ -61,6 +61,12 @@
       "rule": "or->and",
       "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
       "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+    },
+    {
+      "file": "electron/services/thread-util.ts",
+      "rule": "and->or",
+      "code": "return first && first.length > 0 ? first : null",
+      "reason": "For a string the two halves say the same thing: '' is falsy and has length 0, and every other string is truthy with length > 0. `firstToken` only ever produces a string, and the only falsy one it can produce is '' (from a blank input). Checked against '', ' ', 'a', 'abc', '0' and a Message-ID: no value distinguishes && from ||. The length check is belt-and-braces, not logic."
     }
   ]
 }

@@ -122,6 +122,17 @@ Two habits that prevent the worst of it:
 
 There is **no unit-test framework and no linter** in this repo. Verification = `npm run build` passes, plus three test commands.
 
+`npm run test:mutants` — changes one token at a time in the pure renderer
+modules and checks `test:store` notices. A surviving mutant is a decision no
+assertion depends on: the code could be wrong there and nothing would say. Run
+it after touching `src/utils/*.ts`; `--strict` exits non-zero on any survivor
+not justified in `scripts/mutants.allow.json`. This exists because several
+assertions here have asserted a *proxy* rather than the property —
+`scrollWidth > clientWidth` for "scrollable", a formatted string for "the right
+value" — and passed against deliberately broken code. It is a diagnostic, not a
+gate, and not in CI: ~10 minutes for a full sweep. Details in DEVELOPERS.md →
+Mutation check.
+
 `npm run test:store` — renderer-store checks under plain node (~1s, no Docker,
 no Electron). `scripts/store-race.mjs` bundles `mailStore.ts` with esbuild, stubs
 `window.orbitMail`, and drives the exported actions, which is the only way to
@@ -245,6 +256,10 @@ did not**, because "verified" with no list has meant `build` alone more than onc
 
 1. `npm run build` — always. It is the gate; nothing else substitutes for it.
 2. `npm run test:store` — if you touched `src/stores/` or `RecipientInput.tsx`. ~1s.
+   Add `npm run test:mutants -- --file <the file>` when the change is to a pure
+   module under `src/utils/`: it is the only thing that checks the new
+   assertions would fail on the unfixed code, which is the part that has gone
+   wrong most often here.
 3. `npm run test:imap` — if you touched `electron/`, the IPC contract, the schema,
    or any doc it checks. Also the honest default when you are unsure: it is what
    CI will run anyway, so finding out now is cheaper.

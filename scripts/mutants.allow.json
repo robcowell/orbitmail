@@ -1,0 +1,66 @@
+{
+  "_comment": [
+    "Mutants that survive because no test could observe them, not because a test is missing.",
+    "Every entry needs a reason someone can check. Writing one is the point: it forces the",
+    "question 'is this genuinely unobservable, or have I just not thought of the case?' \u2014",
+    "which is how two real gaps in syncStatus.ts were found rather than allowlisted.",
+    "Matched on file + rule + the trimmed source line, so an entry stops applying when the",
+    "line it justifies is edited. That is deliberate: the justification should be re-read."
+  ],
+  "equivalent": [
+    {
+      "file": "src/utils/paneLayout.ts",
+      "rule": "gte->gt",
+      "code": "if (available - sidebar - list >= MIN_READER_WIDTH) {",
+      "reason": "Boundary-only, and both branches agree at the boundary. When the remainder is exactly MIN_READER_WIDTH the early return gives the reader exactly that; falling through instead computes a listGive of 0 and reaches the same widths. Verified by exhaustive search over containerWidth 1..3000 against every combination of the preferred widths and the three sidebar preferences (~500k inputs): no input distinguishes it."
+    },
+    {
+      "file": "src/utils/paneLayout.ts",
+      "rule": "gte->gt",
+      "code": "if (available - sidebar - listAfter >= MIN_READER_WIDTH) {",
+      "reason": "Same boundary, one branch later: at exact equality the sidebarGive computed below is 0, so the fall-through returns the widths the early return would have. Same exhaustive search, no distinguishing input."
+    },
+    {
+      "file": "src/utils/folders.ts",
+      "rule": "lte->lt",
+      "code": "if (imapPath.length <= name.length + 1) return undefined",
+      "reason": "The guard and the function's last line cover the same case twice. It differs from `<` only when the path is exactly the delimiter plus the name ('/Receipts'), and there the slice produces '' \u2014 which the trailing `|| undefined` turns into undefined anyway. Checked against every combination of four names and eight prefixes: no input distinguishes them. The guard is kept for the comment above it, which explains a real off-by-one that predates it."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "lte->lt",
+      "code": "return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)",
+      "reason": "The sRGB linearisation knee. It differs from `<` only at s exactly 0.03928, which is channel 10.0164 \u2014 and every channel here comes from an integer 0-255 divided by 255, so that value cannot occur. Unreachable rather than untested."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "lte->lt",
+      "code": "if (h.length === 4 && parseInt(h[3] + h[3], 16) <= 25) return null",
+      "reason": "Differs from `<` only when the alpha is exactly 25, and a four-digit hex doubles a single nibble \u2014 so its alpha can only be 0, 17, 34, 51 \u2026 255. 25 is not among them. The eight-digit form CAN be exactly 25 ('#ffffff19') and that boundary is tested."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "or->and",
+      "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "or->and",
+      "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "or->and",
+      "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "or->and",
+      "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+    }
+  ]
+}

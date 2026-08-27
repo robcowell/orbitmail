@@ -1045,6 +1045,64 @@ async function main() {
     ok('a background image with no colour is not a light background',
       !assumesLightBackground('<div style="background:url(cid:x) no-repeat">Hi</div>'))
 
+    // Each keyword that means "no colour here" on its own. Only `transparent`
+    // was covered, so the other three could have been dropped from the guard
+    // and nothing would have said — they arrive in real mail from editors that
+    // write `color: inherit` on every cell.
+    for (const keyword of ['inherit', 'initial', 'currentcolor']) {
+      ok(`${keyword} paints nothing, so it implies nothing`,
+        !assumesLightBackground(`<div style="background:${keyword}">Hi</div>`) &&
+        !assumesLightBackground(`<div style="color:${keyword}">Hi</div>`))
+    }
+    ok('an empty value implies nothing', !assumesLightBackground('<div style="color: ">Hi</div>'))
+
+    // The alpha thresholds, on both sides. Every existing case used alpha 0 or
+    // no alpha at all, so the cutoff could have been anywhere — or inverted.
+    ok('a nearly-transparent white background is not a light background',
+      !assumesLightBackground('<div style="background:rgba(255,255,255,0.05)">Hi</div>'))
+    ok('but a mostly-opaque one is',
+      assumesLightBackground('<div style="background:rgba(255,255,255,0.9)">Hi</div>'))
+    ok('alpha given as a percentage is read the same way',
+      !assumesLightBackground('<div style="background:rgba(255,255,255,5%)">Hi</div>'))
+    // Exactly on the cutoff — the one value that tells `<=` from `<`, and a
+    // number a person actually types.
+    ok('alpha exactly at the cutoff still counts as painting nothing',
+      !assumesLightBackground('<div style="background:rgba(255,255,255,0.1)">Hi</div>'))
+    ok('and a hair above it counts as painting something',
+      assumesLightBackground('<div style="background:rgba(255,255,255,0.11)">Hi</div>'))
+
+    // Hex with alpha, in both lengths. Neither was covered at all: #RGBA and
+    // #RRGGBBAA both fall through code that reads the alpha nibble and both
+    // could have been ignoring it.
+    ok('a four-digit hex with a low alpha paints nothing',
+      !assumesLightBackground('<div style="background:#fff1">Hi</div>'))
+    ok('a four-digit hex with a full alpha is a light background',
+      assumesLightBackground('<div style="background:#ffff">Hi</div>'))
+    ok('an eight-digit hex with a low alpha paints nothing',
+      !assumesLightBackground('<div style="background:#ffffff10">Hi</div>'))
+    ok('an eight-digit hex with a full alpha is a light background',
+      assumesLightBackground('<div style="background:#ffffffff">Hi</div>'))
+    // 0x19 is 25 — exactly the cutoff, and reachable only in the eight-digit
+    // form, since a doubled nibble can never be 25.
+    ok('an eight-digit hex whose alpha is exactly the cutoff paints nothing',
+      !assumesLightBackground('<div style="background:#ffffff19">Hi</div>'))
+    ok('and one byte above it paints something',
+      assumesLightBackground('<div style="background:#ffffff1a">Hi</div>'))
+    ok('a six-digit hex has no alpha to misread',
+      assumesLightBackground('<div style="background:#ffffff">Hi</div>'))
+    ok('a hex of a length that is not a colour is ignored',
+      !assumesLightBackground('<div style="background:#fffff">Hi</div>'))
+
+    // `background` and `background-color` are two different property names and
+    // both must be read. Only one was covered, so either could have been
+    // dropped from the condition.
+    ok('the shorthand background property is read',
+      assumesLightBackground('<div style="background:#ffffff">Hi</div>'))
+    ok('and the long form as well',
+      assumesLightBackground('<div style="background-color:#ffffff">Hi</div>'))
+    ok('a property that merely starts the same is not read as either',
+      !assumesLightBackground('<div style="background-image:#ffffff">Hi</div>'))
+
     // The formats real mail actually uses.
     ok('a three-digit hex is read', assumesLightBackground('<p style="color:#333">Hi</p>'))
     ok('rgb() is read', assumesLightBackground('<p style="color:rgb(20, 20, 20)">Hi</p>'))
@@ -1080,7 +1138,8 @@ async function main() {
   section('Favourites: a row that needs qualifying, and one that does not')
   // -------------------------------------------------------------------------
   {
-    const { favoriteRowHints, folderParentPath } = require(join(outDir, 'folders.cjs'))
+    const { favoriteRowHints, folderParentPath, findAccountFolder } =
+      require(join(outDir, 'folders.cjs'))
     const names = new Map([['a1', 'Personal'], ['a2', 'Work']])
     const folder = (id, accountId, name, imapPath) => ({
       id, accountId, name, imapPath, type: 'custom', unreadCount: 0, isVirtualView: false
@@ -1095,6 +1154,30 @@ async function main() {
       folderParentPath(folder('f', 'a1', 'Receipts', 'Work.Receipts')) === 'Work')
     ok('a top-level folder has no parent',
       folderParentPath(folder('f', 'a1', 'Receipts', 'Receipts')) === undefined)
+    // One character of parent — "a/Receipts". The guard is `<=`, and only the
+    // equal case was covered, so it could have been `<` unnoticed: that would
+    // slice this to "" and report a folder with an empty parent.
+    ok('a one-character parent is still a parent',
+      folderParentPath(folder('f', 'a1', 'Receipts', 'a/Receipts')) === 'a',
+      String(folderParentPath(folder('f', 'a1', 'Receipts', 'a/Receipts'))))
+
+    // findAccountFolder matches on account AND type. Every existing case had a
+    // single account, so matching on either alone would have passed.
+    const across = [
+      folder('x1', 'a1', 'Inbox', 'INBOX'),
+      folder('x2', 'a2', 'Inbox', 'INBOX'),
+      folder('x3', 'a1', 'Trash', 'Trash')
+    ]
+    across[0].type = 'inbox'; across[1].type = 'inbox'; across[2].type = 'trash'
+    ok('the folder found is the one in the account asked for',
+      findAccountFolder(across, 'a2', 'inbox')?.id === 'x2',
+      String(findAccountFolder(across, 'a2', 'inbox')?.id))
+    ok('and of the type asked for, not merely in that account',
+      findAccountFolder(across, 'a1', 'trash')?.id === 'x3',
+      String(findAccountFolder(across, 'a1', 'trash')?.id))
+    ok('a type the account does not have is not borrowed from another account',
+      findAccountFolder(across, 'a2', 'trash') === undefined,
+      String(findAccountFolder(across, 'a2', 'trash')?.id))
     // A localized or renamed name is not the tail of its path. Slicing by
     // length anyway would cut mid-path and print a fragment as if it were a
     // parent, which is worse than showing nothing.
@@ -1210,6 +1293,51 @@ async function main() {
       summarizeSyncStatus(status([acct('a', 'a@x', { error: 'invalid_grant' })])).needsReauth)
     ok('a network failure does not',
       !summarizeSyncStatus(status([acct('a', 'a@x', { error: 'no route to host' })])).needsReauth)
+
+    // The newest wins whichever order the accounts arrive in. Both directions
+    // are needed: the reducer's condition has three parts, and each is masked
+    // by one ordering and exposed by the other. Every case here used a single
+    // healthy account or an already-ascending pair, so three separate mutations
+    // to that line survived the suite untouched.
+    const ascending = summarizeSyncStatus(status([
+      acct('a', 'a@x', { lastSyncAt: 1000 }),
+      acct('b', 'b@x', { lastSyncAt: 9000 })
+    ]))
+    ok('the newest sync wins when the later account is the newer one',
+      ascending.healthyLastSyncAt === 9000, String(ascending.healthyLastSyncAt))
+    const descending = summarizeSyncStatus(status([
+      acct('a', 'a@x', { lastSyncAt: 9000 }),
+      acct('b', 'b@x', { lastSyncAt: 1000 })
+    ]))
+    ok('and when the later account is the older one',
+      descending.healthyLastSyncAt === 9000, String(descending.healthyLastSyncAt))
+
+    // An account that has never synced contributes no timestamp but must not
+    // erase one. Found by the mutation check: three separate mutations to the
+    // reducing condition all survived, because every healthy account in these
+    // cases happened to have a time.
+    const neverSynced = summarizeSyncStatus(status([
+      acct('a', 'a@x', { lastSyncAt: null }),
+      acct('b', 'b@x', { lastSyncAt: 5000 })
+    ]))
+    ok('an account that has never synced does not erase another account\'s time',
+      neverSynced.healthyLastSyncAt === 5000, String(neverSynced.healthyLastSyncAt))
+    ok('and is not itself reported as a time',
+      summarizeSyncStatus(status([acct('a', 'a@x', { lastSyncAt: null })]))
+        .healthyLastSyncAt === null)
+    ok('with none of them ever synced there is nothing to report',
+      summarizeSyncStatus(status([
+        acct('a', 'a@x', { lastSyncAt: null }),
+        acct('b', 'b@x', { lastSyncAt: null })
+      ])).healthyLastSyncAt === null)
+
+    // Every account failing is not "mixed" — there is no healthy one to
+    // contrast with, so the bar must not say "Others last synced".
+    ok('every account failing is not described as a mix',
+      summarizeSyncStatus(status([
+        acct('a', 'a@x', { error: 'down', lastSyncAt: 1 }),
+        acct('b', 'b@x', { error: 'down', lastSyncAt: 2 })
+      ])).mixed === false)
 
     const clean = summarizeSyncStatus(status([acct('p', 'p@x', { lastSyncAt: 42 })]))
     ok('with nothing wrong there is no error line and no mixed wording',
@@ -1440,9 +1568,102 @@ async function main() {
         JSON.stringify({ ...f, sum: f.sidebar + f.list + f.reader + dividers }))
     }
 
-    // Before the first measurement there is nothing sensible to compute.
-    ok('an unmeasured container does not produce negative widths',
-      fit(0).reader >= 0 && fit(-5).reader >= 0)
+    // Before the first measurement there is nothing sensible to compute. The
+    // weak version of this ("reader >= 0") was satisfied by almost any
+    // behaviour, including deleting the guard: nothing observed that the
+    // preferred widths come back untouched.
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const f = fit(bad)
+      ok(`an unmeasured container (${bad}) returns the preferred widths untouched`,
+        f.sidebar === 240 && f.list === 320 && f.reader === MIN_READER_WIDTH &&
+        f.sidebarHidden === false,
+        JSON.stringify(f))
+    }
+
+    // Properties, over every width the window can take rather than a handful of
+    // round numbers. Individual cases kept missing boundaries — MIN_READER_WIDTH
+    // exactly, the point where the sidebar stops fitting — because those are
+    // precisely the widths nobody picks by hand.
+    // From 1px, not 300. The clamp's own bounds only bind in windows narrower
+    // than a single pane's minimum — impossible through the UI today, but the
+    // helper is general and two mutations to it survived a loop that started
+    // at a comfortable width.
+    for (let w = 1; w <= 2200; w += w < 420 ? 1 : 7) {
+      for (const pref of [null, true, false]) {
+        for (const [sw, lw] of [[240, 320], [180, 200], [400, 500], [180, 900]]) {
+          const f = fitPanes({
+            containerWidth: w, sidebarWidth: sw, listWidth: lw, sidebarPreference: pref
+          })
+          const dividers = f.sidebarHidden ? 1 : DIVIDER_COUNT
+          const label = `w=${w} pref=${pref} sw=${sw} lw=${lw}`
+
+          if (f.sidebar + f.list + f.reader + dividers !== w) {
+            ok(`panes sum to the window (${label})`, false, JSON.stringify(f))
+            break
+          }
+          if (f.sidebar < 0 || f.list < 0 || f.reader < 0) {
+            ok(`no pane is negative (${label})`, false, JSON.stringify(f))
+            break
+          }
+          if (f.sidebarHidden && f.sidebar !== 0) {
+            ok(`a hidden sidebar has no width (${label})`, false, JSON.stringify(f))
+            break
+          }
+          if (!f.sidebarHidden && f.sidebar < MIN_SIDEBAR_WIDTH) {
+            ok(`a shown sidebar keeps its minimum (${label})`, false, JSON.stringify(f))
+            break
+          }
+          // The reader keeps its minimum whenever the window is big enough for
+          // two usable panes at all. Below that there is nothing to apportion.
+          const roomForTwo = w - 1 - MIN_LIST_WIDTH >= MIN_READER_WIDTH
+          if (roomForTwo && f.reader < MIN_READER_WIDTH) {
+            ok(`the reader keeps its minimum wherever it can (${label})`, false, JSON.stringify(f))
+            break
+          }
+          if (roomForTwo && f.list < MIN_LIST_WIDTH) {
+            ok(`the list keeps its minimum wherever it can (${label})`, false, JSON.stringify(f))
+            break
+          }
+        }
+      }
+    }
+    ok('every layout from 1px to 2200px holds its invariants', true,
+      'sum, non-negative, minimums, hidden-sidebar-has-no-width')
+
+    // Each pane gives up only what is needed. Without this, a squeeze that took
+    // one pixel too many from the sidebar satisfied every invariant above —
+    // the sum still held and every minimum was still met.
+    let overTaken = null
+    for (let w = 640; w <= 1400 && !overTaken; w += 1) {
+      const f = fitPanes({
+        containerWidth: w, sidebarWidth: 240, listWidth: 320, sidebarPreference: true
+      })
+      if (f.sidebarHidden) continue
+      // If the sidebar was shrunk at all, the reader must be at exactly its
+      // minimum — otherwise the sidebar gave up more than the reader needed.
+      if (f.sidebar < 240 && f.reader > MIN_READER_WIDTH) {
+        overTaken = { w, ...f }
+      }
+    }
+    ok('a squeezed pane gives up no more than the reader needed',
+      overTaken === null, JSON.stringify(overTaken))
+
+    // A preference below the minimum yields *exactly* the minimum, not the
+    // nearest other bound. Both of the clamp's bounds could be swapped without
+    // any invariant noticing: the sums still held and every minimum was still
+    // met, because "at least the minimum" is satisfied by too much as well as
+    // by the right amount.
+    let wrongFloor = null
+    for (let w = 2; w <= 1400 && !wrongFloor; w += 1) {
+      const f = fitPanes({
+        containerWidth: w, sidebarWidth: 0, listWidth: 0, sidebarPreference: false
+      })
+      const available = w - 1
+      const expected = Math.min(MIN_LIST_WIDTH, available)
+      if (f.list !== expected) wrongFloor = { w, expected, got: f.list, ...f }
+    }
+    ok('a list preference below the minimum gets exactly the minimum',
+      wrongFloor === null, JSON.stringify(wrongFloor))
   }
 
   // -------------------------------------------------------------------------
@@ -1641,6 +1862,17 @@ async function main() {
       stale.accountId === null && stale.enabled === false)
     ok('no accounts at all is not searchable',
       resolveSearchScope('unified', [], []).enabled === false)
+
+    // A folder whose account is gone. Only "neither exists" was covered, so
+    // the two halves of the guard were interchangeable as far as the suite was
+    // concerned — and this is the case that actually happens, when an account
+    // is removed while one of its folders is still the selected one.
+    const orphanFolder = resolveSearchScope(
+      'f1', folders, accounts.filter((a) => a.id !== 'a1'))
+    ok('a folder whose account has been removed is not searchable',
+      orphanFolder.enabled === false, JSON.stringify(orphanFolder))
+    ok('and is not promoted to searching every remaining account',
+      orphanFolder.accountId === null, String(orphanFolder.accountId))
 
     // Cross-account results: nearly every account has an "Inbox", so an
     // unqualified label leaves two rows looking identical.

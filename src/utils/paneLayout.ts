@@ -77,10 +77,20 @@ export function fitPanes(input: {
   if (sidebarHidden) {
     // Two panes: give the list what it asked for, up to leaving the reader its
     // minimum, and never below its own.
-    const list = clamp(
-      input.listWidth,
-      Math.min(MIN_LIST_WIDTH, available),
-      Math.max(MIN_LIST_WIDTH, available - MIN_READER_WIDTH)
+    //
+    // The final `Math.min(available, …)` is not redundant. Below MIN_LIST_WIDTH
+    // of total space the lower and upper bounds both floor at MIN_LIST_WIDTH,
+    // so the clamp returned a list wider than the window and the panes summed
+    // to more than they had — the layout overflowed. Unreachable through the UI
+    // (the window's own minWidth is 660) but wrong, and found by asserting the
+    // sum invariant from 1px rather than from a comfortable width.
+    const list = Math.min(
+      available,
+      clamp(
+        input.listWidth,
+        Math.min(MIN_LIST_WIDTH, available),
+        Math.max(MIN_LIST_WIDTH, available - MIN_READER_WIDTH)
+      )
     )
     return { sidebar: 0, list, reader: Math.max(0, available - list), sidebarHidden: true }
   }

@@ -2665,6 +2665,68 @@ Things worth knowing before touching these:
 - Docker orchestration is shared with `test:imap` in `scripts/greenmail.mjs`;
   each runner brings its own container name and host ports.
 
+## Mutation check (`test:mutants`)
+
+```bash
+npm run test:mutants                          # every covered module, ~10 min
+npm run test:mutants -- --file src/utils/search.ts
+npm run test:mutants -- --strict              # exit 1 on an unjustified survivor
+```
+
+A passing test says the code did something. It does **not** say the test would
+have noticed had the code done something else. Those are different claims, and
+several assertions here have made the first while failing the second —
+`scrollWidth > clientWidth` standing in for "scrollable", a formatted string
+standing in for "the right value", `.click()` on a disabled button standing in
+for "the user did it". Each was found by hand, one at a time, by breaking the
+code on a hunch. This does it systematically.
+
+One token is changed at a time — `>=` to `>`, `&&` to `||`, `Math.max` to
+`Math.min` — and `test:store` runs. A **caught** mutant made some assertion
+fail. A **survivor** means nothing in the suite depends on that decision.
+
+**Type-only edits are not mutations.** `Pick<Account, 'id'>[]` contains a `>`
+that a regex will happily change, and the result compiles to identical
+JavaScript. Every candidate is bundled with esbuild first and discarded when the
+output is byte-identical to the baseline, which also removes edits landing in
+comments and inert strings.
+
+**Equivalent mutants are real**, and go in `scripts/mutants.allow.json` **with a
+reason**. Writing the reason is the point. Twice during the first sweep a
+survivor that looked obviously equivalent turned out not to be: the reducer in
+`syncStatus.ts` needed accounts in *both* orders to pin it, and `and->or` there
+was only equivalent under the orderings that happened to be tested. The entry is
+matched on file + rule + the trimmed source line, so it stops applying when the
+line changes — the justification should be re-read, not inherited.
+
+### What it found
+
+| | before | after |
+|---|---|---|
+| Mutants caught | 74 / 106 | **98 / 107** |
+| Unjustified survivors | 32 | **0** |
+
+Nine survivors are recorded as equivalent, each with the evidence: an sRGB knee
+at a channel value integers cannot produce, a four-digit hex alpha that can only
+be a multiple of 17, a guard whose fall-through returns the same answer.
+
+It also found a **real bug** rather than only test gaps: `fitPanes` returned
+panes summing to more than the window below about 200px, because both clamp
+bounds floored at `MIN_LIST_WIDTH`. Unreachable through the UI — the window's
+own `minWidth` is 660 — but wrong, and invisible to a property loop that started
+at a comfortable width.
+
+### Its limits, stated plainly
+
+- **Only the pure modules `test:store` covers.** Mutating `test:imap` or
+  `test:e2e` would take hours per run. Most of the proxy-assertion mistakes have
+  been in pure logic, so that is where the value is.
+- **Not in CI, and not a gate.** A slow check that fails for defensible reasons
+  is a check people learn to skip. Run it deliberately after changing one of
+  these modules.
+- **A score is not a grade.** Mutation scores rise just as easily by asserting
+  more things as by asserting better ones. It is a smoke detector.
+
 ## Store tests (renderer)
 
 ```bash

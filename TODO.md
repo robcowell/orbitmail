@@ -111,6 +111,44 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **`npm run test:mutants`, and the 32 gaps it found** — the answer to "you keep
+  reporting tests that prove nothing; are the tests just bad?" Fair question, and
+  adding another trap to CLAUDE.md was treating the symptom.
+
+  **The measurement.** Change one token at a time in the pure renderer modules,
+  run `test:store`, see whether it notices. First sweep: **106 mutants, 74
+  caught, 32 survived** — 30% of the decisions in that code were pinned by no
+  assertion at all. After the work: **98 of 107 caught, 0 unjustified.**
+
+  **The recurring authoring error, named.** Every one of my bad assertions
+  asserted a *proxy* rather than the property: `scrollWidth > clientWidth` for
+  "scrollable", a formatted string for "the right value", `.click()` for "the
+  user did it". Each holds when the property does not. The root cause of not
+  *noticing* was that mutation testing was a habit I applied to whatever I had
+  just written, when I remembered — and habits are what a codebase should not
+  depend on. It is a command now.
+
+  **It found a real bug, not only test gaps.** `fitPanes` returned panes summing
+  to more than the window below ~200px, because both clamp bounds floored at
+  `MIN_LIST_WIDTH`. Unreachable through the UI (the window's `minWidth` is 660)
+  but wrong — and invisible to a property loop that started at a comfortable
+  width, which is exactly the sort of blind spot a hand-picked test range has.
+
+  **Twice, a survivor that looked obviously equivalent was not.** The reducer in
+  `syncStatus.ts` needed accounts in *both* orders to pin it; my first fix for it
+  did not discriminate and the tool said so. `and->or` on the same line was only
+  equivalent under the orderings that happened to be tested. Both are now real
+  assertions rather than allowlist entries — which is what the "write the reason"
+  rule is for.
+
+  Nine genuinely equivalent mutants are recorded with evidence: an sRGB knee at a
+  channel value integers cannot produce, a four-digit hex alpha that can only be
+  a multiple of 17, a guard whose fall-through returns the same answer anyway.
+
+  **Deliberately not a CI gate.** ~10 minutes for a full sweep, and a slow check
+  that fails for defensible reasons is one people learn to skip. A score is also
+  not a grade — it rises just as easily by asserting more things as better ones.
+
 - **A sender can no longer move this app's controls** — audit finding C3, which
   turned out to be two separate problems and not the one I filed.
 

@@ -101,7 +101,7 @@ the others last synced.
   renders mail written by strangers, so it clears an open advisory reached
   through Electron's own dependencies and takes four majors of Chromium security
   fixes with it rather than stopping at the minimum that closed the advisory. The
-  `.deb` grows from about 97 MB to about 107 MB as a result.
+  `.deb` grows from about 101 MB to about 111 MB as a result.
 - **The email parser updated** to close a high-severity vulnerability in one of
   its dependencies.
 - **Three further advisories cleared** in the build tooling. None were in the

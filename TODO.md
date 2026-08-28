@@ -629,7 +629,10 @@ does. Preserving that needs prefix or trigram tokenisation.
   44 was chosen anyway rather than 40 — this app renders untrusted HTML, and
   stopping four majors short on Chromium to shorten a changelog is the wrong
   trade. Runtime goes Chromium 142 → 152, Node 22 → 24, ICU 74 → 78; the `.deb`
-  grows ~97 MB → ~107 MB.
+  grows ~97 MB → ~107 MB. (Those are MiB, measured on disk; the release page
+  reports decimal MB, so the published assets read ~101 MB → ~111 MB. The
+  CHANGELOG uses the second pair, because that is what a user downloading it
+  sees.)
 
   **No application code changed.** The 40–44 breaking-change list was checked
   against this codebase rather than inferred from a green suite: `clipboard`

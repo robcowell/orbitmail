@@ -161,8 +161,6 @@ import {
   getWindowPreferences,
   setComposeWindowPreferences,
   getComposeWindowPreferences,
-  resolveComposeSize,
-  MIN_COMPOSE_SIZE,
   setZoomLevel,
   getZoomLevel,
   muteSender,
@@ -173,6 +171,7 @@ import {
   revokeSenderImages,
   clearAccountLastSyncAt
 } from './services/preferences-service'
+import { resolveComposeSize, MIN_COMPOSE_SIZE } from './services/window-geometry'
 import {
   analyzeMessage,
   analyzeThread,

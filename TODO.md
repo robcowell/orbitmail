@@ -69,7 +69,7 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 - **Restoring down a composer that opened maximized gives a size nobody chose.** Size persistence ships (see Done); this is its one measured rough edge. A window maximized *before it is mapped* has no normal geometry for the window manager to restore to, so Muffin invents one at roughly 90% of the screen. The obvious fix is worse and was tried: re-imposing the remembered size from an `unmaximize` handler loses to the WM, which finishes its own restore afterwards and snaps the window back to the maximized rectangle — restore-down then appears to do nothing at all. The remaining option is to show the window unmaximized and maximize it after it is mapped, which trades this for a visible small→full-screen jump on **every** composer, a worse trade for a much more common action. Left alone deliberately; revisit only if a desktop is found where the jump does not happen.
 - **IMAP draft upload** — local autosave ships (see Done); drafts are not uploaded to the account's Drafts folder, so one started here is not visible in webmail or on a phone. Uploading means an APPEND per save *and* deleting the previously uploaded copy or the folder fills with revisions, needs the connection lane, cannot work offline, and has no meaning for POP3. The duplicate-draft failure if a delete fails is the reason it was not done with the local half.
 - Inline search-operator syntax (`from:`, `subject:`) and result highlighting — field **scoping** now ships via the search-scope selector (All/From/To/Subject/Body); inline operator parsing and match highlighting are still deferred
-- Auto-update and code signing (CI and integration tests now exist — `.github/workflows/ci.yml` runs `npm run build`, `npm run test:store` and `npm run test:imap` on every push and pull request)
+- Auto-update and code signing (CI and integration tests now exist — `.github/workflows/ci.yml` runs `npm run build`, `npm run test:store`, `npm run test:pure`, `npm run test:db` and `npm run test:imap` on every push and pull request; `test:e2e` cannot run there, and `test:mutants` is a diagnostic rather than a gate)
 - Cross-platform builds (Windows/macOS)
 - POP3 move support or reduced POP3 scope
 - **Block is linear in account size** — `from_addr` stores the display form (`"Name" <addr>`), so the block predicate is a `LIKE` per blocked entry and cannot use an index; it is capped at 200 entries. The sub-linear fix is a `from_normalized` column populated in `upsertMessage` beside `search_text`, backfilled through `drainInBackground`, indexed on `(account_id, from_normalized)`. **Its trap, recorded before anyone tries it:** un-backfilled rows are `NULL`, and `from_normalized NOT IN (…)` evaluates to `NULL` for them — falsy — so a naive version silently hides *every* message the backfill has not reached yet. It needs `(from_normalized IS NULL OR from_normalized NOT IN (…))`, which in turn fails to block old mail until the backfill completes.
@@ -110,6 +110,93 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **`npm run test:db`, and mutation coverage for the database and the window
+  geometry** — the answer to the limit the last round recorded: "anything
+  touching the database, a socket or a window is still unmeasured. Narrowing the
+  hole is not closing it."
+
+  **The database was the hole.** `better-sqlite3` is a native module built
+  against Electron's ABI, so nothing that imported the DB could be loaded by
+  `node` — every database check lived in `test:imap` behind Docker and a
+  windowless Electron process, ninety seconds a run. That is a fine gate and a
+  useless measurement: a mutation sweep needs hundreds of runs.
+
+  Node ships SQLite in its standard library now. `scripts/sqlite-node-shim.mjs`
+  adapts that binding to the shape `better-sqlite3` presents, and esbuild swaps
+  one for the other, along with the two pieces of `electron` the DB layer
+  touches. Drizzle drives it unmodified. **The code under test is the code that
+  ships** — the real `db-service.ts`, schema and migrations, in about a second.
+
+  **Why a shim is allowed to be trusted here.** A shim is a second
+  implementation and therefore somewhere for a difference to hide; a fast suite
+  that lies about the driver that ships would be worse than none. So the
+  assertions are not in the runner: they live in `scripts/db-contract.suite.ts`
+  and *both* runners execute it — the shim under `test:db`, real
+  `better-sqlite3` inside Electron at the end of `test:imap`. **It has already
+  earned that.** An assertion that the new-mail notifier labels its message with
+  the contract account's own address passed under `test:db` and failed under
+  `test:imap`, where GreenMail's inbox holds newer mail and the notifier
+  correctly named *that* account. The assertion was what was wrong.
+
+  **The measurement.** First sweep over `db-service.ts`: **29 of 140 caught** —
+  four fifths of the decisions in the file pinned by nothing at all. Four rounds
+  of assertions later: **95 caught, 45 justified, 0 unjustified**, from 178
+  assertions in the contract.
+
+  **It found a real bug in the code, not only gaps in the tests.**
+  `getAccountEmailCached` memoises the account address that contact harvesting
+  needs to tell outgoing mail from incoming. Inverted, the memo returns nothing
+  on every call and contact collection silently stops for the whole profile —
+  with every existing check still green, because nothing asserted that a synced
+  message becomes a contact suggestion. It does now.
+
+  **And twice it caught assertions of mine that proved nothing** — the same
+  mistake this tool exists for, made again while writing tests *for* the tool:
+  `upsertFolder` returns the type it was *asked for* rather than the type it
+  stored, so an assertion on its return value passes against a version that
+  never writes; and "the account label is not the fallback string" passes when
+  the broken `||` chain yields the display name, which is also not the fallback.
+  Both read back through a second query now.
+
+  **The rules had a one-sided hole.** They only ever *weakened* a boundary —
+  `>=` to `>` — so a `>` that should have been `>=` could not be mutated into
+  the bug it would be. `gt->gte` and `lt->lte` close it; `round->trunc` and
+  `nullish->or` were added with them. Those four immediately found 17 unpinned
+  decisions in renderer modules that had been at zero survivors, including
+  another proxy assertion of mine: a percentage-channel rounding check written
+  against 50% grey, where 127 and 128 sit on the *same* side of the classifier's
+  boundary, so it passed whichever way the code rounded. It straddles the real
+  boundary (112/113) now.
+
+  `nullish->or` can also emit code that does not parse — JavaScript refuses
+  `a ?? b || c` — which aborted a whole sweep partway through and reported
+  nothing. Unbuildable candidates are counted and skipped, like the ones that
+  compile identically.
+
+  **The window half is smaller and honest about it.** `resolveComposeSize` was
+  pure arithmetic living in `preferences-service.ts`, which imports the database;
+  it moved to `electron/services/window-geometry.ts`. `zoom.ts` already imported
+  only *types* from `electron`, so it bundles to a file requiring nothing. Both
+  joined `test:pure` — 23 assertions moved out of `test:imap`, 15 added — and
+  both sweep clean. What is *not* covered is anything needing a real window: a
+  `close` handler, parent/child destroy order, whether the WM honoured a
+  maximize. Those stay `test:e2e`-only, and no amount of extraction reaches them.
+
+  **What is still unmeasured, stated plainly:** a socket and a window.
+  `imap-sync.ts`, `smtp-send.ts`, the connection pool, and everything in
+  `main.ts` that owns a `BrowserWindow`. That includes the three
+  proxy-assertion mistakes that happened in `test:e2e`. The database is no
+  longer on that list; the rest of it is unchanged.
+
+- **`npm run test:e2e` exited 1 on a run in which everything passed.** Found by
+  running it, not by it failing anything: all ten suites reported "0 failed"
+  and then the runner threw `ReferenceError: selected is not defined` on its own
+  summary line. `selected` was declared inside the `try` and counted after the
+  `finally`, so the variable was out of scope exactly where the success message
+  reads it — a shape that only shows up on the *passing* path, which is why the
+  suite that introduced it (#186, "Let one e2e suite be run by name") looked
+  fine. Hoisted out of the block.
 
 - **`npm run test:pure`, and mutation coverage for the main process** — the
   second half of the testing work. The mutation check could only reach the

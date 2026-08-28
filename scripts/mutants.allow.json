@@ -67,6 +67,354 @@
       "rule": "and->or",
       "code": "return first && first.length > 0 ? first : null",
       "reason": "For a string the two halves say the same thing: '' is falsy and has length 0, and every other string is truthy with length > 0. `firstToken` only ever produces a string, and the only falsy one it can produce is '' (from a blank input). Checked against '', ' ', 'a', 'abc', '0' and a Message-ID: no value distinguishes && from ||. The length check is belt-and-braces, not logic."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "lte->lt",
+      "code": "if (syncDays <= 0) return 0",
+      "reason": "Redundant second lock. `getSyncCutoffTimestamp` on the next line returns null for anything <= 0 and the null is checked, so a syncDays of 0 returns 0 either way. The guard is here because the consequence of it being wrong is deleting the account's entire mail \u2014 worth two locks even when only one can be observed."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "or->and",
+      "code": "accountLabel: account?.email || account?.displayName || 'Orbit Mail',",
+      "reason": "`&&` binds tighter than `||`, so the mutant reads `email || (displayName && 'Orbit Mail')` and the first arm still wins. `accounts.email` is NOT NULL and an account cannot be created without one (saveAccount keys on the address), so the later arms are unreachable \u2014 they are there for a row corrupted by hand. The other `||` on this line is caught."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "or->and",
+      "code": "if (!likePattern || accountId === '') return []",
+      "reason": "Both arms reach the same result by a different route. Falling through with a null likePattern builds a query whose LIKE parameters are null, which matches nothing; falling through with an empty accountId scopes to `account_id = ''`, which no row has. The early return is a shortcut, not the thing that makes the answer right \u2014 asserted from the outside, the two are indistinguishable."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "or->and",
+      "code": "if (!accountId || !rfcMessageId) return []",
+      "reason": "Same shape: falling through queries `account_id = '' AND message_id = ?` (or the reverse), and no row matches an empty column value. The guard saves a query, not a wrong answer."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "gt->gte",
+      "code": "return s.length > 0 ? s : null",
+      "reason": "`''` and `null` are both falsy, and every caller of canonicalizeMessageId tests the result for truthiness (`if (own)`, `if (!own) continue`) rather than comparing it to null. Returning the empty string instead of null changes the value and not one decision made with it."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "gt->gte",
+      "code": "} else if (refs.length > 0) {",
+      "reason": "The branch body is `for (let i = 1; i < refs.length; i++)`, which does nothing when refs is empty. Entering it for a message with no references is a no-op, so the guard saves an iteration rather than a wrong grouping."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "gt->gte",
+      "code": "return draftRows.length > 0 ? [...draftRows, ...summaries] : summaries",
+      "reason": "Spreading an empty array yields the same contents, so both branches return the same rows in the same order when there are no drafts. The conditional exists to avoid copying the summaries array on every read of every non-Drafts folder, which is a cost and not a behaviour."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "gt->gte",
+      "code": "if (changed > 0) recalculateFolderUnread(folderId)",
+      "reason": "recalculateFolderUnread recomputes the count from the rows, so running it when nothing changed writes back the value already there. The guard avoids a folder-sized COUNT on every poll that finds no flag changes \u2014 which is most of them \u2014 and nothing downstream can tell the difference."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "lt->lte",
+      "code": "if (!cur || r.date < cur.date || (r.date === cur.date && own < cur.id)) {",
+      "reason": "The mutated `<` is the tie-break `own <= cur.id`, reached only when the dates are equal. `own === cur.id` means this row *is* the current representative, so replacing it with itself stores the same value. The date comparison on the same line \u2014 the one that decides which message roots a thread \u2014 is caught."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const from = PROVIDER_LABELS[existing.provider as Provider] ?? existing.provider",
+      "reason": "PROVIDER_LABELS maps every Provider to a non-empty display string, so the looked-up value is never falsy-but-present. The fallback only fires for a provider value not in the union, where the key is missing and `??` and `||` agree."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const to = PROVIDER_LABELS[provider] ?? provider",
+      "reason": "Same table, same argument: every entry is a non-empty string, so the two operators can only differ on a key that is absent, where both take the fallback."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return row?.signature ?? ''",
+      "reason": "setAccountSignature stores `signature.trim() || null`, so the column is either null or a non-empty string \u2014 the empty string is never written. The suite asserts exactly that (a whitespace-only signature reads back as ''), which is what makes this equivalence checkable rather than assumed."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "flagColor: (r.flagColor as FlagColor | null) ?? null,",
+      "reason": "FlagColor is a union of non-empty colour names, and the column holds one of those or NULL. There is no falsy-but-present value for the two operators to disagree about."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "? repByRoot.get(find(own))?.id ?? own",
+      "reason": "The stored id is a canonical Message-ID, and canonicalizeMessageId returns null rather than an empty string, so a representative's id is never falsy. `own` is non-empty for the same reason \u2014 the branch is only entered when it is truthy."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const unique = g?.unique ?? []",
+      "reason": "The map value is an array, and an array is truthy even when empty. The two operators can differ only on a key that is absent, where both build a new empty array."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const all = g?.all ?? []",
+      "reason": "Same: an array value, truthy whether or not it has elements."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "latestMessageId: latest?.id ?? '',",
+      "reason": "A row id is a UUID \u2014 never the empty string \u2014 so the fallback is reachable only when there is no latest row at all, where both operators give ''."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "from: latest?.from_addr ?? '',",
+      "reason": "from_addr is NOT NULL and may legitimately be '', but the fallback is also '': when the column is empty both operators produce the empty string, and when there is no row both take the fallback."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "subject: latest?.subject ?? '',",
+      "reason": "Same shape as from_addr: NOT NULL, may be empty, and the fallback is the empty string, so the falsy-but-present case lands on the same value."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "snippet: latest?.snippet ?? '',",
+      "reason": "Same again \u2014 a NOT NULL text column whose fallback is the empty string it might itself hold."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "date: latest?.date ?? h.last_date,",
+      "reason": "`h.last_date` is MAX(date) over the same thread and `latest` is that thread's newest row, so a `latest.date` of 0 implies `h.last_date` is 0 too. The only falsy date makes both operators produce 0."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "flagColor: (flagged?.flag_color ?? null) as FlagColor | null,",
+      "reason": "The colour names are non-empty strings and the column is otherwise NULL, so there is no falsy-but-present value to distinguish the operators."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "? collectDisplayNames([latest?.to_addr ?? ''])",
+      "reason": "to_addr is NOT NULL with '' as its fallback, so an empty column and a missing row both reach collectDisplayNames with the same empty string."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": ": [extractName(latest?.from_addr ?? '')]",
+      "reason": "Same: an empty from_addr and an absent row both hand extractName the empty string."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const list = byMessage.get(a.messageId) ?? []",
+      "reason": "A Map value here is always an array, which is truthy; only an absent key reaches the fallback, and both operators take it."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "cc: r.cc ?? '',",
+      "reason": "The cc column is null or a header string, and the fallback is the empty string. A stored '' and a NULL therefore produce the same value under either operator."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "references: r.references ?? null,",
+      "reason": "The falsy-but-present case is an empty References header, which reaches every consumer through tokenizeReferences \u2014 and tokenizeReferences returns [] for '' and for null alike. Neither the threading nor the reply builder can tell the two apart."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "attachments: (byMessage.get(r.id) ?? []).map((a) => ({",
+      "reason": "Array value or missing key, as above: truthy when present, so the operators agree."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return rows.map((r) => ({ ...rowToSweepTask(r), completedAt: r.completed_at ?? 0 }))",
+      "reason": "completed_at is set from Date.now() when a task is ticked off, so the only falsy value it could hold is 0 \u2014 and the fallback is 0. These rows are selected with `status = 'completed'`, so the column is never NULL here either."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return readSweepMetaMap()[folderId] ?? null",
+      "reason": "The map's values are objects, which are truthy; only a missing folder key reaches the fallback, where both operators give null."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return { messageCount: counted.n, latestMessageId: newest?.mid ?? null }",
+      "reason": "`mid` is COALESCE(message_id, id) \u2014 a Message-ID or a row UUID, neither of which is empty. The fallback only fires when the thread has no rows."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return { json: r.aiAnalysis, at: r.aiAnalysisAt ?? 0 }",
+      "reason": "ai_analysis_at is a timestamp written with the analysis; the only falsy value it could carry is 0, which is also the fallback."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const messageMax = row?.maxUid ?? 0",
+      "reason": "MAX(uid) over a folder's rows: NULL when the folder is empty, otherwise a server UID of 1 or more. A maxUid of 0 and the fallback of 0 are the same number, so the operators cannot be distinguished."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const storedMax = folder?.highestSyncedUid ?? 0",
+      "reason": "The column starts at 0 and only rises, and the fallback is 0 \u2014 the falsy-but-present value and the fallback are the same."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return folder?.highestModseq ?? null",
+      "reason": "MODSEQ is stored as the decimal string of a 64-bit counter, so the column holds a non-empty string or NULL; setFolderHighestModseq is the only writer and it is called with a value from the server."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return row?.server_uid ?? null",
+      "reason": "server_uid is a POP3 UIDL. pop3-sync only ever writes a UIDL it read from the maildrop listing, and an entry with no UIDL is not a message it can identify \u2014 so the empty string is never stored."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const id = existing?.id ?? randomUUID()",
+      "reason": "The existing row's id is a UUID, never empty, so the fallback is reachable only when there is no existing row."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "serverUid: data.serverUid ?? null,",
+      "reason": "The only caller that sets this is pop3-sync, which passes a UIDL from the maildrop listing; IMAP callers leave it undefined. An empty UIDL is not an identity and never reaches here, so the falsy-but-present case does not occur."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const unread = row?.value ?? 0",
+      "reason": "folders.unread_count is NOT NULL DEFAULT 0, so the falsy value it can hold is 0 \u2014 the same as the fallback."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "return (row?.value ?? 0) + (draftAccount ? countDrafts(draftAccount) : 0)",
+      "reason": "Same column, same argument: 0 is both the falsy stored value and the fallback, so the sum is unchanged either way."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "flagColor: (r.flag_color as FlagColor | null) ?? null,",
+      "reason": "The search row mapper, reading the same column as the summary mapper: non-empty colour names or NULL, with no falsy-but-present value between them."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
+      "code": "const clauses = (SEARCH_META_COLUMNS[field] ?? SEARCH_META_COLUMNS.all).map(",
+      "reason": "Every entry in SEARCH_META_COLUMNS is a non-empty array of column names, and an array is truthy. Only a `field` outside the union reaches the fallback, where both operators take it."
+    },
+    {
+      "file": "electron/services/network-reachability.ts",
+      "rule": "nullish->or",
+      "code": "if ('code' in err) return String((err as { code?: unknown }).code ?? '')",
+      "reason": "The falsy-but-present cases are `code: ''` \u2014 where both operators give '' \u2014 and a numeric `code: 0`, where `??` gives '0'. Neither is in UNREACHABLE_CODES, and the caller guards with `if (code && ...)`, so '0' and '' both fall through to the message matching and produce the same classification. No thrown object in Node carries a zero errno anyway; the `??` is there to keep the return type a string."
+    },
+    {
+      "file": "electron/services/network-reachability.ts",
+      "rule": "nullish->or",
+      "code": "return String((err as { message?: unknown }).message ?? '')",
+      "reason": "A `message` of '' gives '' under both operators. A numeric `message: 0` gives '0' under `??`, which matches none of the unreachable patterns \u2014 the same answer as ''. The classification cannot distinguish them."
+    },
+    {
+      "file": "electron/services/thread-util.ts",
+      "rule": "nullish->or",
+      "code": "return (subject ?? '')",
+      "reason": "The only falsy-but-present subject is the empty string, and the fallback is the empty string, so both operators feed the same value into the prefix stripping."
+    },
+    {
+      "file": "electron/services/thread-util.ts",
+      "rule": "gt->gte",
+      "code": "return first && first.length > 0 ? first : null",
+      "reason": "`first` has already been tested for truthiness on the same line, and a truthy string has length one or more. The length check is a redundant second guard, so `> 0` and `>= 0` are reached only with values they agree on."
+    },
+    {
+      "file": "electron/services/thread-util.ts",
+      "rule": "gt->gte",
+      "code": "if (root && root.length > 0) return root",
+      "reason": "Same redundancy: `root &&` has already excluded the empty string, so the length comparison never sees zero."
+    },
+    {
+      "file": "src/utils/syncStatus.ts",
+      "rule": "gt->gte",
+      "code": "a.lastSyncAt !== null && (newest === null || a.lastSyncAt > newest)",
+      "reason": "A reduce picking the newest timestamp. On a tie the two operators choose different *objects* and the same *number*, and only the number is returned \u2014 `a.lastSyncAt` and `newest` are equal in exactly the case where they differ."
+    },
+    {
+      "file": "src/utils/syncStatus.ts",
+      "rule": "nullish->or",
+      "code": "const all = Object.values(status.accounts ?? {})",
+      "reason": "`status.accounts` is an object or absent, and an object is truthy whether or not it has keys. The two operators can differ only on a falsy-but-present value, which this field cannot hold."
+    },
+    {
+      "file": "src/utils/syncStatus.ts",
+      "rule": "nullish->or",
+      "code": "const tried = Object.values(status.accounts ?? {}).filter(",
+      "reason": "The same field, read a second time in the same module: an object or absent, with no falsy-but-present case between them."
+    },
+    {
+      "file": "src/utils/syncStatus.ts",
+      "rule": "nullish->or",
+      "code": "needsReauth: failing.some((a) => REAUTH_PATTERN.test(a.error ?? '')),",
+      "reason": "`error` is a non-empty message or null, and the fallback is the empty string. An error of '' \u2014 if one could occur \u2014 is tested against the same pattern as the fallback, so the two operators give the same answer either way."
+    },
+    {
+      "file": "src/utils/search.ts",
+      "rule": "nullish->or",
+      "code": "const name = folderName.get(result.folderId) ?? 'Mailbox'",
+      "reason": "The map holds folder display names, which come from an IMAP path's last segment and are never empty \u2014 a mailbox with no name cannot be selected or listed. Only a missing folder id reaches the fallback, where both operators take it."
+    },
+    {
+      "file": "src/utils/listHeader.ts",
+      "rule": "nullish->or",
+      "code": "input.selectedFolderId === 'unified' ? 'All Inboxes' : (folder?.name ?? 'Mailbox')",
+      "reason": "Same field as above: a folder's name is a non-empty path segment, so the fallback is reachable only when there is no folder at all."
+    },
+    {
+      "file": "src/utils/listHeader.ts",
+      "rule": "nullish->or",
+      "code": ": (folder?.unreadCount ?? 0)",
+      "reason": "unread_count is NOT NULL DEFAULT 0, so the only falsy value it can hold is 0 \u2014 which is also the fallback."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "gt->gte",
+      "code": "const [hi, lo] = a > b ? [a, b] : [b, a]",
+      "reason": "Ordering two luminances so the larger is first. The operators differ only when a === b, where `[a, b]` and `[b, a]` hold the same two numbers and the ratio computed from them is 1 either way."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "lt->lte",
+      "code": "return lum !== null && contrast(lum, DARK_SURFACE) < MIN_CONTRAST",
+      "reason": "Boundary-only, and the boundary is unreachable. Checked exhaustively: over all 16,777,216 integer RGB values, no colour produces a contrast against DARK_SURFACE of exactly 4.5 \u2014 the closest any comes is 7.7e-9 away. A fractional channel is expressible in CSS (`rgb(127.3, 0, 0)`) but would have to land on that ratio exactly, which is a transcendental equality no stylesheet is written to hit."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "lt->lte",
+      "code": "return lum !== null && contrast(DARK_TEXT, lum) < MIN_CONTRAST",
+      "reason": "The same exhaustive check against DARK_TEXT: no integer RGB triple gives exactly 4.5, the closest being 1.3e-9 away. Same argument for fractional channels."
+    },
+    {
+      "file": "src/utils/emailColorScheme.ts",
+      "rule": "lt->lte",
+      "code": "if (colon < 0) continue",
+      "reason": "A colon at index 0 is a declaration with an empty property name, like `:red`. Skipping it and processing it reach the same place: the property is '', which matches none of `color`, `background` or `background-color`, so the loop moves on either way."
     }
   ]
 }

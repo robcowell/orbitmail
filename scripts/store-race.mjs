@@ -1022,6 +1022,24 @@ async function main() {
     ok('a white background with no text colour asks for one too',
       assumesLightBackground('<table bgcolor="#ffffff"><tr><td>Hello</td></tr></table>'))
 
+    // Percentage channels are rounded to a whole 0-255, not truncated — and the
+    // percentage has to be one that straddles the *classifier's* boundary, not
+    // an arbitrary one. Grey flips at 112/113: at 112 our own light text still
+    // reads on it and the mail is left dark, at 113 it does not and the mail
+    // gets a light page. 44.2% is 112.71 of 255, so rounding gives 113 and
+    // truncating gives 112 — opposite answers about the same colour.
+    //
+    // Written against 50% first, which proves nothing: 127 and 128 are both on
+    // the same side of the boundary, so that pair passes either way. The
+    // mutation check is what said so.
+    const grey = (v) => assumesLightBackground(`<td style="background:rgb(${v})">Hi</td>`)
+    ok('a percentage channel is rounded, matching the 113 it rounds to',
+      grey('44.2%,44.2%,44.2%') === grey('113,113,113'),
+      `${grey('44.2%,44.2%,44.2%')} vs ${grey('113,113,113')}`)
+    ok('and not the 112 it would truncate to, which classifies the other way',
+      grey('113,113,113') !== grey('112,112,112'),
+      `113 → ${grey('113,113,113')}, 112 → ${grey('112,112,112')}`)
+
     // The whole point of classifying rather than always papering: mail that
     // sets nothing, and mail that brought its own dark theme, must stay dark.
     ok('mail that sets no colour at all is left on the theme',
@@ -1160,6 +1178,24 @@ async function main() {
     ok('a one-character parent is still a parent',
       folderParentPath(folder('f', 'a1', 'Receipts', 'a/Receipts')) === 'a',
       String(folderParentPath(folder('f', 'a1', 'Receipts', 'a/Receipts'))))
+
+    // A folder whose name is unique inside its account gets no parent path — a
+    // parent is a disambiguator, and "Work · Receipts" on the only Receipts
+    // there is is noise. The count is `> 1` and the folder counts itself, so
+    // `>= 1` would qualify every row on the list.
+    const twoAccounts = [
+      folder('u1', 'a1', 'Receipts', 'Work/Receipts'),
+      folder('u2', 'a2', 'Receipts', 'Work/Receipts')
+    ]
+    const uniqueHints = hints(twoAccounts)
+    ok('a name unique within its account is qualified by account alone',
+      uniqueHints.get('u1') === 'Personal', String(uniqueHints.get('u1')))
+    const twiceInOne = [
+      folder('d1', 'a1', 'Receipts', 'Work/Receipts'),
+      folder('d2', 'a1', 'Receipts', 'Home/Receipts')
+    ]
+    ok('and one that repeats inside an account gains its parent',
+      hints(twiceInOne).get('d1') === 'Work', String(hints(twiceInOne).get('d1')))
 
     // findAccountFolder matches on account AND type. Every existing case had a
     // single account, so matching on either alone would have passed.
@@ -1437,6 +1473,21 @@ async function main() {
     ok('and is offered as nothing at all once the evening has gone',
       get('2026-03-10T21:00:00', 'later-today').wakeAt === null)
 
+    // Exactly on each boundary hour. At 14:00 the afternoon is *now*, so
+    // "later today" has to be the evening — a preset that fires at the moment
+    // it is offered is the same lie as one that means tomorrow. Both of these
+    // comparisons are one character from being wrong and nothing pinned them.
+    ok('at exactly the afternoon hour, later today means the evening',
+      hourOf(get('2026-03-10T14:00:00', 'later-today').wakeAt) === 18,
+      String(hourOf(get('2026-03-10T14:00:00', 'later-today').wakeAt)))
+    ok('and at exactly the evening hour there is no later today left',
+      get('2026-03-10T18:00:00', 'later-today').wakeAt === null)
+    // One minute before each, the earlier option is still the right one.
+    ok('a minute before the afternoon it is still the afternoon',
+      hourOf(get('2026-03-10T13:59:00', 'later-today').wakeAt) === 14)
+    ok('and a minute before the evening it is still the evening',
+      hourOf(get('2026-03-10T17:59:00', 'later-today').wakeAt) === 18)
+
     ok('tomorrow is the next morning',
       hourOf(get('2026-03-10T21:00:00', 'tomorrow').wakeAt) === 8 &&
       new Date(get('2026-03-10T21:00:00', 'tomorrow').wakeAt).getDate() === 11)
@@ -1489,6 +1540,18 @@ async function main() {
     const far = formatWakeAt(at('2026-04-02T08:00:00'), base)
     ok('and further out by month and day rather than a weekday',
       /Apr/i.test(far) && /\b2\b/.test(far) && !/tomorrow|day at/i.test(far), far)
+
+    // The weekday form is only unambiguous inside six days: at exactly six a
+    // weekday name is one day from repeating, so it is the date form that has
+    // to appear. Asserting a day inside and a day outside leaves the boundary
+    // itself unpinned, which is where an off-by-one lives.
+    const sixDays = 6 * 24 * 3600 * 1000
+    const atSix = formatWakeAt(base + sixDays, base)
+    ok('exactly six days out is a date, not a weekday',
+      /Mar/i.test(atSix) && !/day at/i.test(atSix), atSix)
+    const justInside = formatWakeAt(base + sixDays - 60_000, base)
+    ok('and a minute inside six days is still a weekday',
+      /day at/i.test(justInside), justInside)
   }
 
   // -------------------------------------------------------------------------
@@ -1502,6 +1565,17 @@ async function main() {
     const fit = (containerWidth, over = {}) => fitPanes({
       containerWidth, sidebarWidth: 240, listWidth: 320, sidebarPreference: null, ...over
     })
+
+    // The exact width at which a requested sidebar stops being affordable: all
+    // three panes at their minimum, plus the dividers. At that width it fits
+    // and must be shown; one pixel narrower it must not. The sweep either side
+    // of it passes whichever way the comparison is written.
+    const exact =
+      DIVIDER_COUNT + MIN_SIDEBAR_WIDTH + MIN_LIST_WIDTH + MIN_READER_WIDTH
+    ok('a sidebar that exactly fits is shown',
+      fit(exact, { sidebarPreference: true }).sidebarHidden === false, `${exact}px`)
+    ok('and one pixel short of fitting is not',
+      fit(exact - 1, { sidebarPreference: true }).sidebarHidden === true, `${exact - 1}px`)
 
     // The bug: sidebar and list were flex-shrink:0, so the reader absorbed
     // every pixel the window lost and could be squeezed to nothing.

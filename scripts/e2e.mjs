@@ -173,8 +173,12 @@ console.log(`[test:e2e] GreenMail ready on imap:${PORTS.imap} smtp:${PORTS.smtp}
 console.log('[test:e2e] windows will appear briefly — that is expected')
 
 const failures = []
+// Declared out here because the summary below the `finally` counts it. Inside
+// the `try` it was out of scope there, so a run in which *every* suite passed
+// still ended in a ReferenceError and exited 1 — the per-suite output all said
+// "0 failed" and only the exit code disagreed.
+const selected = only ? SUITES.filter((s) => s.name === only) : SUITES
 try {
-  const selected = only ? SUITES.filter((s) => s.name === only) : SUITES
   if (only && selected.length === 0) {
     fail(`No suite called "${only}". Known: ${SUITES.map((s) => s.name).join(', ')}`)
   }

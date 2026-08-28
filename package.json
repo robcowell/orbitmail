@@ -2,7 +2,7 @@
   "name": "orbit-mail",
   "version": "0.7.0",
   "desktopName": "orbit-mail.desktop",
-  "description": "Orbit Mail — a polished desktop email client for Linux",
+  "description": "Orbit Mail \u2014 a polished desktop email client for Linux",
   "main": "out/main/index.js",
   "homepage": "https://robcowell.github.io/orbit-website/",
   "repository": {
@@ -30,6 +30,7 @@
     "test:imap": "node scripts/imap-integration.mjs",
     "test:store": "node scripts/store-race.mjs",
     "test:pure": "node scripts/pure-logic.mjs",
+    "test:db": "node scripts/db-logic.mjs",
     "test:mutants": "node scripts/mutation-check.mjs",
     "test:e2e": "npm run build && node scripts/e2e.mjs",
     "ui:preview": "node scripts/ui-preview.mjs"

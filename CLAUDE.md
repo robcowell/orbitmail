@@ -308,3 +308,46 @@ did not**, because "verified" with no list has meant `build` alone more than onc
 
 A new check earns its place here only if it fails on the unfixed code — every e2e
 suite here was confirmed that way; see their TODO.md entries.
+
+## Watching CI on a PR
+
+**`gh pr checks` has no `--json` flag** in the `gh` on this machine — checked
+against `gh pr checks --help` on 2.45.0, which lists only `--fail-fast`,
+`--interval`, `--required`, `--watch` and `--web`. Other versions may differ, so
+check the help rather than assume either way. Passing a flag it does not have is
+not an error you will notice: the command prints nothing useful, and a poll loop
+built on it spins forever.
+
+That is not hypothetical. Two loops shaped like this were left running against
+PRs #187 and #188:
+
+```sh
+# BROKEN — never terminates, and looks like "CI is still pending"
+while true; do
+  s=$(gh pr checks 187 --json name,bucket 2>/dev/null)      # always empty here
+  jq -e 'all(.bucket!="pending")' <<<"$s" >/dev/null && break   # jq fails on empty
+  sleep 30
+done
+```
+
+`--json` is rejected, `2>/dev/null` hides the complaint, `s` is empty, `jq -e`
+exits non-zero on empty input, and the `&& break` never fires. Both loops were
+broken on their *first* iteration — before CI had even started — and the empty
+output reads exactly like "no checks have settled yet". They had to be killed.
+
+Use one of these instead:
+
+- **`gh pr view <n> --json statusCheckRollup`** — `gh pr view` *does* take
+  `--json` here. `.conclusion` is `SUCCESS`/`FAILURE`, `.state` covers pending.
+- **`gh pr checks <n>`** with no flags, which is tab-separated
+  `name<TAB>pass<TAB>duration<TAB>url`.
+
+**And do not parse what you see on screen.** The `gh` output in this environment
+is reformatted by the RTK proxy before it reaches you — `gh pr checks` arrives as
+a rendered "CI Checks Summary" rather than the TSV above, so the text you read
+and the text a script parses are different strings. `rtk proxy <cmd>` runs it
+unfiltered when you need to know what a script will actually see.
+
+Whichever you use: a wait loop must be able to end. Bound it with a maximum
+number of iterations, so a wrong assumption about the command surfaces as a loop
+that gave up rather than one nobody notices.

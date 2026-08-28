@@ -120,19 +120,42 @@ Two habits that prevent the worst of it:
 
 - `npm run test:e2e` — end-to-end suites through real windows: the send path, and window lifecycle (Docker + a display; not in CI). See below.
 
-There is **no unit-test framework and no linter** in this repo. Verification = `npm run build` passes, plus three test commands.
+There is **no unit-test framework and no linter** in this repo. Verification =
+`npm run build` passes, plus five test commands — `test:pure`, `test:db` and
+`test:store` (about a second each, no Docker, no Electron), `test:imap` (Docker
++ Electron), and `test:e2e` (Docker + a display). `test:mutants` is a sixth, but
+it is a diagnostic rather than a gate.
 
 `npm run test:pure` — pure main-process logic under plain node (~1s, no Docker,
 no Electron). `attachment-safety.ts`, `network-reachability.ts`,
-`sync-policy.ts` and `thread-util.ts` import nothing, so they need neither — and
+`sync-policy.ts`, `thread-util.ts`, `window-geometry.ts` and `zoom.ts` import
+nothing at runtime, so they need neither — and
 living in `test:imap` made them impossible to mutation-test. **A module bundled
-here must import nothing**; the moment one needs the DB or Electron it goes back
-to `test:imap`.
+here must import nothing at runtime** (a type-only import is fine — esbuild
+erases it, which is why `zoom.ts` qualifies despite naming `electron`); the
+moment one needs the DB or Electron it goes to `test:db` or back to
+`test:imap`.
+
+`npm run test:db` — the **database layer** under plain node (~1s, no Docker, no
+Electron). `better-sqlite3` is built against Electron's ABI, so nothing that
+imported the DB could be loaded by `node`; `scripts/sqlite-node-shim.mjs` adapts
+node's built-in SQLite to the same shape and esbuild swaps them at bundle time.
+The code under test is the real `db-service.ts`, schema and migrations.
+
+**The assertions live in `scripts/db-contract.suite.ts`, and both runners execute
+it** — this one, and `test:imap` on the real driver at the end of its run. That
+is what makes the shim trustworthy: a difference it hides fails there. It has
+already earned it — an assertion passed here and failed under `test:imap`,
+correctly, because the contract had assumed it owned the only inbox. The contract
+creates and removes its own account for that reason: it must not assume an empty
+database.
 
 `npm run test:mutants` — changes one token at a time in the pure renderer and
-main-process modules and checks `test:store` notices. A surviving mutant is a decision no
+main-process modules and the database layer, and checks the matching fast suite
+notices. A surviving mutant is a decision no
 assertion depends on: the code could be wrong there and nothing would say. Run
-it after touching `src/utils/*.ts` or any module in `test:pure`; `--strict` exits non-zero on any survivor
+it after touching `src/utils/*.ts`, any module in `test:pure`, or `db-service.ts`;
+`--strict` exits non-zero on any survivor
 not justified in `scripts/mutants.allow.json`. This exists because several
 assertions here have asserted a *proxy* rather than the property —
 `scrollWidth > clientWidth` for "scrollable", a formatted string for "the right
@@ -199,7 +222,7 @@ window-lifecycle. Windows appear on screen for a few seconds.
 Read the traps in DEVELOPERS.md → End-to-end first: the send suite has twice
 passed while proving nothing, once from picking windows by index and once from a
 composer that never loaded its draft. When you report a check, say which of the
-three commands you ran.
+five commands you ran.
 
 **Do not treat `tsc -b` as a pass/fail gate.** The source does not cleanly pass a standalone `tsc -b` even on `main` (target/lib and third-party typing mismatches that esbuild transpiles past). Use `npm run build`.
 
@@ -263,10 +286,15 @@ did not**, because "verified" with no list has meant `build` alone more than onc
 
 1. `npm run build` — always. It is the gate; nothing else substitutes for it.
 2. `npm run test:store` — if you touched `src/stores/` or `RecipientInput.tsx`. ~1s.
+   `npm run test:pure` and `npm run test:db` — if you touched a module either one
+   covers. All three are about a second; running all three is cheaper than
+   deciding which.
    Add `npm run test:mutants -- --file <the file>` when the change is to a pure
-   module under `src/utils/`: it is the only thing that checks the new
+   module under `src/utils/`, to anything in `test:pure`, or to `db-service.ts`:
+   it is the only thing that checks the new
    assertions would fail on the unfixed code, which is the part that has gone
-   wrong most often here.
+   wrong most often here — twice more during the DB work, both times an
+   assertion reading back a function's *argument* rather than what it stored.
 3. `npm run test:imap` — if you touched `electron/`, the IPC contract, the schema,
    or any doc it checks. Also the honest default when you are unsure: it is what
    CI will run anyway, so finding out now is cheaper.

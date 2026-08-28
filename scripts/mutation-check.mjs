@@ -54,24 +54,41 @@ const ALLOW_PATH = join(ROOT, 'scripts', 'mutants.allow.json')
 // The pure modules `test:store` reaches. Deliberately not mailStore.ts: it is
 // large, mostly IPC orchestration, and a mutation run over it would take an
 // hour to tell us what its own targeted tests already do.
-// Renderer modules run against `test:store`; main-process ones against
-// `test:pure`. Both suites are ~1s, which is what makes this feasible at all.
-const SUITE_FOR = (file) =>
-  file.startsWith('electron/') ? 'npm run test:pure' : 'npm run test:store'
+// Each target names the suite that measures it. All three are ~1s, which is
+// what makes sweeping feasible at all:
+//
+//   test:store  renderer modules, bundled and driven under plain node
+//   test:pure   main-process modules that import nothing
+//   test:db     the database layer, on node:sqlite via scripts/sqlite-node-shim.mjs
+//
+// `test:db` is the newest and the one that needed the most machinery: until it
+// existed, everything touching the database could only be exercised by
+// `test:imap` (Docker, Electron, ~90s), and a sweep against that is a sweep
+// nobody runs. See scripts/db-logic.mjs for why the shim is trustworthy.
+const TARGETS = {
+  'electron/services/network-reachability.ts': 'npm run test:pure',
+  'electron/services/attachment-safety.ts': 'npm run test:pure',
+  'electron/services/sync-policy.ts': 'npm run test:pure',
+  'electron/services/thread-util.ts': 'npm run test:pure',
+  'electron/services/window-geometry.ts': 'npm run test:pure',
+  'electron/zoom.ts': 'npm run test:pure',
+  'electron/services/db-service.ts': 'npm run test:db',
+  'src/utils/paneLayout.ts': 'npm run test:store',
+  'src/utils/syncStatus.ts': 'npm run test:store',
+  'src/utils/search.ts': 'npm run test:store',
+  'src/utils/listHeader.ts': 'npm run test:store',
+  'src/utils/snoozePresets.ts': 'npm run test:store',
+  'src/utils/folders.ts': 'npm run test:store',
+  'src/utils/emailColorScheme.ts': 'npm run test:store'
+}
 
-const DEFAULT_TARGETS = [
-  'electron/services/network-reachability.ts',
-  'electron/services/attachment-safety.ts',
-  'electron/services/sync-policy.ts',
-  'electron/services/thread-util.ts',
-  'src/utils/paneLayout.ts',
-  'src/utils/syncStatus.ts',
-  'src/utils/search.ts',
-  'src/utils/listHeader.ts',
-  'src/utils/snoozePresets.ts',
-  'src/utils/folders.ts',
-  'src/utils/emailColorScheme.ts'
-]
+// A file passed with --file that is not in the table above still needs a suite.
+// Guessing by path is what the table replaced, but it is the right fallback: it
+// lets a module be swept before it is added here.
+const SUITE_FOR = (file) =>
+  TARGETS[file] ?? (file.startsWith('electron/') ? 'npm run test:pure' : 'npm run test:store')
+
+const DEFAULT_TARGETS = Object.keys(TARGETS)
 
 // Kept small and high-signal. Each one corresponds to a mistake that actually
 // gets made: an off-by-one boundary, an inverted condition, a swapped bound.
@@ -85,7 +102,21 @@ const RULES = [
   { id: 'true->false', find: /\breturn true\b/g, replace: 'return false' },
   { id: 'false->true', find: /\breturn false\b/g, replace: 'return true' },
   { id: 'max->min', find: /\bMath\.max\(/g, replace: 'Math.min(' },
-  { id: 'min->max', find: /\bMath\.min\(/g, replace: 'Math.max(' }
+  { id: 'min->max', find: /\bMath\.min\(/g, replace: 'Math.max(' },
+  // The four above only ever *weaken* a boundary — `>=` to `>`. Nothing
+  // strengthened `>` to `>=`, so one side of every comparison in the codebase
+  // was unreachable by this tool: a `>` that should have been `>=` could not be
+  // mutated into the bug it would be. The spaces matter — `=>` has no space
+  // before its `>`, so an arrow function is not a comparison.
+  { id: 'gt->gte', find: / > /g, replace: ' >= ' },
+  { id: 'lt->lte', find: / < /g, replace: ' <= ' },
+  // Rounding a number the user sees, or a pixel a window is sized in. `round`
+  // and `trunc` agree on every whole number and disagree on every other one,
+  // which is exactly the shape of bug an example-based test walks past.
+  { id: 'round->trunc', find: /\bMath\.round\(/g, replace: 'Math.trunc(' },
+  // `??` and `||` differ only on the falsy-but-present values — 0, '', false —
+  // and those are the values a count, a subject and a flag actually take.
+  { id: 'nullish->or', find: / \?\? /g, replace: ' || ' }
 ]
 
 const args = process.argv.slice(2)
@@ -148,6 +179,7 @@ async function main() {
   let applied = 0
   let caught = 0
   let skipped = 0
+  let invalid = 0
 
   for (const file of targets) {
     const abs = join(ROOT, file)
@@ -164,9 +196,21 @@ async function main() {
       for (const candidate of candidates(original)) {
         writeFileSync(abs, candidate.mutated)
 
+        // A change that does not parse is not a mutation either. `a ?? b` sitting
+        // next to a `||` is the case that found this: JavaScript refuses to mix
+        // the two without parentheses, so `nullish->or` can produce a syntax
+        // error rather than a variant of the program. Treated as a crash, one
+        // such site aborted a whole sweep partway through and reported nothing.
+        let mutantBundle
+        try {
+          mutantBundle = await bundleOf(file)
+        } catch {
+          invalid++
+          continue
+        }
+
         // A change that compiles to identical JavaScript is not a mutation —
         // it landed in a type annotation, a comment, or dead syntax.
-        const mutantBundle = await bundleOf(file)
         if (mutantBundle === baseline) {
           skipped++
           continue
@@ -203,6 +247,7 @@ async function main() {
   console.log(`survived, justified    : ${justified.length}`)
   console.log(`survived, UNJUSTIFIED  : ${survivors.length}`)
   console.log(`skipped (no-op edits)  : ${skipped}`)
+  console.log(`skipped (would not parse): ${invalid}`)
 
   if (survivors.length > 0) {
     console.log(

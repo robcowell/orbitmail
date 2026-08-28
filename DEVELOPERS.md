@@ -662,7 +662,10 @@ the control, and the README says so.
   `getNormalBounds()` rather than `getBounds()`, or restoring down on the next
   composer would do nothing visible.
 
-  A stored size is **resolved, not trusted** (`resolveComposeSize`): it outlives
+  A stored size is **resolved, not trusted** (`resolveComposeSize`, in
+  `electron/services/window-geometry.ts` — pure arithmetic, kept out of
+  `preferences-service.ts` so `test:pure` and the mutation check can reach it):
+  it outlives
   the display that produced it, so a composer sized on a 4K monitor would open
   wider than the laptop it is reopened on with its Send button past the edge. It
   is clamped to the work area and up to the window's own minimums, and a
@@ -2012,6 +2015,7 @@ orbit-mail/
 | `electron/services/office-text.ts` | Text out of ZIP-based document attachments (OOXML, OpenDocument) so the model can read them — the API takes only PDF or plain text |
 | `electron/services/rtf-text.ts` | The same job for RTF, which is not a container |
 | `electron/zoom.ts` | Page zoom: which keypress means what, bounds, and clamping a stored level |
+| `electron/services/window-geometry.ts` | A remembered compose-window size, resolved against the screen it will open on. Pure, so `test:pure` and the mutation check reach it |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
 | `src/components/ErrorBoundary.tsx` | Catches a render error so it does not blank the window, and reports it |
 | `shared/types.ts` | Shared types and `OrbitMailAPI` contract |
@@ -2353,6 +2357,9 @@ their own. Approval is cleared when the compose window closes.
 | `npm run install:desktop` | Install a dev `.desktop` launcher |
 | `npm run test:imap` | Integration suite against a real IMAP/SMTP server (see below) |
 | `npm run test:store` | Renderer-store checks under plain node (see below) — no Docker, no Electron |
+| `npm run test:pure` | Main-process modules that import nothing, under plain node (see below) — ~1s |
+| `npm run test:db` | The database layer under plain node, on node:sqlite (see below) — ~1s, no Docker, no Electron |
+| `npm run test:mutants` | Change one token at a time in the covered modules and check the fast suites notice (see below) — ~10 min, on demand |
 | `npm run test:e2e` | End-to-end suites through real windows — send path, signatures, window lifecycle, zoom (see below). Needs Docker *and* a display, so it is not in CI |
 | `npm run ui:preview` | Serve the built renderer to a browser with the IPC bridge stubbed, for looking at the UI where Electron cannot run (see below) |
 | `npm run dist` | Build icons, compile, and package (.deb + AppImage) |
@@ -2411,24 +2418,24 @@ reimplementing them, so it exercises the shipping code paths:
 | OAuth | The loopback listener accepts a callback only when its `state` matches this attempt's, so an injected authorization code cannot complete a sign-in; a genuine callback still works after rejected ones; an abandoned sign-in times out and releases the port. (Needs no mail server, but rides along here rather than adding a second test command.) |
 | TLS | `'starttls'` requires the upgrade and *refuses* a server that does not offer it — GreenMail's plain port advertises no STARTTLS, so it is an accurate stand-in. Includes a guard proving the old mapping would have logged in over plaintext. |
 | Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
+| Database contract | `scripts/db-contract.suite.ts`, run here on the real `better-sqlite3` and again under `test:db` on the node:sqlite shim — 178 assertions over blocking, threading, thread listing, search scoping, the AI cache surviving a re-sync, POP3 skip dates, contact harvesting and account removal. Running it in both places is what makes the fast runner trustworthy; see below. |
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
 | Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
-| Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. Also that executable extensions are classified for the open-warning and ordinary documents are not, that the classifier reads the *basename* so a path-shaped filename cannot smuggle one past it, and that the warning names the real extension rather than the one the eye stops at. |
-| Snooze presets | Every preset lands on a whole hour and in the future, checked across every day of the week and five times of day. "Later today" is the afternoon in the morning, the evening in the afternoon, and absent in the evening. "This weekend" asked on a Saturday means the next one, and "next week" on a Monday the next Monday — the rule that stops a preset firing in the past. |
+| Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. (Which extensions count as executable is arithmetic and lives in `test:pure`.) |
 | Scheduler | Something overdue runs at the next start, so a quit does not lose it, while something not yet due is left alone. A completed action is gone from the table and a second run does not repeat it. A handler that throws does not stall the queue and its row is **not** retried into a duplicate. Cancelling reports whether it won the race — twice, or after the action ran, both report false. An unparseable payload is dropped rather than wedging the queue. Removing an account cascades to its scheduled work. |
 | Undo lookup | A relocated message is findable by its RFC Message-ID and reports the folder it now sits in; every row for a Message-ID comes back, not just the first, so a Gmail row already in the destination can be told from one that is not; the lookup is scoped to one account, so an identical Message-ID in another account is not restored. |
 | Unified search | A null `accountId` searches every account and returns them interleaved newest-first, not grouped; an account id still scopes to that account alone; an **empty string** returns nothing rather than everything; the limit bounds the merged set rather than applying per account. |
-| Reachability | Connection-level failures (`ECONNREFUSED`, `ENOTFOUND`, `EHOSTUNREACH`, bare "Timeout"/"Timed out") classify as never-reached, by code and by bare message; authentication failures classify as *reached*, including one phrased as a login timeout; an unknown failure defaults to reached. End to end, a refused connection records `reachedServer: false` on the account and a successful sync records `true`. |
-| Per-account sync status | Two accounts, one pointed at a closed port: the failing one carries its own error, the healthy one carries none and still reports a last-synced time, and the aggregate reports one too. A failure does not stamp freshness on the account that failed; a later success clears a stale error; removing an account stops it reporting. |
+| Reachability | End to end: a real refused connection records `reachedServer: false` on the *account*, and a successful sync records `true`. What counts as refused is arithmetic and lives in `test:pure`; that it reaches the account needs a server to refuse it. |
+| Per-account sync status | Two real accounts, one pointed at a closed port: the failing one carries its own error, the healthy one carries none and still reports a last-synced time. A failure does not stamp freshness on the account that failed; a later success clears a stale error; removing an account stops it reporting. (Turning that state into one line of status-bar wording is `test:store`.) |
 | Inline images (inbound) | A `multipart/related` message parsed by the real mailparser: the referenced image is marked inline and *is* already a `data:` URI in the body, the `.pdf` beside it is not marked, and an `image/svg+xml` is left alone because mailparser did not embed it either. A message whose only part is a signature logo carries no attachments at all; without an HTML body nothing is hidden. |
 | Inline images (backfill) | Every copy of an embedded image is marked, not just the first — the parts outnumber the `data:` URIs, so consuming matches would leave half behind. A size match under a different image MIME counts; an image the body never embedded stays visible; a document of a colliding size is never touched. `has_attachments` clears only once nothing but embedded images is left, and a second run is a no-op. |
 | Attachment text | The document formats the AI features can read: a `.docx`/`.xlsx`/`.pptx`/`.odt`/`.ods`/`.odp` yields its text with paragraph and row structure intact, text comes from run elements only (so a floating image's coordinates do not appear as content), spreadsheet cells resolve through the shared-string table, a self-closing empty cell does not swallow its neighbour, and an unreadable container (non-ZIP, missing part, iWork, no text) returns null so the caller names it as skipped. RTF drops the font and colour tables, decodes `\'hh` and `\u`, and stops at a `\bin` run rather than emitting binary. |
 | Attachment untrustedness | Extracted attachment text is fenced like a message body, and no attachment heading interpolates a raw filename — the label sits outside the fence, so a filename cannot open a line of its own or forge a marker. |
 | Analysis detail | Brief and full ask for exactly the same fields and differ only in description, so the levels cannot drift apart; both keep the anti-invention rule, the owner requirement and the carry-the-specifics rule; an unknown stored value falls back rather than reaching the API. An analysis cached before action items had owners is upgraded to `{action, owner: 'You'}` rather than dropped or re-billed. |
 | Blank-window recovery | The renderer-error log is timestamped and keeps the stack and component stack, stays under its cap by dropping whole entries (never half a stack), keeps the newest, and keeps an oversized entry rather than discarding what it was just told about. Both windows are watched, the composer is deliberately *not* reloaded, a clean exit is not treated as a crash, and the app is wrapped in an error boundary that reports before it renders. |
-| Zoom | The browser shortcuts on the characters a layout actually produces — `+ = Add` in, `- _ Subtract` out — since an accelerator matches a key, not the character. Modifierless keys are typing, Alt is a different shortcut, key-up does not repeat; the level is bounded both ways and a stored one is clamped, so a corrupted blob cannot open the app at an unreadable size. |
+| Zoom | The wiring, not the arithmetic: zoom is re-applied on `did-finish-load` rather than only at window creation (a level belongs to the loaded frame, so it resets on the reload that recovers a dead renderer), both the main and compose windows follow it, and the level is persisted. Which keypress means what is in `test:pure`, and whether the key reaches the handler at all is in `test:e2e`. |
 | OAuth config | Credentials resolve environment-first, fall back to values entered in the app, and the status payload never carries a value back to the renderer. Plus the rule-5 guards: no OAuth constants in the build config, no placeholders in the bundle, and no `.env` value present in `out/main/index.js`. |
 | Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
@@ -2690,13 +2697,81 @@ need a server — that a refused connection reaches the *account* as "did not
 reach" is an integration fact, while what counts as refused is arithmetic. The
 totals were checked across the move: 723 assertions before, 678 + 45 after.
 
-**Every module bundled here must import nothing.** The moment one needs the
-database or Electron it belongs back in `test:imap`, where those exist.
+`electron/zoom.ts` and `electron/services/window-geometry.ts` joined them later,
+for the same reason: `zoom.ts` imports only *types* from `electron`, which esbuild
+erases, and `resolveComposeSize` was pure logic sitting in `preferences-service.ts`,
+which imports the database. Moving it to `window-geometry.ts` made it reachable
+from here. `test:imap` keeps the checks that read `main.ts` itself — that zoom is
+re-applied on load, that the composer is built from the resolved size — because
+those are about the wiring, not the arithmetic. 23 assertions moved; 15 were added
+to them.
+
+**Every module bundled here must import nothing at runtime.** A type-only import
+is fine — it does not survive the bundle. The moment one needs the database or
+Electron it belongs in `test:db` or `test:imap`, where those exist.
 
 Two of the four had **no direct coverage at all** before this — `sync-policy.ts`
 and `thread-util.ts` were exercised only through sync behaviour. `computeThreadId`
 decides which messages form a conversation, and nothing asserted its precedence
 rules.
+
+## The database layer under plain node (`test:db`)
+
+```bash
+npm run test:db      # ~1s, no Docker, no Electron
+```
+
+`better-sqlite3` is a native module built against Electron's ABI, so until this
+existed **nothing that touched the database could be loaded by `node`**. Every
+database check lived in `test:imap`: Docker for GreenMail, a windowless Electron
+process for the driver, ninety seconds a run. That is a fine gate and a useless
+measurement — a mutation sweep needs hundreds of runs, so the database was the
+largest body of logic in this repo with no mutation coverage at all.
+
+Node ships SQLite in its standard library now. `scripts/sqlite-node-shim.mjs`
+adapts that binding to the shape `better-sqlite3` presents, and esbuild swaps one
+for the other at bundle time along with the two pieces of `electron` the DB layer
+reaches for (`app.getPath`, and `safeStorage` — reporting encryption
+*unavailable*, which is the real degraded path on a machine with no keyring).
+Drizzle drives the shim unmodified.
+
+**The code under test is the code that ships.** The real `db-service.ts`, the
+real schema, the real `migrateSchema` sequence — not an extract, not a copy.
+
+### Why a shim is allowed to be trusted here
+
+A shim is a second implementation, and a second implementation is somewhere for
+a difference to hide. A fast suite that passes while lying about the driver that
+ships would be worse than no suite. Two things stop that:
+
+1. **The assertions are not in the runner.** They live in
+   `scripts/db-contract.suite.ts`, and *both* runners execute it — this shim
+   under `test:db`, and real `better-sqlite3` inside Electron at the end of
+   `test:imap`. A behaviour the shim gets wrong fails there.
+2. **The surface is tiny.** Every method on the shim corresponds to a call that
+   exists in `electron/`. Nothing is implemented speculatively.
+
+If the two disagree, `test:imap` is right and the shim is wrong.
+
+The differences that had to be papered over are each commented in the shim, and
+they are the part most likely to matter later: node:sqlite refuses `undefined`
+and JS booleans as bound parameters where `better-sqlite3` coerces them; it
+returns null-prototype rows and BigInt `changes`; and it has no nested-transaction
+handling, so the shim reproduces `better-sqlite3`'s SAVEPOINT nesting.
+
+### The contract creates and removes its own account
+
+It runs beside a live GreenMail sync in `test:imap`, so it may not assume an
+empty database and may not disturb what is already there. It saves an account at
+`db-contract@orbit.invalid`, does its work, restores the blocklist, and removes
+the account.
+
+That constraint has already earned itself. An assertion that the new-mail
+notifier labels its message with the contract account's own address passed under
+`test:db` and **failed under `test:imap`**, where GreenMail's inbox holds newer
+mail and the notifier correctly named *that* account. The assertion was the thing
+that was wrong; it now looks up whichever account the returned message belongs
+to.
 
 ## Mutation check (`test:mutants`)
 
@@ -2715,14 +2790,30 @@ for "the user did it". Each was found by hand, one at a time, by breaking the
 code on a hunch. This does it systematically.
 
 One token is changed at a time — `>=` to `>`, `&&` to `||`, `Math.max` to
-`Math.min` — and `test:store` runs. A **caught** mutant made some assertion
-fail. A **survivor** means nothing in the suite depends on that decision.
+`Math.min`, `??` to `||` — and the fast suite for that module runs. A **caught**
+mutant made some assertion fail. A **survivor** means nothing in the suite
+depends on that decision.
+
+**The rules only weakened boundaries, and that was half a hole.** `>=` became
+`>`, `<=` became `<`, and nothing ever went the other way — so a `>` that should
+have been `>=` could not be mutated into the bug it would be. `gt->gte` and
+`lt->lte` close that. Two more were added with them: `round->trunc`, because the
+two agree on every whole number and disagree on every other one, and
+`nullish->or`, because `??` and `||` differ exactly on the falsy-but-present
+values — 0, `''`, `false` — which is what a count, a subject and a flag actually
+hold.
 
 **Type-only edits are not mutations.** `Pick<Account, 'id'>[]` contains a `>`
 that a regex will happily change, and the result compiles to identical
 JavaScript. Every candidate is bundled with esbuild first and discarded when the
 output is byte-identical to the baseline, which also removes edits landing in
 comments and inert strings.
+
+**Nor are edits that do not parse.** `a ?? b` beside a `||` is the case that
+found this: JavaScript refuses to mix the two without parentheses, so
+`nullish->or` can produce a syntax error rather than a variant of the program.
+That used to abort the whole sweep partway through and report nothing; such
+candidates are counted and skipped now.
 
 **Equivalent mutants are real**, and go in `scripts/mutants.allow.json` **with a
 reason**. Writing the reason is the point. Twice during the first sweep a
@@ -2734,18 +2825,35 @@ line changes — the justification should be re-read, not inherited.
 
 ### What it found
 
-| | first sweep | now |
-|---|---|---|
-| Mutants caught | 74 / 106 | **115 / 125** |
-| Unjustified survivors | 32 | **0** |
+First sweeps, as each area came under measurement:
 
-Renderer modules are mutated against `test:store`, main-process ones against
-`test:pure`; the harness picks the suite from the path. Both are ~1s, which is
-the only reason this is feasible.
+| | renderer | main process | database |
+|---|---|---|---|
+| Mutants caught | 74 / 106 | 115 / 125 | 29 / 140 |
+| Unjustified survivors | 32 | 0 | 111 |
 
-Nine survivors are recorded as equivalent, each with the evidence: an sRGB knee
-at a channel value integers cannot produce, a four-digit hex alpha that can only
-be a multiple of 17, a guard whose fall-through returns the same answer.
+Everything together, after the work and with the four added rules:
+
+| | now |
+|---|---|
+| Mutants caught | **245 / 316** |
+| Recorded as equivalent | 71 |
+| Unjustified survivors | **0** |
+| Skipped (compile identically, or do not parse) | 1 + 7 |
+
+`scripts/mutation-check.mjs` holds a table of target file → suite:
+`test:store` for renderer modules, `test:pure` for main-process modules that
+import nothing, `test:db` for the database layer. All three are about a second,
+which is the only reason this is feasible.
+
+The 71 equivalent survivors each carry their evidence: an sRGB knee at a channel
+value integers cannot produce, a four-digit hex alpha that can only be a multiple
+of 17, a guard whose fall-through returns the same answer, a `??` against a NOT
+NULL column whose only falsy value *is* the fallback. Two of them rest on an
+exhaustive check rather than an argument — no colour among all 16,777,216 integer
+RGB triples produces a WCAG contrast of exactly 4.5 against our dark surface or
+our light text, the closest coming within 8e-9 — which is what makes the
+`< MIN_CONTRAST` boundary genuinely unobservable rather than merely unlikely.
 
 It also found a **real bug** rather than only test gaps: `fitPanes` returned
 panes summing to more than the window below about 200px, because both clamp
@@ -2753,12 +2861,44 @@ bounds floored at `MIN_LIST_WIDTH`. Unreachable through the UI — the window's
 own `minWidth` is 660 — but wrong, and invisible to a property loop that started
 at a comfortable width.
 
+### What the database sweep found
+
+The first sweep over `db-service.ts` caught **29 of 140** — four fifths of the
+decisions in the file were pinned by nothing. Closing that took four rounds of
+assertions and ended at **95 caught, 45 justified, 0 unjustified**.
+
+Two of the survivors were **assertions of mine that proved nothing**, and both
+are the same mistake this whole tool exists to catch:
+
+- `upsertFolder` returns the type it was *asked for*, not the type it stored. An
+  assertion on the return value passes against a version that never writes
+  anything. It reads back through `listFolders` now.
+- The new-mail notifier's account label was asserted as "not the fallback
+  string". With the `||` chain broken it becomes the display name — also not the
+  fallback, also non-empty. It asserts the address itself now.
+
+One survivor was a **real gap in the code's behaviour, not in the test**:
+`getAccountEmailCached` memoises the account address that contact harvesting
+needs to tell outgoing mail from incoming. Inverted, the memo returns nothing on
+every call, and contact collection silently stops for the entire profile — with
+every existing check still green, because nothing asserted that a synced message
+becomes a contact suggestion. It does now.
+
+The 45 justified survivors are dominated by `??` against a column whose
+falsy-but-present value happens to equal the fallback — `snippet ?? ''` on a
+NOT NULL text column, `unread_count ?? 0` on a column that defaults to 0. Each
+entry says which value the column can actually hold, because that is the part
+that stops being true when a schema changes.
+
 ### Its limits, stated plainly
 
-- **Only modules with no imports**, covered by `test:store` or `test:pure`.
-  Mutating `test:imap` or `test:e2e` directly would take hours per run. Anything
-  that touches the database, a socket or a window is still measured only by
-  those suites — including the three proxy-assertion mistakes that happened in
+- **Only modules a one-second suite covers.** That is now `test:store`,
+  `test:pure` and `test:db` — the last of which brought the database in, and it
+  was the largest hole. What is left outside is **a socket and a window**:
+  `imap-sync.ts`, `smtp-send.ts`, the pool, and everything in `main.ts` that
+  owns a `BrowserWindow`. Mutating `test:imap` or `test:e2e` directly would
+  take hours per run, so those are still measured only by the suites
+  themselves — including the three proxy-assertion mistakes that happened in
   `test:e2e`, which remain unmeasured.
 - **Not in CI, and not a gate.** A slow check that fails for defensible reasons
   is a check people learn to skip. Run it deliberately after changing one of
@@ -2779,18 +2919,26 @@ renderer and only talks to the main process through IPC — and it is where the
 optimistic-UI invariants live.
 
 The same harness reaches any pure renderer logic worth pinning down without a
-GUI: it also bundles `src/components/compose/RecipientInput.tsx` for the
-address-token functions below, `src/utils/folders.ts` for the Favourites
-qualifier rule, `src/utils/syncStatus.ts` for the status-bar wording, and
-`src/utils/emailColorScheme.ts` for the dark-mode contrast rule. That second one is why the classifier is string work
-rather than a DOM walk — there is no DOM here at all, so a DOM-based version
-could only have been tested through a real window.
+GUI. It also bundles `src/stores/persistence.ts`, `src/utils/composeBody.ts`,
+`src/components/settings/AccountsPane.tsx`,
+`src/components/reader/RemoteContentBar.tsx`,
+`src/components/compose/RecipientInput.tsx` for the address-token functions
+below, and the pure modules under `src/utils/` — `folders.ts` for the Favourites
+qualifier rule, `syncStatus.ts` for the status-bar wording, `snoozePresets.ts`
+for when a snooze actually lands, `paneLayout.ts`, `listHeader.ts`, `search.ts`,
+and `emailColorScheme.ts` for the dark-mode contrast rule. That last one is why
+the classifier is string work rather than a DOM walk — there is no DOM here at
+all, so a DOM-based version could only have been tested through a real window.
+
+Those `src/utils/` modules are also the ones `npm run test:mutants` sweeps
+against this suite.
 
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
 | Pane layout | The reader keeps its minimum at every window width; a squeeze takes from the list first and the sidebar second; the sidebar collapses below 900px and returns above it; an explicit preference wins in both directions but loses to arithmetic when it cannot fit; the panes always sum exactly to the window, so nothing overflows sideways. |
 | List header | Names the folder and qualifies it by account only when more than one exists; reports how much of the list is loaded ("20 of 143 conversations") and stops claiming a full count while showing part of one; counts conversations or messages according to the view; folds an active unread filter into the noun ("3 unread conversations") rather than repeating it beside the count; groups large numbers; and still names an unresolvable folder rather than rendering an empty header. |
+| Snooze presets | Every preset lands on a whole hour and in the future, checked across every day of the week and five times of day. "Later today" is the afternoon in the morning, the evening in the afternoon, and absent in the evening — including *exactly* on each boundary hour, where "later today" must not mean now. "This weekend" asked on a Saturday means the next one, and "next week" on a Monday the next Monday, which is the rule that stops a preset firing in the past. `formatWakeAt` uses a weekday name only inside six days, since at exactly six it is one day from repeating. |
 | Undo eligibility | A move records one entry per message, each pointing back at the folder it came from. A message the server expunged is not offered for undo and is counted so the toast can say so; one with no Message-ID likewise; and when nothing can be restored, undo is not offered at all rather than being a no-op button. |
 | Search scope | "All Inboxes" is searchable and scopes to every account, with a placeholder that says so — it used to read "Select a folder to search". One account is named rather than called "all accounts". A folder still scopes to its account. An unresolvable folder is **not** silently promoted to searching everything, which matters now that null means "all". Cross-account results are qualified by account, single-account results are not. |
 | Connectivity | `navigator.onLine` saying *no* is taken at its word; saying *yes* is not. With every account failing to reach its server the bar says so ("Can't reach your mail servers"), which is the captive-portal/dropped-VPN case the old banner could never show. One reachable account means the network works, an account that was merely refused is not an outage, and nothing is claimed from silence — no accounts, none tried, or mid-sync. |

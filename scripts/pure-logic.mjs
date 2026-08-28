@@ -36,21 +36,26 @@ const ok = (name, cond, detail = '') => {
 }
 const section = (name) => console.log(`\n${name}`)
 
-const MODULES = [
-  'attachment-safety',
-  'network-reachability',
-  'sync-policy',
-  'thread-util'
-]
+// name -> path. Most live in electron/services; zoom.ts does not, and its only
+// import is `import type` from electron, which esbuild erases — so it bundles to
+// a file that requires nothing, same as the rest.
+const MODULES = {
+  'attachment-safety': 'electron/services/attachment-safety.ts',
+  'network-reachability': 'electron/services/network-reachability.ts',
+  'sync-policy': 'electron/services/sync-policy.ts',
+  'thread-util': 'electron/services/thread-util.ts',
+  'window-geometry': 'electron/services/window-geometry.ts',
+  zoom: 'electron/zoom.ts'
+}
 
 const loaded = {}
 const load = (name) => loaded[name]
 
 async function main() {
-  for (const name of MODULES) {
+  for (const [name, path] of Object.entries(MODULES)) {
     const outfile = join(outDir, `${name}.cjs`)
     await build({
-      entryPoints: [join(root, 'electron/services', `${name}.ts`)],
+      entryPoints: [join(root, path)],
       bundle: true,
       format: 'cjs',
       platform: 'node',
@@ -120,6 +125,12 @@ async function main() {
     // nag on every dotfile or match the empty string against the set.
     ok('a leading dot is not an extension', attachmentExtension('.bashrc') === '')
     ok('a trailing dot is not an extension', attachmentExtension('setup.exe.') === '')
+    // A name ending in a separator has an empty last segment, and an empty last
+    // segment has no extension. Falling back to the whole filename instead would
+    // report `sh/` — a shape nothing in the executable set matches, so the final
+    // answer happens to survive while the extension it is derived from does not.
+    ok('a name ending in a separator has no extension at all',
+      attachmentExtension('malware.sh/') === '', attachmentExtension('malware.sh/'))
 
     // The warning is the whole mitigation — the dialog is what the user reads
     // before deciding, and a `.pdf.exe` is built so the eye stops at `.pdf`.
@@ -302,6 +313,168 @@ async function main() {
         === '<parent@x>')
     ok('an empty message id falls through to the subject rather than being used',
       computeThreadId({ messageId: '', subject: 'Q3 launch' }) === 'subj:q3 launch')
+  }
+
+  // -------------------------------------------------------------------------
+  section('Zoom: the browser shortcuts, on the keys a layout actually produces')
+  // -------------------------------------------------------------------------
+  {
+    // Electron's default menu already has Zoom In / Out / Actual Size, which is
+    // why this looks free. It is not: those roles bind to the accelerators
+    // `CommandOrControl+Plus` and `CommandOrControl+-`, and an accelerator
+    // matches a key rather than the character a layout puts on it. Reported as
+    // "CTRL- seems to be CTRL_ on my machine" — so the match is on the produced
+    // character, every spelling of it.
+    const zoom = load('zoom')
+    const key = (k, over = {}) => ({
+      type: 'keyDown', key: k, control: true, meta: false, alt: false, ...over
+    })
+
+    ok('Ctrl and the shifted plus zooms in', zoom.zoomActionForInput(key('+')) === 'in')
+    ok('so does Ctrl and the unshifted key it lives on',
+      zoom.zoomActionForInput(key('=')) === 'in')
+    ok('and the numpad', zoom.zoomActionForInput(key('Add')) === 'in')
+    ok('Ctrl and minus zooms out', zoom.zoomActionForInput(key('-')) === 'out')
+    // The reported case: the shifted spelling of the same physical key.
+    ok('and so does the underscore that some layouts send instead',
+      zoom.zoomActionForInput(key('_')) === 'out')
+    ok('and the numpad', zoom.zoomActionForInput(key('Subtract')) === 'out')
+    ok('Ctrl and zero resets', zoom.zoomActionForInput(key('0')) === 'reset')
+    // Numpad 0 with numlock off arrives as Insert, and it is in the switch.
+    ok('and so does the numpad zero a numlock-off keyboard sends as Insert',
+      zoom.zoomActionForInput(key('Insert')) === 'reset')
+
+    ok('the same keys without Ctrl are just typing',
+      zoom.zoomActionForInput(key('-', { control: false })) === null)
+    ok('Cmd works too, for anyone on a Mac keyboard',
+      zoom.zoomActionForInput(key('-', { control: false, meta: true })) === 'out')
+    // Alt+Ctrl+- is somebody else's shortcut, not a sloppier spelling of this.
+    ok('Alt makes it a different shortcut, not this one',
+      zoom.zoomActionForInput(key('-', { alt: true })) === null)
+    // Alt disqualifies even when it is Cmd rather than Ctrl held: the guard has
+    // to be `(control || meta) && !alt`, and `&&` there is one token from `||`.
+    ok('and Alt disqualifies a Cmd chord too',
+      zoom.zoomActionForInput(key('-', { control: false, meta: true, alt: true })) === null)
+    ok('while neither modifier at all is not a zoom either',
+      zoom.zoomActionForInput(key('-', { control: false, meta: false })) === null)
+    ok('key-up does not zoom a second time',
+      zoom.zoomActionForInput(key('-', { type: 'keyUp' })) === null)
+    ok('an unrelated key is ignored', zoom.zoomActionForInput(key('a')) === null)
+
+    // Bounds exist so a mis-keyed shortcut cannot leave the app at a size the
+    // user can no longer read well enough to undo it.
+    let level = 0
+    for (let i = 0; i < 50; i++) level = zoom.nextZoomLevel(level, 'in')
+    ok('zooming in stops at a readable maximum', level === zoom.MAX_ZOOM_LEVEL, `${level}`)
+    for (let i = 0; i < 100; i++) level = zoom.nextZoomLevel(level, 'out')
+    ok('and out at a readable minimum', level === zoom.MIN_ZOOM_LEVEL, `${level}`)
+    // One step from the middle, in each direction — the clamp must not be doing
+    // the moving. `Math.min(MAX, Math.max(MIN, next))` with its bounds swapped
+    // still passes both of the checks above.
+    ok('a step in from the middle is one level up',
+      zoom.nextZoomLevel(0, 'in') === 1, `${zoom.nextZoomLevel(0, 'in')}`)
+    ok('and a step out is one level down',
+      zoom.nextZoomLevel(0, 'out') === -1, `${zoom.nextZoomLevel(0, 'out')}`)
+    ok('reset always lands on 100%',
+      zoom.nextZoomLevel(level, 'reset') === 0 && zoom.zoomPercentage(0) === 100)
+    ok('one step in is about 120%, as a browser would',
+      zoom.zoomPercentage(1) === 120, `${zoom.zoomPercentage(1)}%`)
+    // Rounded, not truncated — and the level has to be one where those differ.
+    // 1.2^-1 is 83.33%, which both round and trunc call 83, so an assertion
+    // there proves nothing; the mutation check said so. The two bounds do
+    // differ, and they are the percentages the file's own comment promises.
+    ok('the bounds are the ~58% to ~300% the comment claims',
+      zoom.zoomPercentage(zoom.MIN_ZOOM_LEVEL) === 58 &&
+        zoom.zoomPercentage(zoom.MAX_ZOOM_LEVEL) === 299,
+      `${zoom.zoomPercentage(zoom.MIN_ZOOM_LEVEL)}% to ${zoom.zoomPercentage(zoom.MAX_ZOOM_LEVEL)}%`)
+
+    // A corrupted or hand-edited preferences blob must not be able to open the
+    // app at a size it cannot be fixed from.
+    ok('a stored level is clamped on the way back in',
+      zoom.sanitizeZoomLevel(99) === zoom.MAX_ZOOM_LEVEL &&
+        zoom.sanitizeZoomLevel(-99) === zoom.MIN_ZOOM_LEVEL)
+    // A level already inside the bounds must survive untouched — a sanitizer
+    // that clamped everything to one end would pass the two checks above.
+    ok('and one already in range is returned as it was',
+      zoom.sanitizeZoomLevel(2) === 2 && zoom.sanitizeZoomLevel(-2) === -2)
+    ok('and nonsense resolves to 100%',
+      zoom.sanitizeZoomLevel(undefined) === 0 && zoom.sanitizeZoomLevel(Number.NaN) === 0 &&
+        zoom.sanitizeZoomLevel('big') === 0)
+    // Infinity is a number and passes a bare typeof check, so the finite test is
+    // load-bearing: without it a stored Infinity would clamp to MAX rather than
+    // fall back, which is a different answer.
+    ok('and an infinite level falls back rather than clamping',
+      zoom.sanitizeZoomLevel(Number.POSITIVE_INFINITY) === 0)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Compose window size: a remembered one, validated against this screen')
+  // -------------------------------------------------------------------------
+  {
+    const { resolveComposeSize } = load('window-geometry')
+    const screen = { width: 1920, height: 1080 }
+
+    const fallback = resolveComposeSize(undefined, screen)
+    ok('nothing remembered opens at the size the composer always had',
+      fallback.width === 640 && fallback.height === 720, JSON.stringify(fallback))
+
+    const remembered = resolveComposeSize({ width: 900, height: 800 }, screen)
+    ok('a remembered size is used as given',
+      remembered.width === 900 && remembered.height === 800, JSON.stringify(remembered))
+
+    // The stored value outlives the display that produced it. Sized on a 4K
+    // monitor, reopened on a laptop: without this the composer opens wider than
+    // the screen with its Send button past the edge.
+    const huge = resolveComposeSize({ width: 3800, height: 2000 }, screen)
+    ok('a size larger than the screen is brought back to it',
+      huge.width === 1920 && huge.height === 1080, JSON.stringify(huge))
+
+    // Below the window's own minWidth/minHeight the composer is unusable, and a
+    // preferences blob is a file a user can edit.
+    const tiny = resolveComposeSize({ width: 10, height: 10 }, screen)
+    ok('and one below the minimum is brought up to it',
+      tiny.width === 480 && tiny.height === 400, JSON.stringify(tiny))
+
+    // Exactly at each bound. A `>=` that should be `>` changes nothing in the
+    // middle of the range and everything here.
+    const atMin = resolveComposeSize({ width: 480, height: 400 }, screen)
+    ok('a size exactly at the minimum is left alone',
+      atMin.width === 480 && atMin.height === 400, JSON.stringify(atMin))
+    const atScreen = resolveComposeSize({ width: 1920, height: 1080 }, screen)
+    ok('and one exactly filling the screen is too',
+      atScreen.width === 1920 && atScreen.height === 1080, JSON.stringify(atScreen))
+
+    // A corrupted blob arrives as the wrong type, not as a small number. NaN
+    // fails every comparison, so a bare Math.max/min would pass it straight
+    // through to a window with NaN for a width.
+    const junk = resolveComposeSize({ width: NaN, height: 'tall' }, screen)
+    ok('garbage falls back rather than reaching the window',
+      junk.width === 640 && junk.height === 720, JSON.stringify(junk))
+    // Infinity is a number, and `Math.min(Infinity, screen)` would quietly give
+    // a full-screen composer rather than the default one.
+    const infinite = resolveComposeSize({ width: Infinity, height: Infinity }, screen)
+    ok('and so does an infinite one',
+      infinite.width === 640 && infinite.height === 720, JSON.stringify(infinite))
+
+    // A fractional size reaches BrowserWindow as-is otherwise, and a window
+    // cannot be 640.5px wide.
+    const fractional = resolveComposeSize({ width: 900.6, height: 800.4 }, screen)
+    ok('a fractional stored size is rounded to whole pixels',
+      fractional.width === 901 && fractional.height === 800, JSON.stringify(fractional))
+
+    // The pathological display: a work area narrower than the composer's own
+    // minimum. The minimum has to win, because a window below its minWidth is
+    // one the user cannot use at all — so the max bound is itself floored at
+    // the min, and `Math.max(min, max)` there is one token from `Math.min`.
+    const cramped = resolveComposeSize({ width: 900, height: 800 }, { width: 300, height: 200 })
+    ok('a screen smaller than the minimum still gives a usable window',
+      cramped.width === 480 && cramped.height === 400, JSON.stringify(cramped))
+    // And with nothing remembered, the same screen must not drag the default
+    // below the minimum either.
+    const crampedDefault = resolveComposeSize(undefined, { width: 300, height: 200 })
+    ok('and so does that screen with nothing remembered',
+      crampedDefault.width === 640 && crampedDefault.height === 720,
+      JSON.stringify(crampedDefault))
   }
 
   console.log(

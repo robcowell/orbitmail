@@ -7,6 +7,107 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## 0.8.0 — 2026-08-28
+
+Mail you have already dealt with can now be undone, and mail you have not can be
+put off. Delete, archive and move are all reversible; so is sending, for ten
+seconds after you press it. You can schedule a message for later, or snooze one
+out of the inbox until a time you choose. The window finally adapts to its own
+size instead of squeezing the message you are reading. "All Inboxes" — the view
+the app opens on — is searchable at last. And the status bar has stopped
+speaking for every account at once, so one mailbox failing no longer hides when
+the others last synced.
+
+### Added
+
+- **Undo send.** A message is held for ten seconds before it goes, with an Undo
+  in the main window. Take it and the draft reopens exactly as you left it. Miss
+  the window and it says "Too late" rather than claiming a recall that did not
+  happen. Nothing waits on the server, so this is a pause and not a recall.
+- **Scheduled send.** Pick a time and the message waits in **Drafts**, which is
+  the only place you can see it. Opening it takes it back out of the queue —
+  without that, editing a message that is still going to send itself, unedited,
+  at the old time would be the worst outcome available. A time in the past is
+  treated as now.
+- **Snooze.** A snoozed message is **moved to a real `Snoozed` folder on your
+  mail server**, not hidden behind a flag in this app. Snoozing here therefore
+  clears it from your phone and from webmail too, which is the point — and if you
+  stop using Orbit Mail, your snoozed mail is somewhere obvious rather than lost.
+  It comes back to the folder it left when its time is up, or to the inbox if
+  that folder is gone by then.
+- **Undo for delete, archive and move**, including on a whole multi-selection.
+  It is deliberately honest about what it cannot bring back: a message already
+  expunged from Trash is gone, and the toast says how many could not be restored
+  rather than restoring four of five and saying nothing. When nothing can be
+  restored, no Undo is offered at all.
+- **Search across all your inboxes.** "All Inboxes" is the view the app lands
+  on, and it was the one view whose search box was disabled — it read "Select a
+  folder to search". It now searches every account at once and returns the newest
+  results across all of them, and where results span accounts each one says which
+  account it came from.
+- **Gmail labels on the open conversation.** See what a conversation is labelled
+  with, and add or remove labels from the reader. A label applied to only part of
+  a conversation shows as partial rather than being rounded to yes or no.
+  Removing the Inbox label is how Gmail archives, and the tooltip says so. Gmail
+  accounts only.
+- **The message list says what you are looking at** — the folder name, how many
+  conversations, and how many are unread. Previously it was four icon buttons and
+  no words, so an "unread only" filter left on was easy to miss and easy to
+  mistake for missing mail. The filter now reads as part of the count ("3 unread
+  conversations").
+- **`a` replies to everyone**, and every reply and forward button now names its
+  keyboard shortcut.
+- **Folders and Favourites are listed alphabetically**, and a Favourites row
+  whose name is pinned by more than one account now says which account it belongs
+  to — or, when one account pinned the same name twice, which parent folder.
+
+### Fixed
+
+- **One account failing no longer speaks for all of them.** Sync status was a
+  single flag, timestamp and error shared by every account, which could not
+  express the truth once you had more than one mailbox. One account failing hid
+  "last synced" for *every* account, two failures ran together into one
+  sentence, and the sidebar could show no account health at all. Each account now
+  carries its own state; the sidebar marks the one that is failing and the status
+  bar names it.
+- **"Offline" now means your mail servers are actually unreachable.** It was
+  taken from whether a network connection existed at all, so a captive portal, a
+  dropped VPN, a DNS outage or a server refusing connections all counted as
+  online and stale mail was shown as current. There is a new "Can't reach your
+  mail servers" state for exactly that case. An expired password is still
+  reported as a sign-in problem rather than an outage — the server answered, it
+  just said no.
+- **The three panes adapt to the window.** The reader used to absorb every pixel
+  the window lost, so narrowing the app squeezed the message you were reading and
+  nothing else. Space is now given up in the order you would give it up — list
+  first, then the sidebar, which collapses on a narrow window and can be brought
+  back from the toolbar. The minimum window width drops from 900 to 660, so the
+  app can be snapped to half of a 1366-wide laptop screen, which it could not be
+  before.
+- **A sender can no longer push this app's own controls off the screen.** A wide
+  table in a newsletter scrolled the whole reader pane sideways and took the
+  subject line and the Reply buttons with it. Wide content now scrolls inside the
+  message, where it belongs, and stays reachable.
+- **Signature logos are no longer listed as attachments.** Every inline image in
+  a message was also listed as a file, and down a long reply chain that
+  compounds: one message here showed over a hundred `image.png` chips — 182 of
+  them, mostly the same fifteen images repeated — with its two real documents
+  lost among them. Inline images are now recognised for what they are, and the
+  real attachments are visible again.
+
+### Security
+
+- **Electron 39 → 44**, which is Chromium 142 → 152 and Node 22 → 24. This app
+  renders mail written by strangers, so it clears an open advisory reached
+  through Electron's own dependencies and takes four majors of Chromium security
+  fixes with it rather than stopping at the minimum that closed the advisory. The
+  `.deb` grows from about 97 MB to about 107 MB as a result.
+- **The email parser updated** to close a high-severity vulnerability in one of
+  its dependencies.
+- **Three further advisories cleared** in the build tooling. None were in the
+  shipped app, and none had been flagged automatically — they were found by
+  running the audit rather than waiting to be told.
+
 ## 0.7.0 — 2026-08-04
 
 Writing a message gets the window and the toolbar it should always have had. The

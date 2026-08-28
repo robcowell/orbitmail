@@ -13,7 +13,7 @@ or all of them at once — and you can read offline — and when it can't reach 
 than showing you old mail as though it were current. Optional AI features — off unless you add your own API key — summarise
 messages and pull out what you still need to do.
 
-![Version](https://img.shields.io/badge/version-0.7.0-blue)
+![Version](https://img.shields.io/badge/version-0.8.0-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 

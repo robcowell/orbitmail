@@ -41,6 +41,7 @@ const section = (name) => console.log(`\n${name}`)
 // a file that requires nothing, same as the rest.
 const MODULES = {
   'attachment-safety': 'electron/services/attachment-safety.ts',
+  'connection-failure': 'electron/services/connection-failure.ts',
   'network-reachability': 'electron/services/network-reachability.ts',
   'sync-policy': 'electron/services/sync-policy.ts',
   'thread-util': 'electron/services/thread-util.ts',
@@ -475,6 +476,115 @@ async function main() {
     ok('and so does that screen with nothing remembered',
       crampedDefault.width === 640 && crampedDefault.height === 720,
       JSON.stringify(crampedDefault))
+  }
+
+  // -------------------------------------------------------------------------
+  section('Connection failures: the reason, not "Command failed"')
+  // -------------------------------------------------------------------------
+  {
+    const { classifyConnectionFailure, describeConnectionFailure, describeAccountSyncFailure } =
+      load('connection-failure')
+
+    // The shape ImapFlow actually produces for a rejected LOGIN, captured from
+    // a real server. `message` is the useless part; `response` is the answer.
+    const imapAuth = Object.assign(new Error('Command failed'), {
+      authenticationFailed: true,
+      response: '3 NO [AUTHENTICATIONFAILED] Invalid credentials (Failure)'
+    })
+    ok('a rejected IMAP login is classified from the response, not the message',
+      classifyConnectionFailure(imapAuth).kind === 'auth' && imapAuth.message === 'Command failed',
+      classifyConnectionFailure(imapAuth).kind)
+    ok('the IMAP command tag is stripped as the bookkeeping it is',
+      classifyConnectionFailure(imapAuth).response === '[AUTHENTICATIONFAILED] Invalid credentials (Failure)',
+      classifyConnectionFailure(imapAuth).response)
+
+    const kind = (err) => classifyConnectionFailure(err).kind
+    const withCode = (code, message = 'x') => Object.assign(new Error(message), { code })
+    ok('a certificate that does not cover the host is its own kind',
+      kind(withCode('ERR_TLS_CERT_ALTNAME_INVALID')) === 'certificate')
+    ok('and is recognised from the message when no code is set',
+      kind(new Error("Hostname/IP does not match certificate's altnames: ...")) === 'certificate')
+    ok('a missing hostname is dns', kind(withCode('ENOTFOUND')) === 'dns')
+    ok('a temporary resolver failure is dns too', kind(withCode('EAI_AGAIN')) === 'dns')
+    ok('a refused connection is refused', kind(withCode('ECONNREFUSED')) === 'refused')
+    ok('a timeout is a timeout', kind(withCode('ETIMEDOUT')) === 'timeout')
+    ok("nodemailer's EAUTH is an auth failure", kind(withCode('EAUTH')) === 'auth')
+    ok('an SMTP 535 is an auth failure',
+      kind(Object.assign(new Error('Invalid login: 535 Bad'), { response: '535 Bad' })) === 'auth')
+    ok('anything else stays unknown', kind(new Error('something odd')) === 'unknown')
+
+    // A whitespace-only `response` is not an answer. Without the length filter
+    // it would win over a `responseText` that actually says something, and the
+    // user would be told the server said nothing at all.
+    ok('a blank response does not beat a real one',
+      classifyConnectionFailure(
+        Object.assign(new Error('x'), { response: '   ', responseText: '535 Bad credentials' })
+      ).response === '535 Bad credentials',
+      classifyConnectionFailure(
+        Object.assign(new Error('x'), { response: '   ', responseText: '535 Bad credentials' })
+      ).response)
+
+    // A thrown value that is falsy but not nullish is still *something* that was
+    // thrown, and losing it leaves an empty message on screen. `??` keeps it;
+    // `||` would discard it, which is the difference this pins.
+    ok('a falsy non-nullish thrown value is kept, not discarded',
+      classifyConnectionFailure(0).message === '0',
+      JSON.stringify(classifyConnectionFailure(0).message))
+    ok('while a nullish one yields an empty message',
+      classifyConnectionFailure(null).message === '' &&
+        classifyConnectionFailure(undefined).message === '')
+    // The status word is stripped case-sensitively, so an ordinary sentence
+    // beginning "No ..." is not served to the user with its first word missing.
+    ok('a human sentence starting "No" keeps its first word',
+      classifyConnectionFailure(
+        Object.assign(new Error('x'), { response: '2 NO No such mailbox' })
+      ).response === 'No such mailbox',
+      classifyConnectionFailure(
+        Object.assign(new Error('x'), { response: '2 NO No such mailbox' })
+      ).response)
+    ok('a non-error value does not throw', kind(null) === 'unknown')
+
+    // --- Dialog wording: names which of the two servers refused. -----------
+    const dlg = (err, stage, host) => describeConnectionFailure(err, stage, host).message
+    const auth = dlg(imapAuth, 'Incoming', 'mail.example.eu')
+    ok('the dialog names the server that refused',
+      auth.includes('Incoming server (mail.example.eu)'), auth)
+    ok('and quotes what that server actually said',
+      auth.includes('[AUTHENTICATIONFAILED] Invalid credentials'), auth)
+    const cert = dlg(withCode('ERR_TLS_CERT_ALTNAME_INVALID'), 'Outgoing', 'smtp.example.org')
+    ok('a certificate failure names the outgoing server only',
+      cert.includes('Outgoing server (smtp.example.org)') && !cert.includes('Incoming'), cert)
+    ok('and says to use the provider\'s own server name',
+      /rather than one under your own domain/.test(cert), cert)
+    const unknownDlg = dlg(new Error('something odd'), 'Incoming', 'h')
+    ok('an unrecognised failure still names the server and keeps the detail',
+      unknownDlg.includes('Incoming server (h)') && unknownDlg.includes('something odd'),
+      unknownDlg)
+
+    // --- Status-bar wording: reason only, because the display adds the address.
+    const sync = (err) => describeAccountSyncFailure(err)
+    const syncAuth = sync(imapAuth)
+    ok('the sync reason never repeats the address (syncStatus.ts renders it)',
+      !syncAuth.includes('@'), syncAuth)
+    ok('a rejected login points at the password and where to change it',
+      /rejected the login/.test(syncAuth) && /Settings/.test(syncAuth), syncAuth)
+    ok('a certificate problem is not reported as a password problem',
+      /certificate/.test(sync(withCode('ERR_TLS_CERT_ALTNAME_INVALID'))) &&
+        !/password/.test(sync(withCode('ERR_TLS_CERT_ALTNAME_INVALID'))),
+      sync(withCode('ERR_TLS_CERT_ALTNAME_INVALID')))
+    ok('a hostname typo is reported as one',
+      /could not be found/.test(sync(withCode('ENOTFOUND'))), sync(withCode('ENOTFOUND')))
+
+    // The friendly errors written elsewhere must survive untouched — this is
+    // what stops the classifier flattening formatGmailAuthError's guidance.
+    const friendly = new Error('Gmail sign-in failed for a@b. Check that: ...')
+    ok('an already-friendly message is passed through unchanged',
+      sync(friendly) === friendly.message, sync(friendly))
+
+    // Every one of these is rendered in a toast or a one-line status bar.
+    for (const m of [auth, cert, unknownDlg, syncAuth, sync(withCode('ENOTFOUND'))]) {
+      ok('the message is a single line', !m.includes('\n'), JSON.stringify(m))
+    }
   }
 
   console.log(

@@ -2387,6 +2387,10 @@ async function main(): Promise<void> {
       })
     )
     ok('an edit that cannot connect is rejected', broken !== null, broken?.message)
+    ok('and the refusal names the server that refused, not just "Command failed"',
+      !!broken && /Incoming server/.test(broken.message) && broken.message.includes(HOST) &&
+        broken.message !== 'Command failed',
+      broken?.message)
     ok('and nothing was written', db.getManualCredentials(account.id)?.incoming.port === IMAP_PORT,
       String(db.getManualCredentials(account.id)?.incoming.port))
 
@@ -2401,6 +2405,19 @@ async function main(): Promise<void> {
       })
     )
     ok('testing a wrong password fails', badPassword !== null, badPassword?.message)
+    // Against a real server refusing a real login. This is the message that
+    // reached the Add Account dialog as the bare, useless "Command failed" —
+    // ImapFlow puts the server's own words on `response`, not on `message`.
+    ok('a rejected login says so, and says which server rejected it',
+      !!badPassword && /Incoming server/.test(badPassword.message) &&
+        /rejected the login/.test(badPassword.message),
+      badPassword?.message)
+    ok('and it is not the bare library message',
+      !!badPassword && badPassword.message !== 'Command failed',
+      badPassword?.message)
+    ok('it stays toast-safe (one line)',
+      !!badPassword && !badPassword.message.includes('\n'),
+      JSON.stringify(badPassword?.message))
     ok('testing the stored settings succeeds',
       (await rejects(() =>
         manual.testManualAccountSettings(account.id, {
@@ -4785,6 +4802,81 @@ async function main(): Promise<void> {
 
     db.removeAccount(oauth.id)
     db.removeAccount(other.id)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Accounts: a Google sign-in with no Gmail mailbox is refused at add')
+  // -------------------------------------------------------------------------
+  {
+    // A Google Account can be registered against an external address — the
+    // domain's mail lives with another host entirely — or be a Workspace user
+    // with Gmail switched off. Sign-in succeeds, the mail.google.com scope is
+    // granted and validated, and the account saves looking perfectly healthy.
+    // It then never fills: the initial sync fails to console.warn and an
+    // in-memory status, so with no terminal attached nothing says why. This
+    // happened to a real account and took a DB dig and a live IMAP probe to
+    // explain.
+    const oauth = await import('../electron/services/oauth-google')
+
+    // The exact shape imap.gmail.com returns, captured from that account. The
+    // trap is that `message` is the useless 'Command failed' — the diagnosis is
+    // on the response line. A check written against the message alone compiles,
+    // reads correctly, and never fires.
+    const real = Object.assign(new Error('Command failed'), {
+      authenticationFailed: true,
+      response: '3 NO Lookup failed e09e53db590de-8e613c5af8cmb50303496d85'
+    })
+    ok('the real Gmail "no mailbox" error is recognised',
+      oauth.isNoGmailMailboxError(real) === true)
+    ok('recognition does not depend on the error message',
+      real.message === 'Command failed' && oauth.isNoGmailMailboxError(real) === true,
+      real.message)
+
+    // Same text, arriving the other way round, is still it.
+    ok('it is recognised on the message too',
+      oauth.isNoGmailMailboxError(new Error('3 NO Lookup failed')) === true)
+
+    // Everything else must fall through, or a transient failure would start
+    // telling people to go and reconfigure a working account.
+    ok('an ordinary auth failure is not mistaken for it',
+      oauth.isNoGmailMailboxError(
+        Object.assign(new Error('Command failed'), {
+          authenticationFailed: true,
+          response: '3 NO [ALERT] Invalid credentials (Failure)'
+        })
+      ) === false)
+    ok('a network failure is not mistaken for it',
+      oauth.isNoGmailMailboxError(new Error('connect ETIMEDOUT 142.250.0.1:993')) === false)
+    ok('IMAP being disabled is not mistaken for it',
+      oauth.isNoGmailMailboxError(
+        Object.assign(new Error('Command failed'), {
+          response: '3 NO [ALERT] IMAP access is disabled for your domain.'
+        })
+      ) === false)
+    ok('a non-error value does not throw', oauth.isNoGmailMailboxError(null) === false)
+
+    // The message is what the user acts on, so it must name the way out. It is
+    // rendered in a toast — one <span>, no white-space rule — so it must carry
+    // no newlines, or it reaches them as collapsed run-on text.
+    const msg = oauth.noGmailMailboxError('hello@example.org').message
+    ok('the error names the account', msg.includes('hello@example.org'))
+    ok('it names the button that actually fixes it', msg.includes('Other (IMAP / POP3)'), msg)
+    ok('it is toast-safe: no embedded newlines', !msg.includes('\n'), JSON.stringify(msg))
+
+    // The wiring: the probe has to run *before* the account is saved, or it
+    // only renames a broken account rather than preventing one.
+    const mainSource = readFileSync(join(process.cwd(), 'electron', 'main.ts'), 'utf8')
+    const handler = mainSource.match(
+      /ipcMain\.handle\('accounts:add'[\s\S]*?\n {2}\}\)/
+    )?.[0] ?? ''
+    ok('accounts:add probes for a Gmail mailbox',
+      /assertGmailMailboxExists/.test(handler))
+    ok('it probes before saving, not after',
+      handler.indexOf('assertGmailMailboxExists') < handler.indexOf('saveAccount') &&
+        handler.indexOf('assertGmailMailboxExists') !== -1,
+      `probe@${handler.indexOf('assertGmailMailboxExists')} save@${handler.indexOf('saveAccount')}`)
+    ok('the probe is gated to Gmail, so Microsoft sign-in is untouched',
+      /provider === 'gmail'[\s\S]{0,120}assertGmailMailboxExists/.test(handler))
   }
 
   // -------------------------------------------------------------------------

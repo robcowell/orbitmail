@@ -30,6 +30,7 @@ import {
   XCircle,
   CaretRight
 } from '../icons'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 function ThemeToggle() {
   const darkMode = useThemeStore((s) => s.darkMode)
@@ -180,7 +181,7 @@ export function Toolbar() {
       if (threadSelection) await deleteSelectedThreads()
       else await deleteSelectedMessages()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Delete failed')
+      setToast(ipcErrorMessage(err, 'Delete failed'))
     }
   }
 
@@ -190,7 +191,7 @@ export function Toolbar() {
       if (threadSelection) await archiveSelectedThreads()
       else await archiveSelectedMessages()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Archive failed')
+      setToast(ipcErrorMessage(err, 'Archive failed'))
     }
   }
 
@@ -200,7 +201,7 @@ export function Toolbar() {
       await markMessageUnread(selectedMessageId)
       setToast('Marked as unread')
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Update failed')
+      setToast(ipcErrorMessage(err, 'Update failed'))
     }
   }
 
@@ -209,7 +210,7 @@ export function Toolbar() {
     try {
       await toggleMessageStar(selectedMessageId, !selectedMessage.isStarred)
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Update failed')
+      setToast(ipcErrorMessage(err, 'Update failed'))
     }
   }
 
@@ -221,7 +222,7 @@ export function Toolbar() {
     try {
       await window.orbitMail.sync.refresh()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Sync failed')
+      setToast(ipcErrorMessage(err, 'Sync failed'))
     }
   }
 
@@ -241,7 +242,7 @@ export function Toolbar() {
 
     searchTimerRef.current = setTimeout(() => {
       void runSearch(value, searchAccountId, searchField).catch((err) => {
-        setToast(err instanceof Error ? err.message : 'Search failed')
+        setToast(ipcErrorMessage(err, 'Search failed'))
       })
     }, 200)
   }
@@ -258,7 +259,7 @@ export function Toolbar() {
     if (searchEnabled && searchQuery.trim()) {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
       void runSearch(searchQuery, searchAccountId, field).catch((err) => {
-        setToast(err instanceof Error ? err.message : 'Search failed')
+        setToast(ipcErrorMessage(err, 'Search failed'))
       })
     }
   }

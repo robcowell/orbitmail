@@ -55,7 +55,14 @@ import { recordAttachmentsMetadata, toAttachmentMeta, type AttachmentMeta } from
 import { isWithinSyncWindow, syncSinceDate } from './sync-policy'
 import { isVirtualViewFolder } from '../../shared/folders'
 import { imapConnectionSecurity } from './account-credentials'
-import { refreshGoogleToken, resolveGoogleAccessToken, formatGmailAuthError } from './oauth-google'
+import {
+  refreshGoogleToken,
+  resolveGoogleAccessToken,
+  formatGmailAuthError,
+  isNoGmailMailboxError,
+  noGmailMailboxError
+} from './oauth-google'
+import { describeAccountSyncFailure } from './connection-failure'
 import { refreshMicrosoftToken } from './oauth-microsoft'
 import {
   estimatePop3NewMessageCount,
@@ -426,6 +433,54 @@ export async function createImapClient(
   }
 
   return client
+}
+
+/**
+ * Confirm a freshly authorised Google account actually has a Gmail mailbox,
+ * before it is saved.
+ *
+ * Without this the add succeeds, the account appears in the sidebar, and it
+ * simply never fills: the initial sync fails to `console.warn` and an in-memory
+ * status, so with no terminal attached nothing ever says why. See
+ * `isNoGmailMailboxError` for how Google gets into that state.
+ *
+ * **Only that one answer rejects.** A timeout, a refused connection, TLS
+ * trouble — anything else resolves and lets the add proceed, because a
+ * transient hiccup must not stop someone adding an account that is perfectly
+ * fine, and sync reports those the usual way. This is a probe for one specific
+ * dead end, not a general reachability gate on adding an account.
+ */
+export async function assertGmailMailboxExists(
+  email: string,
+  accessToken: string
+): Promise<void> {
+  const config = PROVIDER_CONFIG.gmail
+  const client = new ImapFlow({
+    host: config.imap.host,
+    port: config.imap.port,
+    secure: true,
+    auth: { user: email, accessToken },
+    logger: false
+  })
+
+  try {
+    await client.connect()
+  } catch (err) {
+    if (isNoGmailMailboxError(err)) throw noGmailMailboxError(email)
+    return
+  }
+
+  // The probe has its answer; how the connection ends does not change it, and a
+  // failure to close politely must not fail the add.
+  try {
+    await client.logout()
+  } catch {
+    try {
+      client.close()
+    } catch {
+      // already gone
+    }
+  }
 }
 
 function folderSyncRank(mb: {
@@ -1121,8 +1176,17 @@ export async function syncAccount(
   return newCount
 }
 
+/**
+ * The reason an account is not syncing, as the status bar and sidebar show it.
+ *
+ * The address is *not* included: `syncStatus.ts` renders `${email}: ${error}`,
+ * so naming it here prints it twice. This used to return `err.message` raw,
+ * which meant a password changed at the host — the single most likely reason a
+ * working account stops syncing — reported itself as `Command failed`.
+ */
 function accountSyncError(email: string, err: unknown): string {
-  return err instanceof Error ? err.message : `Sync failed for ${email}`
+  if (!(err instanceof Error)) return `Sync failed for ${email}`
+  return describeAccountSyncFailure(err)
 }
 
 export async function refreshAccount(accountId: string, provider: Provider): Promise<void> {

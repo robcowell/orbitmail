@@ -415,6 +415,18 @@
       "rule": "lt->lte",
       "code": "if (colon < 0) continue",
       "reason": "A colon at index 0 is a declaration with an empty property name, like `:red`. Skipping it and processing it reach the same place: the property is '', which matches none of `color`, `background` or `background-color`, so the loop moves on either way."
+    },
+    {
+      "file": "electron/services/connection-failure.ts",
+      "rule": "nullish->or",
+      "code": "const e = (err ?? {}) as Errorish",
+      "reason": "The result is only ever property-accessed (.message/.code/.response/.responseText/.authenticationFailed), and every falsy non-nullish value that `||` would replace with {} \u2014 0, '', false, NaN \u2014 yields undefined for all five properties anyway. `?? {}` and `|| {}` are therefore indistinguishable here. The separate `String(err ?? '')` on the next line IS distinguishable and is pinned by test:pure ('a falsy non-nullish thrown value is kept, not discarded')."
+    },
+    {
+      "file": "electron/services/connection-failure.ts",
+      "rule": "nullish->or",
+      "code": ")[0] ?? ''",
+      "reason": "The array is filtered by `typeof v === 'string' && v.trim().length > 0`, so element [0] is either a non-empty string or undefined \u2014 never a falsy string. `??` and `||` can only differ on a falsy non-nullish element, which the filter has already excluded. The filter itself is load-bearing and pinned separately by test:pure ('a blank response does not beat a real one'), which is what stops that guarantee being quietly removed."
     }
   ]
 }

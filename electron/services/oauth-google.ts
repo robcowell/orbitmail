@@ -177,6 +177,45 @@ export async function refreshGoogleToken(tokenData: TokenData): Promise<TokenDat
   }
 }
 
+/**
+ * Does this IMAP failure mean the Google account has no Gmail mailbox at all?
+ *
+ * Google issues a perfectly valid `mail.google.com` token for a Google Account
+ * registered against an *external* address — the domain's mail lives with some
+ * other host entirely — and for a Workspace user with Gmail switched off. The
+ * sign-in succeeds, `validateGoogleMailScope` passes, and the account saves
+ * looking healthy. The only thing that knows is imap.gmail.com, which answers
+ * `NO Lookup failed`.
+ *
+ * That text arrives on the IMAP *response* line, not in `err.message` — which
+ * is the useless `Command failed`. A check written against the message alone
+ * compiles, reads correctly, and never once fires.
+ */
+export function isNoGmailMailboxError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { message?: unknown; response?: unknown; responseText?: unknown }
+  const parts = [e.message, e.response, e.responseText]
+    .filter((p): p is string => typeof p === 'string')
+    .join(' ')
+  return /lookup failed/i.test(parts)
+}
+
+/**
+ * Deliberately one flowing sentence pair: this reaches the user as a toast,
+ * which renders its message in a single `<span>` with no `white-space` rule, so
+ * embedded newlines collapse into spaces. The bulleted shape used by
+ * `formatGmailAuthError` below is fine there — that one surfaces in sync status,
+ * not the toast.
+ */
+export function noGmailMailboxError(email: string): Error {
+  return new Error(
+    `${email} signs in with Google, but there is no Gmail mailbox behind it — ` +
+      `the domain's mail is hosted somewhere else, so Gmail has nothing to open. ` +
+      `Add it again with "Other (IMAP / POP3)" instead, using the incoming and ` +
+      `outgoing server settings from whoever hosts mail for that domain.`
+  )
+}
+
 export function formatGmailAuthError(err: unknown, email: string): Error {
   const message = err instanceof Error ? err.message : String(err)
   const authFailed =

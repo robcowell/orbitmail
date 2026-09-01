@@ -19,6 +19,7 @@ import {
 import { extractSenderEmail, type MessageComposeMode } from '../../utils/messageActions'
 import { printThreadById } from '../../utils/printMessage'
 import { buildMailMenuItems } from './mailMenu'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 interface ThreadContextMenuProps {
   thread: ThreadSummary
@@ -48,7 +49,7 @@ export function ThreadContextMenu({ thread, x, y, onClose }: ThreadContextMenuPr
         if (successMessage) setToast(successMessage)
       })
       .catch((err) => {
-        setToast(err instanceof Error ? err.message : 'Action failed')
+        setToast(ipcErrorMessage(err, 'Action failed'))
       })
   }
 

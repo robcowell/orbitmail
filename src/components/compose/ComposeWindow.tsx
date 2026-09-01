@@ -20,6 +20,7 @@ import { RecipientInput } from './RecipientInput'
 import { formatBytes } from '../../utils/format'
 import { joinBodyWithQuote } from '../../utils/composeBody'
 import { SIGNATURE_CLASS, signatureAppendix } from '../../../shared/signature'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 const emptyPayload = (accountId: string): ComposePayload => ({
   accountId,
@@ -403,7 +404,7 @@ export function ComposeWindow() {
         attachmentPaths: attachments.length ? attachments.map((a) => a.path) : undefined
       }, sendAt)
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to send')
+      setToast(ipcErrorMessage(err, 'Failed to send'))
       // The send failed, so this is a draft again — and the content is now only
       // in this window until the next save.
       sendingRef.current = false

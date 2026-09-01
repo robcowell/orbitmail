@@ -23,6 +23,7 @@ import {
 } from '../../utils/messageActions'
 import { printMessageById } from '../../utils/printMessage'
 import { buildMailMenuItems } from './mailMenu'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 interface MessageContextMenuProps {
   message: MessageSummary
@@ -47,7 +48,7 @@ export function MessageContextMenu({ message, x, y, onClose }: MessageContextMen
         if (successMessage) setToast(successMessage)
       })
       .catch((err) => {
-        setToast(err instanceof Error ? err.message : 'Action failed')
+        setToast(ipcErrorMessage(err, 'Action failed'))
       })
   }
 

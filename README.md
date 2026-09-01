@@ -313,9 +313,26 @@ Check IMAP is enabled in your Gmail settings, and that you ticked the permission
 box on the consent screen — Google leaves it unticked, and without it the app
 cannot read your mail. See [INSTALL.md](INSTALL.md#two-google-screens-that-are-easy-to-get-wrong).
 
+**"… signs in with Google, but there is no Gmail mailbox behind it"**  
+The Google sign-in worked; the address just doesn't receive its mail at Gmail.
+That happens when a Google Account was created using an address from somewhere
+else — a work or hosting-provider mailbox — or when Gmail is switched off for a
+Workspace user. Add it again with **Other (IMAP / POP3)** instead, using the
+incoming and outgoing server settings from whoever hosts mail for the domain.
+
 **Microsoft sign-in fails**  
 Your organisation may block OAuth access to IMAP and SMTP; that setting is your
 administrator's.
+
+**Adding an IMAP account fails**  
+The message names which of the two servers refused and what it said. "Rejected
+the username and password" usually means the username should be your full email
+address, and the password the mailbox one rather than the one for your host's
+website. "Presented a certificate that does not cover that name" means the
+server name is wrong — **Autodetect** guesses `imap.yourdomain` and
+`smtp.yourdomain` when it can't find real settings, and on shared hosting those
+names often belong to the hosting company instead. Use the exact server names
+your provider documents.
 
 **The window has gone blank**  
 Click **Reload** on the panel that appears. If the window is blank with no
@@ -325,7 +342,10 @@ your settings folder (`~/.config/orbit-mail/`), which is the useful thing to
 attach if you report it.
 
 **Sync errors in the status bar**  
-Click **Retry**, or **Re-authenticate** if it is an account problem.
+The status bar names the account and the reason. "Rejected the login" means the
+password stopped working — most often because it was changed with your provider;
+update it in Settings → Accounts. Otherwise click **Retry**, or
+**Re-authenticate** if it is an account problem.
 
 **Unread counts look wrong**  
 Click **Refresh**, or **Sync now** on the account. Note the window title counts

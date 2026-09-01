@@ -16,6 +16,7 @@ import {
 import { ServerFields } from '../accounts/ServerFields'
 import { RichTextEditor } from '../compose/RichTextEditor'
 import { sanitizeEmailHtml } from '../../utils/sanitizeEmailHtml'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 const SYNC_WINDOW_OPTIONS = [
   { label: '30 days', value: 30 },
@@ -100,7 +101,7 @@ function SignatureSettings({
       setToast('Signature saved')
       onSaved()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Could not save the signature')
+      setToast(ipcErrorMessage(err, 'Could not save the signature'))
     } finally {
       setSaving(false)
     }
@@ -115,7 +116,7 @@ function SignatureSettings({
       setToast('Signature removed')
       onSaved()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Could not remove the signature')
+      setToast(ipcErrorMessage(err, 'Could not remove the signature'))
     } finally {
       setSaving(false)
     }
@@ -229,7 +230,7 @@ function ConnectionSettings({ account }: { account: Account }) {
     try {
       setTestResult(await window.orbitMail.accounts.testManualSettings(account.id, payload()))
     } catch (err) {
-      setTestResult({ ok: false, error: err instanceof Error ? err.message : 'Could not connect' })
+      setTestResult({ ok: false, error: ipcErrorMessage(err, 'Could not connect') })
     } finally {
       setTesting(false)
     }
@@ -249,7 +250,7 @@ function ConnectionSettings({ account }: { account: Account }) {
       // rejecting them rather than a write failing.
       setTestResult({
         ok: false,
-        error: err instanceof Error ? err.message : 'Could not save these settings'
+        error: ipcErrorMessage(err, 'Could not save these settings')
       })
     } finally {
       setSaving(false)
@@ -362,7 +363,7 @@ function AccountDetail({ account }: { account: Account }) {
         setSyncDays(result.syncDays)
       })
       .catch((err) => {
-        if (!cancelled) setLoadError(err instanceof Error ? err.message : 'Could not load this account')
+        if (!cancelled) setLoadError(ipcErrorMessage(err, 'Could not load this account'))
       })
     return () => {
       cancelled = true

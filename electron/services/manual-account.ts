@@ -19,6 +19,7 @@ import {
   pop3ClientOptions,
   smtpTransportOptions
 } from './account-credentials'
+import { describeConnectionFailure } from './connection-failure'
 
 function toCredentials(input: ManualAccountInput): ManualAccountCredentials {
   return {
@@ -50,6 +51,8 @@ export async function testManualAccountInput(input: ManualAccountInput): Promise
     try {
       await client.connect()
       await client.logout()
+    } catch (err) {
+      throw describeConnectionFailure(err, 'Incoming', creds.incoming.host)
     } finally {
       await client.close()
     }
@@ -59,6 +62,8 @@ export async function testManualAccountInput(input: ManualAccountInput): Promise
     )
     try {
       await pop3.STAT()
+    } catch (err) {
+      throw describeConnectionFailure(err, 'Incoming', creds.incoming.host)
     } finally {
       await pop3.QUIT().catch(() => {})
     }
@@ -69,6 +74,8 @@ export async function testManualAccountInput(input: ManualAccountInput): Promise
   )
   try {
     await transport.verify()
+  } catch (err) {
+    throw describeConnectionFailure(err, 'Outgoing', creds.outgoing.host)
   } finally {
     transport.close()
   }

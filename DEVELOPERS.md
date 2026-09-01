@@ -72,6 +72,21 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 **Gmail notes**
 
 - IMAP must be enabled in each Gmail account's settings.
+- **Signing in with Google is not the same as having a Gmail mailbox.** A Google
+  Account can be registered against an *external* address — the domain's mail
+  lives with an unrelated host — and a Workspace user can have Gmail switched
+  off. Google still runs the whole flow: consent succeeds, `mail.google.com` is
+  granted, and `validateGoogleMailScope` passes. Only `imap.gmail.com` knows,
+  and it answers `NO Lookup failed`. `assertGmailMailboxExists` (`imap-sync.ts`)
+  probes for that in `accounts:add` **before the account is saved**, so the
+  dialog says to add it as IMAP instead. Without the probe the account saved
+  clean and then never filled — the initial sync's failure goes to
+  `console.warn` and an in-memory status, so with no terminal attached nothing
+  ever said why. Note the diagnosis arrives on the IMAP *response* line; the
+  `message` is `Command failed`, so a check reading only the message never
+  fires. Only that one answer blocks the add: anything else (timeout, refused
+  connection, TLS) lets it proceed, because a transient failure must not stop
+  someone adding a working account.
 
 **Who can sign in (publishing status)**
 
@@ -2453,11 +2468,12 @@ reimplementing them, so it exercises the shipping code paths:
 | AI prompt hygiene | Email content is fenced in markers it cannot forge (a body containing the closing marker is defanged, so it cannot escape the fence and continue as prompt) while remaining visible to the model; every system prompt carries the "this is data, not instructions" rule; and sender identity is matched on the address exactly — a display name containing the user's address, a lookalike domain, and a substring of it are all rejected. |
 | Attachment allowlist | Only files approved in this compose session can be attached: an unapproved path in the list refuses the whole send, the refusal names the offending file, equivalent path spellings (`/tmp/./x`) do not decide approval, `sendMail` refuses before touching credentials or a transport, and closing compose withdraws approval. |
 | Account identity | Re-adding an address with the *same* provider updates the row in place (re-authentication, password changes) and stores the new credentials; re-adding it with a *different* provider is refused, naming both providers, and leaves the existing account and its OAuth refresh token untouched. Other addresses are unaffected. |
+| Gmail mailbox probe | The real `NO Lookup failed` error — captured from an account that had this happen — is recognised, and recognised from the IMAP *response* rather than the `Command failed` message a naive check would read. Invalid credentials, IMAP-disabled, a network timeout and a non-error value are all left to fall through, so a transient failure never tells someone to go and reconfigure a working account. The message names the account and the "Other (IMAP / POP3)" button, and carries no newlines (it is rendered in a toast, which collapses them). `accounts:add` is parsed to prove the probe runs *before* `saveAccount` — after it, it would only rename a broken account rather than prevent one — and only for Gmail. |
 | Account removal | Deleting an account removes its AI Tasks (per-folder, and unified-inbox tasks tied to its messages) as well as its mail — `sweep_tasks` has no foreign key, so the cascade misses them — while another account's tasks survive. |
 | Settings / preferences | A blob written before the settings keys existed reads back with close-to-tray and notifications **on** and remote images **blocked**, and the settings that were already in it survive untouched; a patch of an unrelated key does not drop those defaults; a global setting can actually be turned *off* (the `??`-vs-`||` trap) without disturbing the others, and an emptied sender list stays empty. Renderer side: defaults survive an old blob, an explicit `false` is not mistaken for an absent key, a toggle applies immediately and sends only the changed key, a rejected write rolls back and says so, and a mailto registration the OS refused does not show as on. |
 | Drafts | An empty composer is not saved (nor a quoted reply with nothing typed); a draft with content saves, edits update the *same* row rather than accumulating one per keystroke burst, and clearing it deletes the row. It appears in the Drafts folder in both flat and threaded views with `countMessages` agreeing, and does not leak into another folder or its count. Reopening restores the body **and the threading headers**, so a resumed reply still lands in its conversation, and carries its own id back. An attachment still on disk is restored; one that has vanished is named rather than silently dropped. Drafts are per account and cascade away with it. |
 | Blocked senders | A blocked sender disappears from the flat list, the conversation list, search and the unread count — **and `countMessages`/`countThreads` agree with what is listed**, which is the bug that would otherwise ship. An address that merely *contains* a blocked one (`notspam@` vs `spam@`) is not hidden. Unblocking restores everything with no refetch and nothing was deleted from the database. A Sent folder is exempt, so blocking your own address cannot empty it. A muted sender is still listed and still counted — mute is not block. Blocking normalizes the address, unblocking matches case-insensitively, and removing a sender who was never listed writes nothing. |
-| Account credentials | `toManualSettings` has **no `password` key at all** (asserted on key absence, since `password: undefined` still serialises the name) and no key beyond the seven it declares, reports `hasPassword`, and carries the server settings through intact. An update omitting the password keeps the stored one — proved by the account still authenticating afterwards — applies the rest of the edit, and leaves the sync window alone. An edit that cannot connect is rejected *and nothing is written*. Testing a wrong password fails; testing the stored settings succeeds. |
+| Account credentials | `toManualSettings` has **no `password` key at all** (asserted on key absence, since `password: undefined` still serialises the name) and no key beyond the seven it declares, reports `hasPassword`, and carries the server settings through intact. An update omitting the password keeps the stored one — proved by the account still authenticating afterwards — applies the rest of the edit, and leaves the sync window alone. An edit that cannot connect is rejected *and nothing is written*. Testing a wrong password fails; testing the stored settings succeeds. Both failures are asserted to *name the server that refused and why* rather than surfacing the library's bare `Command failed`. |
 | AI model choice | A chosen model and effort survive a fresh read of the blob and are not dropped by a patch of an unrelated key; a blob predating the setting resolves to the defaults; an unknown model or effort — from an older build or a hand edit — falls back instead of reaching the API, where it would 404 every AI feature. Both defaults are in the catalogue, and no listed model rejects `output_config.effort` (which is why Haiku is absent). |
 | Accounts pane selection | `resolveSelectedAccountId` — shows the first account by default, the one Settings was opened *for* when that account still exists, keeps an existing selection otherwise, and falls back rather than pointing at an account that has just been removed (which would render an empty pane). |
 | Remote-image gating | `isRemoteContentBlocked` — blocked by default, never "blocked" without remote content, unblocked by the global setting, by this sender's allowlist entry (but not another sender's), or by loading once this session. Whether a tracking pixel fires is not left to a manual click-through. |
@@ -2472,7 +2488,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Attachment index | `attachments.message_id` has an index, and the planner uses it (`EXPLAIN QUERY PLAN` shows the index, not a `SCAN`) — so a message-id lookup and the delete cascade are not full scans. |
 | Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. The account's own `Sent Items` beats a grafted `INBOX/admin/Sent Items` when both are flagged *and* when only the grafted one is; a folder one level under `INBOX` keeps its role (Courier namespacing); an unflagged lookalike deeper still is untouched; a flagged deep folder still beats a shallow name match; equally shallow rivals keep first-listed; depth is measured with the server's delimiter (`.` as well as `/`); and `resolveRoleMailbox` — which send-filing uses — returns the same mailbox the folder list does. |
 | Delete durability | Deleting the newest message in a folder (which lowers the local max UID, so the next sync searches a range starting past the end) does not re-import it on the following syncs, does not duplicate the survivors, and does not wedge the watermark for mail that arrives afterwards. A move leaves the source and lands in the destination exactly once. |
-| Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). |
+| Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). Note the last-resort `guessFromDomain` fills `imap.<domain>`/`smtp.<domain>`, which is a **guess and says so** — on shared hosting those names often resolve but present a certificate for the *provider's* domain, so the connection fails TLS validation. The dialog's failure message now explains that specific case rather than reporting `Command failed`. |
 
 Notes for anyone extending it:
 
@@ -2706,9 +2722,63 @@ re-applied on load, that the composer is built from the resolved size — becaus
 those are about the wiring, not the arithmetic. 23 assertions moved; 15 were added
 to them.
 
+`connection-failure.ts` was written here from the start, for the same reason:
+turning a library error into a sentence is pure string work, and it is prose the
+user reads, so it wants a fast suite and a mutation sweep rather than a
+ninety-second Docker run.
+
 **Every module bundled here must import nothing at runtime.** A type-only import
 is fine — it does not survive the bundle. The moment one needs the database or
 Electron it belongs in `test:db` or `test:imap`, where those exist.
+
+### Connection failures (`connection-failure.ts`)
+
+**None of the mail libraries put the diagnosis in `err.message`.** ImapFlow
+reports a rejected LOGIN as the bare string `Command failed`, with the server's
+actual words on `response`; nodemailer uses `EAUTH`/`ESOCKET` and its own
+`response`; a TLS name mismatch is a `code` with the detail buried in a long
+message. Reading `message` — the obvious thing, and what this code did — turned
+a wrong password, an unreachable host and a certificate that does not cover the
+hostname into the same three words on screen. That cost a real debugging
+session: an account that would not sync, diagnosed only by dumping the database
+and probing IMAP by hand, and the answer was a mistyped password.
+
+`classifyConnectionFailure` returns a `kind` (`auth`, `certificate`, `dns`,
+`refused`, `timeout`, `unknown`) plus the server's tidied response.
+Classification is separated from wording because the two callers need different
+sentences for the same fault:
+
+- `describeConnectionFailure` (Add Account, account settings) names **which of
+  the two servers** refused — two are tried and only one failed.
+- `describeAccountSyncFailure` (status bar, sidebar) returns the **reason only,
+  never the address**, because `syncStatus.ts` renders `${email}: ${error}` and
+  naming it again prints it twice.
+
+An `unknown` kind passes the message through untouched. That is what preserves
+the already-friendly errors written elsewhere — `formatGmailAuthError`, the
+missing-refresh-token message and the O365 token errors all arrive as `unknown`.
+
+**The Re-authenticate button is inferred from this prose.** `summarizeSyncStatus`
+runs `/auth|token|login|expired|invalid_grant|consent/i` over the error text to
+decide whether to offer it. So the `auth` sentence must contain a word that
+regex matches — "login" is load-bearing — and the others must *not*, or a DNS
+typo offers a pointless re-auth. Nothing in the type system enforces either
+direction, and both are one wording change from breaking silently, so
+`test:store` bundles this main-process module alongside `syncStatus.ts` and runs
+the real strings through the real consumer. The auth assertion deliberately uses
+an error whose quoted response contains **no** matching word (`535 5.7.8 Bad
+credentials`); the first version of that test passed against any wording,
+because the server's own `[AUTHENTICATIONFAILED]` was matching the regex rather
+than the sentence being tested.
+
+Inferring intent from prose is the fragile part, not the wording. The durable
+fix is a `needsReauth` flag on `AccountSyncStatus` set where the failure is
+classified; it is not done, and the coupling is pinned by test instead.
+
+The response tidier drops the IMAP command tag and status word (`3 NO …`), and
+is deliberately **case-sensitive**: `NO` and `BAD` are uppercase in the protocol,
+while a real sentence can begin "No such mailbox" — matching case-insensitively
+would hand the user "such mailbox".
 
 Two of the four had **no direct coverage at all** before this — `sync-policy.ts`
 and `thread-util.ts` were exercised only through sync behaviour. `computeThreadId`
@@ -2926,7 +2996,10 @@ GUI. It also bundles `src/stores/persistence.ts`, `src/utils/composeBody.ts`,
 below, and the pure modules under `src/utils/` — `folders.ts` for the Favourites
 qualifier rule, `syncStatus.ts` for the status-bar wording, `snoozePresets.ts`
 for when a snooze actually lands, `paneLayout.ts`, `listHeader.ts`, `search.ts`,
-and `emailColorScheme.ts` for the dark-mode contrast rule. That last one is why
+`ipcError.ts` for stripping Electron's channel wrapper off a message before a
+toast shows it, and `emailColorScheme.ts` for the dark-mode contrast rule. It also bundles
+one *main-process* module, `electron/services/connection-failure.ts` — see
+the Re-authenticate coupling below. That last one is why
 the classifier is string work rather than a DOM walk — there is no DOM here at
 all, so a DOM-based version could only have been tested through a real window.
 
@@ -2936,6 +3009,8 @@ against this suite.
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
+| Re-authenticate coupling | `summarizeSyncStatus` infers the button from a regex over prose written in the main process, so the real strings from `describeAccountSyncFailure` are run through the real consumer: a rejected login raises it, and a DNS typo, refused connection, timeout and certificate mismatch do not. The auth case uses a response containing no matching word, so only the sentence itself can raise it. |
+| IPC error text | Electron's `Error invoking remote method '…': Error:` wrapper is stripped, along with the class tag behind it, while a colon inside the real message survives; a non-error, an empty message and a bare wrapper all fall back rather than showing an empty toast. |
 | Pane layout | The reader keeps its minimum at every window width; a squeeze takes from the list first and the sidebar second; the sidebar collapses below 900px and returns above it; an explicit preference wins in both directions but loses to arithmetic when it cannot fit; the panes always sum exactly to the window, so nothing overflows sideways. |
 | List header | Names the folder and qualifies it by account only when more than one exists; reports how much of the list is loaded ("20 of 143 conversations") and stops claiming a full count while showing part of one; counts conversations or messages according to the view; folds an active unread filter into the noun ("3 unread conversations") rather than repeating it beside the count; groups large numbers; and still names an unresolvable folder rather than rendering an empty header. |
 | Snooze presets | Every preset lands on a whole hour and in the future, checked across every day of the week and five times of day. "Later today" is the afternoon in the morning, the evening in the afternoon, and absent in the evening — including *exactly* on each boundary hour, where "later today" must not mean now. "This weekend" asked on a Saturday means the next one, and "next week" on a Monday the next Monday, which is the rule that stops a preset firing in the past. `formatWakeAt` uses a weekday name only inside six days, since at exactly six it is one day from repeating. |

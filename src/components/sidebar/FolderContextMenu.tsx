@@ -20,6 +20,7 @@ import {
   ArrowsClockwise,
   GearSix
 } from '../icons'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 interface FolderContextMenuProps {
   folder: Folder
@@ -51,7 +52,7 @@ export function FolderContextMenu({
 
   const run = (action: () => void | Promise<void>) => {
     void Promise.resolve(action()).catch((err) => {
-      setToast(err instanceof Error ? err.message : 'Action failed')
+      setToast(ipcErrorMessage(err, 'Action failed'))
     })
   }
 

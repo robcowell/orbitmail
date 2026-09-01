@@ -341,6 +341,13 @@ nothing is lost either way. It writes what happened to `renderer-errors.log` in
 your settings folder (`~/.config/orbit-mail/`), which is the useful thing to
 attach if you report it.
 
+**A message says "Not sent"**  
+A send is held for a few seconds so you can take it back, so it goes out after
+the compose window has closed — which means a failure appears as a message in the
+main window rather than in the composer. It says which server refused and why,
+and the message stays in Drafts, so you can fix the problem and send it again.
+"The server refused this address" is usually a typo in a recipient.
+
 **Sync errors in the status bar**  
 The status bar names the account and the reason. "Rejected the login" means the
 password stopped working — most often because it was changed with your provider;

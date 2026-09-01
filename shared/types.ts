@@ -795,6 +795,21 @@ export interface OrbitMailAPI {
     /** Fires when a held send has actually gone. */
     onSent: (callback: (subject: string) => void) => () => void
     /**
+     * Fires when a held send **failed**, in the main window.
+     *
+     * A send runs on the scheduler after the undo window closes, long after the
+     * composer has gone, so a failure has nowhere of its own to appear. It used
+     * to reach only `console.warn`: the message stayed in Drafts, the user was
+     * told nothing, and the last thing they saw was the send being accepted.
+     *
+     * `keptAsDraft` is whether the message is recoverable — `performSend`
+     * deletes the draft only once the send resolves, so a failure normally
+     * leaves it there, but a send with no draft behind it cannot promise that.
+     */
+    onSendFailed: (
+      callback: (info: { subject: string; message: string; keptAsDraft: boolean }) => void
+    ) => () => void
+    /**
      * Fires in the **main** window when a send is scheduled. The composer has
      * already closed by then, so this is where the offer to take it back lives.
      */

@@ -509,6 +509,28 @@ async function main() {
     ok('a missing hostname is dns', kind(withCode('ENOTFOUND')) === 'dns')
     ok('a temporary resolver failure is dns too', kind(withCode('EAI_AGAIN')) === 'dns')
     ok('a refused connection is refused', kind(withCode('ECONNREFUSED')) === 'refused')
+
+    // The exact shape nodemailer produces for a refused SMTP connection,
+    // captured from the send-failure e2e run. It relabels socket failures as its
+    // own ESOCKET and leaves the real cause only in the message, so reading
+    // `code` alone classified this as `unknown` and showed the user the raw
+    // string 'connect ECONNREFUSED 127.0.0.1:1'.
+    const nodemailerRefused = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), {
+      errno: -111, code: 'ESOCKET', syscall: 'connect', address: '127.0.0.1', port: 1,
+      command: 'CONN'
+    })
+    ok('nodemailer\'s ESOCKET wrapper is still recognised as refused',
+      kind(nodemailerRefused) === 'refused', kind(nodemailerRefused))
+    ok('and the same wrapping around a DNS failure is still dns',
+      kind(Object.assign(new Error('getaddrinfo ENOTFOUND smtp.nope.test'),
+        { code: 'ESOCKET' })) === 'dns')
+    ok('and around a timeout is still a timeout',
+      kind(Object.assign(new Error('connect ETIMEDOUT 10.0.0.1:465'),
+        { code: 'ESOCKET' })) === 'timeout')
+    // A message merely *mentioning* the word must not be enough — the token is
+    // matched on word boundaries, not as a substring of prose.
+    ok('prose about a refused connection is not mistaken for one',
+      kind(new Error('the server said MYECONNREFUSEDX')) === 'unknown')
     ok('a timeout is a timeout', kind(withCode('ETIMEDOUT')) === 'timeout')
     ok("nodemailer's EAUTH is an auth failure", kind(withCode('EAUTH')) === 'auth')
     ok('an SMTP 535 is an auth failure',
@@ -622,6 +644,86 @@ async function main() {
 
     ok('marking a non-object is a no-op rather than a crash',
       markReauthRequired(null) === null && reauth(null) === false)
+
+    // --- Sends fail differently from connections --------------------------
+    // The transport can be perfectly healthy and the server still refuse. Those
+    // are the most common send failures and the most actionable, and neither is
+    // a connection problem — reporting them as one sends the user to Settings
+    // to fix a server that is working.
+    const { describeSendFailure } = load('connection-failure')
+
+    const refusedRcpt = Object.assign(new Error('Message failed'), {
+      code: 'EENVELOPE',
+      responseCode: 550,
+      response: '550 5.1.1 <nosuch@example.org>: Recipient address rejected',
+      rejected: ['nosuch@example.org']
+    })
+    const rcpt = describeSendFailure(refusedRcpt)
+    ok('a refused recipient names the address that was refused',
+      rcpt.includes('nosuch@example.org'), rcpt)
+    ok('and says to check it for a typo', /typo/.test(rcpt), rcpt)
+    ok('and is not reported as a connection problem',
+      !/Settings/.test(rcpt) && !/could not be found/.test(rcpt), rcpt)
+
+    ok('one refused address reads as singular throughout',
+      /this address/.test(rcpt) && /Check it for a typo/.test(rcpt), rcpt)
+
+    const two = describeSendFailure(Object.assign(new Error('x'), {
+      responseCode: 550, rejected: ['a@x.test', 'b@y.test']
+    }))
+    ok('several refused addresses are all named, not counted',
+      two.includes('a@x.test, b@y.test'), two)
+    ok('and read as plural throughout',
+      /these addresses/.test(two) && /Check them for a typo/.test(two), two)
+
+    // A 5xx envelope reply with no address attached is still the recipient's
+    // fault rather than the connection's.
+    // The 550-554 envelope range, at both ends and just outside it. A code
+    // outside the range is not a recipient problem and must not be reported as
+    // one — a 421 is the server asking you to come back later.
+    const bare = (rc) => describeSendFailure(Object.assign(new Error('x'), { responseCode: rc }))
+    ok('a bare 550 still points at the recipients', /refused a recipient/.test(bare(550)), bare(550))
+    ok('and so does 554, the top of the range',
+      /refused a recipient/.test(bare(554)), bare(554))
+    ok('but 421 is not a recipient problem and is not reported as one',
+      !/recipient/.test(bare(421)), bare(421))
+    ok('nor is a 250 that somehow arrived on an error',
+      !/recipient/.test(bare(250)), bare(250))
+
+    // `rejected` comes off a library and is not guaranteed to be a clean list of
+    // addresses. Junk in it must not become junk on screen.
+    const messy = describeSendFailure(Object.assign(new Error('x'), {
+      responseCode: 550, rejected: ['', '   ', 'a@x.test', 42, null]
+    }))
+    ok('blank and non-string entries are dropped from the address list',
+      messy.includes('a@x.test') && !messy.includes('42') && !messy.includes(', ,'), messy)
+    ok('and one real address left over still reads as singular',
+      /this address/.test(messy) && /Check it for a typo/.test(messy), messy)
+
+    // Size is checked before recipients: both carry addresses, and "too large"
+    // is the half the user can act on.
+    const big = describeSendFailure(Object.assign(new Error('x'), {
+      responseCode: 552, response: '552 Message size exceeds limit',
+      rejected: ['them@example.org']
+    }))
+    ok('an over-size message is reported as too large, not as a bad address',
+      /too large/.test(big) && !/typo/.test(big), big)
+    ok('and points at the attachments', /attachment/.test(big), big)
+
+    ok('a rejected SMTP login names the outgoing server',
+      /outgoing server rejected the login/.test(
+        describeSendFailure(Object.assign(new Error('Invalid login: 535 Bad'), {
+          code: 'EAUTH', response: '535 Bad'
+        }))))
+    ok('an unreachable outgoing server says so',
+      /outgoing server could not be found/.test(
+        describeSendFailure(Object.assign(new Error('x'), { code: 'ENOTFOUND' }))))
+    ok('and anything unrecognised keeps its detail',
+      describeSendFailure(new Error('something odd')) === 'something odd')
+
+    for (const m of [rcpt, big, describeSendFailure(new Error('x'))]) {
+      ok('the send failure is a single line', !m.includes('\n'), JSON.stringify(m))
+    }
   }
 
   console.log(

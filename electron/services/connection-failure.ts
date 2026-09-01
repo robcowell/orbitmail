@@ -111,9 +111,24 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
     if (code === 'ERR_TLS_CERT_ALTNAME_INVALID' || /altnames/i.test(message)) {
       return 'certificate'
     }
-    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns'
-    if (code === 'ECONNREFUSED') return 'refused'
-    if (code === 'ETIMEDOUT' || /timed out|timeout/i.test(message)) return 'timeout'
+    // The syscall name is matched in the **message** as well as in `code`,
+    // because nodemailer re-labels socket failures as its own `ESOCKET` and
+    // leaves the real cause only in the text: a refused SMTP connection arrives
+    // as `{ code: 'ESOCKET', message: 'connect ECONNREFUSED 127.0.0.1:1' }`.
+    // Reading `code` alone let that fall through to `unknown`, and the user was
+    // shown the raw string — which is the failure this whole module exists to
+    // prevent. Found by the send-failure e2e check, not by reading the code.
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN' || /\b(ENOTFOUND|EAI_AGAIN)\b/.test(message)) {
+      return 'dns'
+    }
+    if (code === 'ECONNREFUSED' || /\bECONNREFUSED\b/.test(message)) return 'refused'
+    if (
+      code === 'ETIMEDOUT' ||
+      /\bETIMEDOUT\b/.test(message) ||
+      /timed out|timeout/i.test(message)
+    ) {
+      return 'timeout'
+    }
     if (
       e.authenticationFailed === true ||
       code === 'EAUTH' ||
@@ -169,6 +184,85 @@ export function describeConnectionFailure(
       )
     default:
       return new Error(`${where} failed: ${response || message}`)
+  }
+}
+
+/**
+ * Wording for a send that did not go out.
+ *
+ * A send fails differently from a connection: the transport may be perfectly
+ * healthy and the *server* still refuse — a mistyped recipient, a message over
+ * the size limit. Those are the two most common send failures and the two most
+ * actionable, and neither is a connection problem at all, so they are read here
+ * from the SMTP reply rather than from `classifyConnectionFailure`.
+ *
+ * nodemailer reports a refused recipient on `rejected` (the addresses) and
+ * `responseCode` (the numeric reply), with the sentence itself on `response`.
+ * The recipients are the point: "the server refused a recipient" sends someone
+ * hunting through four addresses for the typo.
+ *
+ * Reason only, no leading "Not sent" — the caller frames it, because what it can
+ * promise about the message afterwards depends on whether a draft was kept.
+ */
+export function describeSendFailure(err: unknown): string {
+  const e = (err ?? {}) as { responseCode?: unknown; rejected?: unknown }
+  const { kind, response, message } = classifyConnectionFailure(err)
+  const code = typeof e.responseCode === 'number' ? e.responseCode : undefined
+  const rejected = Array.isArray(e.rejected)
+    ? e.rejected.filter((r): r is string => typeof r === 'string' && r.trim().length > 0)
+    : []
+
+  // 552 over the mailbox/message size limit, 523 the message is too big for the
+  // recipient's server. Checked before the recipient branch: both carry
+  // addresses on `rejected`, and "too large" is the useful half.
+  if (code === 552 || code === 523) {
+    return (
+      'The server refused the message as too large' +
+      (response ? ` (${response})` : '') +
+      '. Removing or shrinking an attachment is usually the fix.'
+    )
+  }
+
+  if (rejected.length > 0) {
+    const one = rejected.length === 1
+    return (
+      `The server refused ${one ? 'this address' : 'these addresses'}: ` +
+      `${rejected.join(', ')}` +
+      (response ? ` (${response})` : '') +
+      `. Check ${one ? 'it' : 'them'} for a typo.`
+    )
+  }
+
+  // A 5xx on the envelope with no address attached — still the recipient's fault
+  // rather than the connection's, so it must not be reported as one.
+  if (code !== undefined && code >= 550 && code <= 554) {
+    return (
+      'The server refused a recipient' +
+      (response ? ` (${response})` : '') +
+      '. Check the addresses for a typo.'
+    )
+  }
+
+  switch (kind) {
+    case 'auth':
+      return (
+        'The outgoing server rejected the login' +
+        (response ? ` (${response})` : '') +
+        '. If the password changed, update it in Settings → Accounts.'
+      )
+    case 'certificate':
+      return (
+        'The outgoing server presented a certificate that does not cover its ' +
+        'hostname. Check the server name in Settings → Accounts.'
+      )
+    case 'dns':
+      return 'The outgoing server could not be found — check the server name in Settings → Accounts.'
+    case 'refused':
+      return 'The outgoing server refused the connection — check the port in Settings → Accounts.'
+    case 'timeout':
+      return 'The outgoing server did not respond.'
+    default:
+      return response || message
   }
 }
 

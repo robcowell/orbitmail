@@ -127,6 +127,7 @@ import {
 import { closeAccountPool, closeAllPools } from './services/imap-pool'
 import { reclaimFreelistIfLarge } from './db'
 import { sendMail, buildReplyPayload } from './services/smtp-send'
+import { describeSendFailure } from './services/connection-failure'
 import { autodetectMailSettings } from './services/mail-autoconfig'
 import {
   addManualAccount,
@@ -488,6 +489,24 @@ const SNOOZE_FOLDER = 'Snoozed'
 function notifySendCompleted(subject: string): void {
   const win = liveMainWindow()
   if (win) win.webContents.send('compose:sent', subject)
+}
+
+/**
+ * Tell the user a held send did not go.
+ *
+ * The send runs on the scheduler after the undo window closes, by which point
+ * the composer is gone, so there is nowhere for the failure to appear on its
+ * own. Before this it reached only `console.warn`: the message stayed in Drafts,
+ * nothing said so, and the last thing the user saw was the send being accepted.
+ * Silently not sending a message is the worst failure this app has.
+ */
+function notifySendFailed(info: {
+  subject: string
+  message: string
+  keptAsDraft: boolean
+}): void {
+  const win = liveMainWindow()
+  if (win) win.webContents.send('compose:sendFailed', info)
 }
 
 /**
@@ -1523,7 +1542,20 @@ function registerIpc(): void {
   registerHandler('send', async (action) => {
     const payload = action.payload as { compose?: ComposePayload } | null
     if (!payload?.compose) return
-    await performSend(payload.compose)
+    try {
+      await performSend(payload.compose)
+    } catch (err) {
+      // The scheduler deletes an action *before* running it and does not retry,
+      // so this is the only moment the failure exists. Telling the user is not
+      // optional: `performSend` deletes the draft only once the send resolves,
+      // so the message is still there — but they have no way to know that.
+      notifySendFailed({
+        subject: payload.compose.subject ?? '',
+        message: describeSendFailure(err),
+        keptAsDraft: !!payload.compose.draftId
+      })
+      throw err
+    }
     notifySendCompleted(payload.compose.subject ?? '')
   })
 

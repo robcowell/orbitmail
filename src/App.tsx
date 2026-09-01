@@ -251,6 +251,17 @@ function MainApp() {
       store.setToast('Message sent')
     })
 
+    // A held send that failed. The pending-send indicator has to be cleared
+    // either way, or the UI keeps offering to undo a send that already gave up.
+    const unsubSendFailed = window.orbitMail.compose.onSendFailed((info) => {
+      const store = useMailStore.getState()
+      store.setPendingSend(null)
+      store.setToast(
+        `Not sent: ${info.message}` +
+          (info.keptAsDraft ? ' The message is still in Drafts.' : '')
+      )
+    })
+
     // Main hit something nobody caught. Mail on disk is fine, but the process
     // is in an unknown state, so say so rather than degrading silently.
     const unsubToast = window.orbitMail.app.onToast((message) => {
@@ -268,6 +279,7 @@ function MainApp() {
       unsubScheduled()
       unsubUnscheduled()
       unsubSent()
+      unsubSendFailed()
       unsubError()
       unsubToast()
       window.removeEventListener('online', updateOnline)

@@ -33,6 +33,7 @@ import { findAccountFolder, findArchiveFolder } from '../utils/folders'
 import { formatWakeAt } from '../utils/snoozePresets'
 import { buildTasksMarkdown, buildTasksPrintHtml, defaultTasksFilename } from '../utils/taskExport'
 import { draftToHtml } from '../utils/replyDraft'
+import { ipcErrorMessage } from '../utils/ipcError'
 
 export const MESSAGE_PAGE_SIZE = 200
 
@@ -917,7 +918,7 @@ export async function selectThread(accountId: string, threadId: string): Promise
     if (failed.selectedThreadId !== threadId) return
     failed.setThreadLoading(false)
     failed.setReaderError({
-      message: err instanceof Error ? err.message : 'Could not open this conversation',
+      message: ipcErrorMessage(err, 'Could not open this conversation'),
       retry: { kind: 'thread', accountId, threadId }
     })
     return
@@ -1168,7 +1169,7 @@ export async function undoSend(): Promise<void> {
     store.setToast('Send cancelled')
     if (result.draftId) await window.orbitMail.drafts.open(result.draftId)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not cancel that send')
+    store.setToast(ipcErrorMessage(err, 'Could not cancel that send'))
   }
 }
 
@@ -1207,7 +1208,7 @@ export async function snoozeThread(
         : `Snoozed until ${back}`
     )
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not snooze that')
+    store.setToast(ipcErrorMessage(err, 'Could not snooze that'))
     await refreshMessages()
   }
 }
@@ -1233,7 +1234,7 @@ export async function performUndo(): Promise<void> {
         : `Put ${result.restored} back — ${result.failed} could not be restored`
     )
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not undo that')
+    store.setToast(ipcErrorMessage(err, 'Could not undo that'))
     await refreshMessages()
   }
 }
@@ -1317,7 +1318,7 @@ async function relocateSelectedThreads(options: {
     store.setToast(options.toast(selected.length))
     store.setPendingUndo(buildUndo(options.toast(selected.length), messages, items))
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : options.failure)
+    store.setToast(ipcErrorMessage(err, options.failure))
     await refreshMessages()
   }
 }
@@ -1418,7 +1419,7 @@ export async function deleteThread(accountId: string, threadId: string): Promise
     store.setToast(label)
     store.setPendingUndo(buildUndo(label, messages, items))
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Delete failed')
+    store.setToast(ipcErrorMessage(err, 'Delete failed'))
     await refreshMessages()
   }
 }
@@ -1485,7 +1486,7 @@ export async function archiveThread(accountId: string, threadId: string): Promis
     store.setToast(label)
     store.setPendingUndo(buildUndo(label, messages, moves))
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Archive failed')
+    store.setToast(ipcErrorMessage(err, 'Archive failed'))
     await refreshMessages()
   }
 }
@@ -1505,7 +1506,7 @@ export async function markThreadRead(accountId: string, threadId: string): Promi
     await Promise.all(targets.map((m) => window.orbitMail.messages.markRead(m.id, true)))
     await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
     await refreshMessages()
   }
 }
@@ -1525,7 +1526,7 @@ export async function markThreadUnread(accountId: string, threadId: string): Pro
     await Promise.all(targets.map((m) => window.orbitMail.messages.markRead(m.id, false)))
     await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
     await refreshMessages()
   }
 }
@@ -1550,7 +1551,7 @@ export async function setThreadFlagColor(
   try {
     await Promise.all(messages.map((m) => window.orbitMail.messages.setFlag(m.id, flagColor)))
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
     await refreshMessages()
   }
 }
@@ -1586,7 +1587,7 @@ export async function moveThreadToFolder(
       buildUndo(label, messages, messages.map((m) => ({ id: m.id, targetFolderId })))
     )
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Move failed')
+    store.setToast(ipcErrorMessage(err, 'Move failed'))
     await refreshMessages()
   }
 }
@@ -1612,7 +1613,7 @@ export async function copyThreadToFolder(
     )
     await refreshMessages()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Copy failed')
+    store.setToast(ipcErrorMessage(err, 'Copy failed'))
   }
 }
 
@@ -1629,7 +1630,7 @@ export async function toggleThreadMessageStar(
     await window.orbitMail.messages.toggleStar(messageId, isStarred)
   } catch (err) {
     if (before) patchThreadMessage(messageId, before)
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
   }
 }
 
@@ -1744,7 +1745,7 @@ export async function addAccount(provider: 'gmail' | 'o365'): Promise<void> {
     store.expandAccount(account.id)
     await loadInitialData()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to add account')
+    store.setToast(ipcErrorMessage(err, 'Failed to add account'))
   }
 }
 
@@ -1759,7 +1760,7 @@ export async function addManualAccount(input: ManualAccountInput): Promise<void>
     store.expandAccount(account.id)
     await loadInitialData()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to add account')
+    store.setToast(ipcErrorMessage(err, 'Failed to add account'))
     throw err
   }
 }
@@ -1771,7 +1772,7 @@ export async function removeAccountById(accountId: string): Promise<void> {
     store.setToast('Account removed')
     await loadInitialData()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to remove account')
+    store.setToast(ipcErrorMessage(err, 'Failed to remove account'))
   }
 }
 
@@ -1782,7 +1783,7 @@ export async function syncAccountById(accountId: string): Promise<void> {
     store.setToast('Account synced')
     await refreshMessages()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Sync failed')
+    store.setToast(ipcErrorMessage(err, 'Sync failed'))
   }
 }
 
@@ -1794,7 +1795,7 @@ export async function createMailboxForAccount(accountId: string, name: string): 
     store.setFolders(folders)
     store.setToast(`Created mailbox “${name.trim()}”`)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to create mailbox')
+    store.setToast(ipcErrorMessage(err, 'Failed to create mailbox'))
     throw err
   }
 }
@@ -1808,7 +1809,7 @@ export async function exportMailbox(folderId: string): Promise<void> {
       exported === 0 ? 'Mailbox exported (no messages)' : `Exported ${exported} messages`
     )
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Export failed')
+    store.setToast(ipcErrorMessage(err, 'Export failed'))
   }
 }
 
@@ -1819,7 +1820,7 @@ export async function emptyTrashForAccount(accountId: string): Promise<void> {
     await refreshMessages()
     store.setToast(count === 0 ? 'Trash is already empty' : `Erased ${count} deleted items`)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to erase deleted items')
+    store.setToast(ipcErrorMessage(err, 'Failed to erase deleted items'))
   }
 }
 
@@ -1830,7 +1831,7 @@ export async function emptyJunkForAccount(accountId: string): Promise<void> {
     await refreshMessages()
     store.setToast(count === 0 ? 'Junk is already empty' : `Erased ${count} junk messages`)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to erase junk mail')
+    store.setToast(ipcErrorMessage(err, 'Failed to erase junk mail'))
   }
 }
 
@@ -1841,7 +1842,7 @@ export async function markAllReadInFolder(folderId: string): Promise<void> {
     await refreshMessages()
     store.setToast(count === 0 ? 'All messages already read' : `Marked ${count} messages as read`)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to mark messages as read')
+    store.setToast(ipcErrorMessage(err, 'Failed to mark messages as read'))
   }
 }
 
@@ -1855,7 +1856,7 @@ export async function updateAccountDisplayName(
     store.setAccounts(store.accounts.map((a) => (a.id === accountId ? account : a)))
     store.setToast('Account updated')
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to update account')
+    store.setToast(ipcErrorMessage(err, 'Failed to update account'))
     throw err
   }
 }
@@ -1870,7 +1871,7 @@ export async function updateAccountSyncDays(
     store.setAccounts(store.accounts.map((a) => (a.id === accountId ? account : a)))
     store.setToast('Sync window updated')
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Failed to update sync window')
+    store.setToast(ipcErrorMessage(err, 'Failed to update sync window'))
     throw err
   }
 }
@@ -1921,7 +1922,7 @@ export async function openDraft(draftId: string): Promise<void> {
   try {
     await window.orbitMail.drafts.open(draftId)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not open that draft')
+    store.setToast(ipcErrorMessage(err, 'Could not open that draft'))
     await refreshMessages()
   }
 }
@@ -1937,7 +1938,7 @@ export async function discardDraft(draftId: string): Promise<void> {
     await refreshMessages()
     store.setToast('Draft discarded')
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not discard that draft')
+    store.setToast(ipcErrorMessage(err, 'Could not discard that draft'))
   }
 }
 
@@ -1998,7 +1999,7 @@ export async function selectMessage(messageId: string): Promise<void> {
     if (failed.selectedMessageId !== messageId) return
     failed.setReaderLoading(false)
     failed.setReaderError({
-      message: err instanceof Error ? err.message : 'Could not open this message',
+      message: ipcErrorMessage(err, 'Could not open this message'),
       retry: { kind: 'message', messageId }
     })
     return
@@ -2218,7 +2219,7 @@ export async function moveMessageToTrash(messageId: string): Promise<void> {
     )
   } catch (err) {
     // Server rejected the delete/move — restore the true state and report why.
-    store.setToast(err instanceof Error ? err.message : 'Delete failed')
+    store.setToast(ipcErrorMessage(err, 'Delete failed'))
     await refreshMessages()
     return
   }
@@ -2242,7 +2243,7 @@ export async function deleteSelectedMessages(): Promise<void> {
       try {
         await window.orbitMail.drafts.discard(draftId)
       } catch (err) {
-        store.setToast(err instanceof Error ? err.message : 'Could not discard that draft')
+        store.setToast(ipcErrorMessage(err, 'Could not discard that draft'))
       }
     }
     store.setSelectedMessageId(null)
@@ -2299,7 +2300,7 @@ export async function deleteSelectedMessages(): Promise<void> {
     if (failed > 0) await refreshMessages()
     else await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Delete failed')
+    store.setToast(ipcErrorMessage(err, 'Delete failed'))
     await refreshMessages()
   }
 }
@@ -2355,7 +2356,7 @@ async function relocateSelectedMessages(options: {
     )
     await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : options.failure)
+    store.setToast(ipcErrorMessage(err, options.failure))
     await refreshMessages()
   }
 }
@@ -2410,7 +2411,7 @@ export async function archiveMessage(messageId: string): Promise<void> {
     )
     await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Archive failed')
+    store.setToast(ipcErrorMessage(err, 'Archive failed'))
     await refreshMessages()
   }
 }
@@ -2423,7 +2424,7 @@ export async function markMessageUnread(messageId: string): Promise<void> {
     await refreshFoldersUnread()
   } catch (err) {
     if (before) patchMessageInList(messageId, before)
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
   }
 }
 
@@ -2435,7 +2436,7 @@ export async function markMessageRead(messageId: string): Promise<void> {
     await refreshFoldersUnread()
   } catch (err) {
     if (before) patchMessageInList(messageId, before)
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
   }
 }
 
@@ -2461,7 +2462,7 @@ export async function moveMessageToJunk(messageId: string): Promise<void> {
     )
     await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Move failed')
+    store.setToast(ipcErrorMessage(err, 'Move failed'))
     await refreshMessages()
   }
 }
@@ -2483,7 +2484,7 @@ export async function moveMessageToFolder(
     )
     await refreshFoldersUnread()
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Move failed')
+    store.setToast(ipcErrorMessage(err, 'Move failed'))
     await refreshMessages()
   }
 }
@@ -2512,7 +2513,7 @@ export async function setMessageFlagColor(
     await window.orbitMail.messages.setFlag(messageId, flagColor)
   } catch (err) {
     if (before) patchMessageInList(messageId, before)
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
   }
 }
 
@@ -2527,7 +2528,7 @@ export async function toggleMessageStar(messageId: string, isStarred: boolean): 
     await window.orbitMail.messages.toggleStar(messageId, isStarred)
   } catch (err) {
     if (before) patchMessageInList(messageId, before)
-    store.setToast(err instanceof Error ? err.message : 'Update failed')
+    store.setToast(ipcErrorMessage(err, 'Update failed'))
   }
 }
 
@@ -2587,7 +2588,7 @@ export async function updateSenderList(
         break
     }
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not update that sender')
+    store.setToast(ipcErrorMessage(err, 'Could not update that sender'))
   }
 }
 
@@ -2698,7 +2699,7 @@ export async function analyzeMessage(
       )
     }
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Analysis failed')
+    store.setToast(ipcErrorMessage(err, 'Analysis failed'))
   } finally {
     store.setAiAnalyzingId(null)
   }
@@ -2732,7 +2733,7 @@ export async function analyzeThread(
     }
     store.setThreadAnalysis(key, result)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not summarize this conversation')
+    store.setToast(ipcErrorMessage(err, 'Could not summarize this conversation'))
   } finally {
     store.setAnalyzingThreadKey(null)
   }
@@ -2769,7 +2770,7 @@ export async function draftReply(
       bodyText: result.bodyText
     })
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not draft a reply')
+    store.setToast(ipcErrorMessage(err, 'Could not draft a reply'))
   } finally {
     store.setDraftingReplyId(null)
   }
@@ -2833,7 +2834,7 @@ export async function setGlobalPreference<K extends keyof GlobalPreferences>(
     await window.orbitMail.preferences.save({ [key]: value })
   } catch (err) {
     store.setGlobalPreferences({ [key]: previous } as Partial<GlobalPreferences>)
-    store.setToast(err instanceof Error ? err.message : 'Could not save that setting')
+    store.setToast(ipcErrorMessage(err, 'Could not save that setting'))
   }
 }
 
@@ -2848,7 +2849,7 @@ export async function openTasksDialog(): Promise<void> {
     store.setSweepResult(result.tasks, result.completed, result.analyzedCount, result.sweptAt)
     store.setSweepScope(result.scope)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not load tasks')
+    store.setToast(ipcErrorMessage(err, 'Could not load tasks'))
   }
 }
 
@@ -2880,7 +2881,7 @@ export async function runSweep(scope?: SweepScope, force = false): Promise<void>
       )
     }
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Sweep failed')
+    store.setToast(ipcErrorMessage(err, 'Sweep failed'))
   } finally {
     store.setSweeping(false)
   }
@@ -2904,7 +2905,7 @@ export async function flagMessageAsTask(messageId: string): Promise<void> {
     store.setSweepResult(result.tasks, result.completed, result.analyzedCount, result.sweptAt)
     store.setToast('Added to AI tasks.')
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not flag this email')
+    store.setToast(ipcErrorMessage(err, 'Could not flag this email'))
   } finally {
     store.setFlaggingTaskId(null)
   }
@@ -2929,7 +2930,7 @@ export async function exportTasks(): Promise<void> {
     const savedPath = await window.orbitMail.ai.exportTasks(markdown, defaultTasksFilename())
     if (savedPath) store.setToast(`Tasks exported to ${savedPath.split('/').pop()}`)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Export failed')
+    store.setToast(ipcErrorMessage(err, 'Export failed'))
   }
 }
 
@@ -2964,7 +2965,7 @@ export async function printTasks(): Promise<void> {
   try {
     await window.orbitMail.print.document(html)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Print failed')
+    store.setToast(ipcErrorMessage(err, 'Print failed'))
   }
 }
 
@@ -2983,7 +2984,7 @@ export async function completeTask(taskId: string): Promise<void> {
   try {
     await window.orbitMail.ai.completeTask(store.selectedFolderId, taskId)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not update task')
+    store.setToast(ipcErrorMessage(err, 'Could not update task'))
   }
 }
 
@@ -3002,6 +3003,6 @@ export async function reopenTask(taskId: string): Promise<void> {
   try {
     await window.orbitMail.ai.reopenTask(store.selectedFolderId, taskId)
   } catch (err) {
-    store.setToast(err instanceof Error ? err.message : 'Could not update task')
+    store.setToast(ipcErrorMessage(err, 'Could not update task'))
   }
 }

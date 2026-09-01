@@ -105,7 +105,8 @@ import {
   initSyncFromPersistence,
   exportMessageRawToTemp,
   syncSentFolder,
-  searchServerMessages
+  searchServerMessages,
+  assertGmailMailboxExists
 } from './services/imap-sync'
 import {
   scheduleAction,
@@ -1042,6 +1043,14 @@ function registerIpc(): void {
       provider === 'gmail'
         ? await authenticateGoogle()
         : await authenticateMicrosoft()
+    // Google signs in accounts that have no Gmail mailbox behind them at all,
+    // with the mail scope granted and everything looking correct. Checked here,
+    // before the account is saved, so the dialog says so while the user is
+    // still in it — rather than leaving an account that sits in the sidebar
+    // and never fills, for a reason only stdout ever hears.
+    if (provider === 'gmail') {
+      await assertGmailMailboxExists(tokenData.email, tokenData.accessToken)
+    }
     const account = saveAccount(provider, tokenData)
     syncNewAccountInBackground(account.id, account.provider)
     return account

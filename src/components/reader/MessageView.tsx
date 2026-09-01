@@ -44,6 +44,7 @@ import {
 } from '../icons'
 import { flagColorHex } from '../../constants/flags'
 import { printMessageDetail, printThreadDetails } from '../../utils/printMessage'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 function extractName(from: string): string {
   const match = from.match(/^(.+?)\s*</)
@@ -266,7 +267,7 @@ function PrintButton({
     try {
       await printMessageDetail(message, withAi ? aiAnalysis : undefined)
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Print failed')
+      setToast(ipcErrorMessage(err, 'Print failed'))
     }
   }
 
@@ -438,7 +439,7 @@ export function MessageView() {
     try {
       await toggleMessageStar(selectedMessage.id, !selectedMessage.isStarred)
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Update failed')
+      setToast(ipcErrorMessage(err, 'Update failed'))
     }
   }
 
@@ -799,7 +800,7 @@ function AttachmentList({
       // leaving the click looking like it did nothing.
       if (!opened) setToast('Attachment not opened')
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to open attachment')
+      setToast(ipcErrorMessage(err, 'Failed to open attachment'))
     } finally {
       setBusy(null)
     }
@@ -812,7 +813,7 @@ function AttachmentList({
       const saved = await window.orbitMail.attachments.saveAs(id)
       if (saved) setToast(`Saved ${filename}`)
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to save attachment')
+      setToast(ipcErrorMessage(err, 'Failed to save attachment'))
     } finally {
       setBusy(null)
     }
@@ -825,7 +826,7 @@ function AttachmentList({
       const count = await window.orbitMail.attachments.saveAll(messageId)
       if (count != null) setToast(`Saved ${count} attachment${count === 1 ? '' : 's'}`)
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to save attachments')
+      setToast(ipcErrorMessage(err, 'Failed to save attachments'))
     } finally {
       setSavingAll(false)
     }
@@ -1008,7 +1009,7 @@ function ThreadView({ messages, threadId }: { messages: MessageDetail[]; threadI
     try {
       await printThreadDetails(messages)
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Print failed')
+      setToast(ipcErrorMessage(err, 'Print failed'))
     }
   }
 

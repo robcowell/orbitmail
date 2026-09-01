@@ -29,6 +29,7 @@ import { MessageContextMenu } from '../messages/MessageContextMenu'
 import { ThreadContextMenu } from '../messages/ThreadContextMenu'
 import { flagColorHex } from '../../constants/flags'
 import { Tray, Flag, Paperclip, MagnifyingGlass, CaretRight } from '../icons'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 function formatDate(timestamp: number): string {
   const date = new Date(timestamp)
@@ -444,7 +445,7 @@ export function MessageList() {
     try {
       await loadMoreMessages()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to load more')
+      setToast(ipcErrorMessage(err, 'Failed to load more'))
     } finally {
       setLoadingMore(false)
     }

@@ -9,6 +9,7 @@ import type {
 import { useMailStore, addAccount, addManualAccount } from '../../stores/mailStore'
 import { AppBrand } from '../brand/AppBrand'
 import { ServerFields } from './ServerFields'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 type WizardView = 'choose' | 'manual' | 'oauth-credentials'
 
@@ -67,7 +68,7 @@ function ManualAccountForm({ onBack }: { onBack: () => void }) {
       setForm((current) => applyAutodetect(current, result))
       setAutodetectMessage(result.message)
     } catch (err) {
-      setAutodetectMessage(err instanceof Error ? err.message : 'Autodetect failed')
+      setAutodetectMessage(ipcErrorMessage(err, 'Autodetect failed'))
     } finally {
       setDetecting(false)
     }
@@ -257,7 +258,7 @@ function OAuthCredentialsForm({
       await window.orbitMail.oauth.saveCredentials(entered)
       onSaved()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save credentials')
+      setError(ipcErrorMessage(err, 'Could not save credentials'))
     } finally {
       setSaving(false)
     }

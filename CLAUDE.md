@@ -127,7 +127,8 @@ There is **no unit-test framework and no linter** in this repo. Verification =
 it is a diagnostic rather than a gate.
 
 `npm run test:pure` — pure main-process logic under plain node (~1s, no Docker,
-no Electron). `attachment-safety.ts`, `network-reachability.ts`,
+no Electron). `attachment-safety.ts`, `connection-failure.ts`,
+`network-reachability.ts`,
 `sync-policy.ts`, `thread-util.ts`, `window-geometry.ts` and `zoom.ts` import
 nothing at runtime, so they need neither — and
 living in `test:imap` made them impossible to mutation-test. **A module bundled
@@ -173,7 +174,13 @@ it, and the selection advances to the next row down. It also bundles
 `RecipientInput.tsx` for the address-token math behind recipient autocomplete,
 `src/utils/syncStatus.ts` for the status-bar wording that turns per-account sync
 state into one line, `src/utils/search.ts` for which account(s) a query runs
-against, and `src/utils/emailColorScheme.ts` for the dark-mode
+against, `src/utils/ipcError.ts` for stripping Electron's channel wrapper off an
+error before a toast shows it, `electron/services/connection-failure.ts` — a
+*main-process* module, deliberately: it writes the sync error prose and
+`syncStatus.ts` decides whether to offer **Re-authenticate** by running a regex
+over that prose, so the only honest test of that coupling runs the real
+producer's strings through the real consumer — and
+`src/utils/emailColorScheme.ts` for the dark-mode
 contrast rule that decides whether a message renders on a light surface — the same trick works for any pure
 renderer logic, which is why that classifier is string work and not a DOM walk.
 Run it after touching `src/stores/`, any of those three, or the reader's

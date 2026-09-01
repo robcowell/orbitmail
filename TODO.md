@@ -111,6 +111,146 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Errors say what went wrong, across the whole app.** Asked for directly after
+  the two account bugs below: *"more meaningful error messages would massively
+  help the user."* A survey found two distinct problems.
+
+  **Every toast carried the plumbing.** 79 call sites across 13 renderer files
+  passed `err.message` straight through, so each one read `Error invoking remote
+  method 'messages:delete': Error: …`. In a toast — one line, bounded width —
+  the prefix pushed the real message out of view, and it names an IPC channel
+  the user has no use for. All 79 now go through `ipcErrorMessage`. Two were
+  deliberately left: `main.tsx`'s unhandled-rejection reporter wants the raw
+  message and stack for the log, and `ipcError.ts` is the helper itself.
+
+  **Sync errors got no treatment at all.** `accountSyncError` returned
+  `err.message` raw, so the single most likely reason a working account stops
+  syncing — a password changed at the host — reported itself in the status bar
+  as `Command failed`. It now uses `describeAccountSyncFailure`.
+
+  The classifier from the manual-setup fix was generalised into
+  `electron/services/connection-failure.ts`, which imports nothing and so is
+  covered by `test:pure` and swept by `test:mutants` (17 of 19 mutants caught,
+  2 justified as equivalent). Classification is separate from wording because
+  the dialog must name *which of two servers* refused while the status bar must
+  not repeat the address the display already prints.
+
+  **The trap worth remembering: the Re-authenticate button is inferred from the
+  error prose.** `summarizeSyncStatus` runs
+  `/auth|token|login|expired|invalid_grant|consent/i` over the text to decide
+  whether to offer it. Rewording the auth sentence would have silently removed
+  the user's way out of a failing account. The word "login" is load-bearing, and
+  `test:store` now bundles the main-process module next to `syncStatus.ts` to
+  pin both directions — auth raises it, DNS/refused/timeout/certificate do not.
+
+  That test was **wrong on the first attempt**, in exactly the way this file
+  keeps recording: it passed against any wording, because the sample error's
+  quoted response contained `[AUTHENTICATIONFAILED]` and the regex was matching
+  the *server's* text rather than the sentence under test. Rewritten with a
+  response carrying no matching word (`535 5.7.8 Bad credentials`), and then
+  confirmed to fail when the wording drops "login".
+
+  **Left undone, deliberately:** inferring intent from prose is the fragile
+  part. The durable fix is a `needsReauth` flag on `AccountSyncStatus`, set where
+  the failure is classified rather than re-derived by regex downstream. That
+  changes the IPC payload, so it was out of scope here; the coupling is pinned
+  by test in the meantime. SMTP send failures were also left — nodemailer's
+  messages (`Invalid login: 535 …`) are already readable.
+
+- **A failed manual account setup says which server refused and why, instead of
+  "Command failed".** Found immediately after the Gmail fix below, adding the
+  same address as IMAP: the dialog reported `Error invoking remote method
+  'accounts:addManual': Error: Command failed` and nothing else. Two servers are
+  tried, and that message identified neither one, nor whether the problem was
+  the host, the port, the certificate or the password.
+
+  **The same root cause as the Gmail case, in a second place.** ImapFlow reports
+  a rejected LOGIN as the bare string `Command failed` with the server's actual
+  words on `response`; nodemailer uses `EAUTH`/`ESOCKET` and its own `response`;
+  a TLS name mismatch is a `code` with the detail buried in a long message. None
+  of them put it in `message`, which is the field the error handling read.
+
+  `describeConnectionFailure` now maps each failure onto something actionable
+  and **names the server that produced it**. A rejected login quotes the
+  server's own answer (command tag stripped) and suggests the full-address
+  username; a certificate that does not cover the hostname is explained, with
+  the advice to use the provider's server name; `ENOTFOUND`, `ECONNREFUSED`,
+  `ETIMEDOUT` and `EAUTH` each get their own wording. Anything unrecognised
+  still names the server and carries its detail rather than being flattened.
+
+  Also `src/utils/ipcError.ts`: Electron wraps every rejection crossing the IPC
+  boundary, so even a good message arrived as `Error invoking remote method
+  'accounts:addManual': Error: …`. In a toast — one line, bounded width — that
+  prefix pushed the useful part out of view, and it names a channel the user has
+  no use for. Stripped now, which also improves the Gmail message below.
+
+  Proved against a real server rather than only in the abstract: the GreenMail
+  suite's existing wrong-password check now asserts the message names the
+  incoming server and says the login was rejected, and it reads
+  `Incoming server (127.0.0.1) rejected the username and password: NO LOGIN
+  failed. Invalid login/password for user id rob.` where it used to read
+  `Command failed`. The certificate case cannot be produced against GreenMail,
+  so it is pinned against the real error shape captured from the live host.
+
+  **Worth remembering:** the last-resort autodetect guess fills
+  `imap.<domain>`/`smtp.<domain>`, and on shared hosting those names commonly
+  resolve to the provider's servers while the certificate covers only the
+  provider's domain — so the guess produces a TLS failure that looked like a
+  password problem.
+
+- **A Google account with no Gmail mailbox is refused when you add it, instead
+  of sitting in the sidebar forever.** Reported as "newly added Gmail account
+  isn't syncing". The account had been added an hour earlier and had **zero
+  folders and zero messages**, while the other three accounts synced normally in
+  the same pass.
+
+  Nothing was wrong with the credentials. The blob decrypted, a refresh token
+  was present, the refresh succeeded, and the live token carried
+  `https://mail.google.com/` with `email_verified: true`. The IMAP connection
+  was what failed:
+
+  ```
+  IMAP connect: FAILED -> Command failed
+    authenticationFailed: true
+    response: 3 NO Lookup failed
+  ```
+
+  `NO Lookup failed` means Google has no Gmail mailbox for that address at all.
+  DNS confirmed it — the domain's MX records point at an unrelated mail host,
+  while the two working Gmail accounts point at `aspmx.l.google.com`. The
+  address is a Google Account registered against an *external* mailbox: it can
+  sign in with Google, and Google grants the mail scope, but there is no inbox
+  behind it. (A Workspace user with Gmail switched off reaches the same dead
+  end.)
+
+  **Why it was silent, which is the part worth keeping.** `authenticateGoogle`
+  validates the *scope* and nothing else, so the account saved looking healthy.
+  The initial sync's failure goes to `console.warn` (`main.ts`) and an
+  **in-memory** `setAccountStatus` — nothing persisted. The periodic
+  `pollForNewMessages` swallows sync errors by design ("polling still does not
+  surface transient errors in the UI"). With no terminal attached, the reason
+  never reached the user. Diagnosing it took a DB dig and a live IMAP probe; it
+  should have taken reading the dialog.
+
+  `assertGmailMailboxExists` now probes IMAP in `accounts:add` **before**
+  `saveAccount`, so the account is never created and the dialog explains what to
+  do — add it as IMAP instead. Two decisions inside it:
+
+  - **Only `Lookup failed` blocks.** A timeout, a refused connection or TLS
+    trouble lets the add proceed and is reported by sync as before. Adding an
+    account must not become hostage to a transient network failure, and this is
+    a probe for one specific dead end rather than a reachability gate.
+  - **The check reads the IMAP `response`, not `err.message`.** The message is
+    the useless `Command failed`; the diagnosis is on the response line. A check
+    written against the message compiles, reads correctly and never fires — so
+    the suite asserts recognition *with* `message === 'Command failed'`, and
+    both wrong implementations (message-only, and "any auth failure") were
+    confirmed to fail the new assertions before they were kept.
+
+  Verified against the real account: the probe rejects
+  `hello@modernwizardry.org` with the new message and admits a working Gmail
+  account unchanged.
+
 - **`npm run test:db`, and mutation coverage for the database and the window
   geometry** — the answer to the limit the last round recorded: "anything
   touching the database, a socket or a window is still unmeasured. Narrowing the

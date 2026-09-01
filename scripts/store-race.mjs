@@ -394,6 +394,31 @@ async function main() {
     logLevel: 'silent'
   })
 
+  // What a failed IPC call is allowed to put in front of the user.
+  await build({
+    entryPoints: [join(root, 'src/utils/ipcError.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'ipcError.cjs'),
+    logLevel: 'silent'
+  })
+
+  // A main-process module, deliberately. `describeAccountSyncFailure` writes the
+  // sync error prose and `summarizeSyncStatus` decides — by running a regex over
+  // that prose — whether to offer a Re-authenticate button. That coupling spans
+  // the process boundary, so testing either side alone proves nothing: the only
+  // check worth having runs the real producer's strings through the real
+  // consumer. Both modules are pure, so both bundle here.
+  await build({
+    entryPoints: [join(root, 'electron/services/connection-failure.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'connectionFailure.cjs'),
+    logLevel: 'silent'
+  })
+
   installWindowStub()
   const require = createRequire(import.meta.url)
   const store = require(outfile)
@@ -1966,6 +1991,112 @@ async function main() {
       oneAccount.get('f1') === 'Inbox' && oneAccount.get('f3') === 'Receipts',
       JSON.stringify([...oneAccount]))
     ok('no results produces no labels', searchFolderLabels([], folders, accounts).size === 0)
+  }
+
+  // -------------------------------------------------------------------------
+  section('Re-authenticate: the button survives a rewording of the error')
+  // -------------------------------------------------------------------------
+  {
+    // `summarizeSyncStatus` decides whether to offer Re-authenticate by running
+    // /auth|token|login|expired|invalid_grant|consent/i over the error *prose*
+    // written in the main process. Nothing enforces that; rewording a sentence
+    // in `connection-failure.ts` can silently remove the user's way out of a
+    // failing account, and rewording another can offer a pointless re-auth for
+    // a DNS typo. Both directions are pinned here, against the real strings.
+    const { summarizeSyncStatus } = require(join(outDir, 'syncStatus.cjs'))
+    const { describeAccountSyncFailure } = require(join(outDir, 'connectionFailure.cjs'))
+
+    const withCode = (code, message = 'x') => Object.assign(new Error(message), { code })
+    const imapAuth = Object.assign(new Error('Command failed'), {
+      authenticationFailed: true,
+      response: '3 NO [AUTHENTICATIONFAILED] Invalid credentials'
+    })
+
+    const summarize = (err) =>
+      summarizeSyncStatus({
+        syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0,
+        accounts: {
+          a1: {
+            accountId: 'a1', email: 'a@b.test', syncing: false, lastSyncAt: null,
+            error: describeAccountSyncFailure(err)
+          }
+        }
+      })
+
+    ok('a rejected login offers Re-authenticate',
+      summarize(imapAuth).needsReauth === true, describeAccountSyncFailure(imapAuth))
+
+    // That one passes for the wrong reason if you are not careful: its quoted
+    // response contains "AUTHENTICATIONFAILED", so the pattern matches the
+    // *server's* text no matter how the prose is worded. This is the honest
+    // version — an auth failure whose response carries no matching word, so
+    // only the sentence written in `connection-failure.ts` can raise the button.
+    const plainAuth = Object.assign(new Error('Invalid login: 535 Bad credentials'), {
+      code: 'EAUTH',
+      response: '535 5.7.8 Bad credentials'
+    })
+    const plainText = describeAccountSyncFailure(plainAuth)
+    ok('the quoted response alone would not raise the button',
+      !/auth|token|login|expired|invalid_grant|consent/i.test('535 5.7.8 Bad credentials'))
+    ok('so the wording itself must, and does',
+      summarize(plainAuth).needsReauth === true, plainText)
+
+    for (const [label, err] of [
+      ['a hostname typo', withCode('ENOTFOUND')],
+      ['a refused connection', withCode('ECONNREFUSED')],
+      ['a timeout', withCode('ETIMEDOUT')],
+      ['a certificate mismatch', withCode('ERR_TLS_CERT_ALTNAME_INVALID')]
+    ]) {
+      ok(`${label} does not offer a pointless Re-authenticate`,
+        summarize(err).needsReauth === false, describeAccountSyncFailure(err))
+    }
+
+    // The friendly OAuth errors written elsewhere pass through unchanged, and
+    // they must keep raising the button too — that is how a Gmail account whose
+    // consent was revoked gets fixed.
+    ok('an OAuth failure passed through still offers Re-authenticate',
+      summarize(new Error('No refresh token stored for a@b. Remove the account and sign in again.'))
+        .needsReauth === true)
+  }
+
+  // -------------------------------------------------------------------------
+  section('IPC errors: the user sees the message, not the plumbing')
+  // -------------------------------------------------------------------------
+  {
+    const { ipcErrorMessage } = require(join(outDir, 'ipcError.cjs'))
+
+    // Electron wraps every rejection that crosses the boundary. Adding an
+    // account failed with exactly this on screen, and the part that mattered
+    // was never reached: a toast is one line at a bounded width.
+    const wrapped = new Error(
+      "Error invoking remote method 'accounts:addManual': Error: Incoming server " +
+        '(mailc50.example.eu) rejected the username and password: NO Invalid credentials.'
+    )
+    const shown = ipcErrorMessage(wrapped, 'Failed to add account')
+    ok('the channel wrapper is stripped', !shown.includes('invoking remote method'), shown)
+    ok('and so is the Error: tag it leaves behind', !shown.startsWith('Error:'), shown)
+    ok('the message itself survives whole',
+      shown.startsWith('Incoming server (mailc50.example.eu) rejected') &&
+        shown.endsWith('NO Invalid credentials.'),
+      shown)
+
+    // A colon inside the real message must not be treated as another wrapper.
+    ok('only the leading class tag goes, not a colon in the text',
+      ipcErrorMessage(new Error('Error: host: port refused'), 'x') === 'host: port refused',
+      ipcErrorMessage(new Error('Error: host: port refused'), 'x'))
+
+    // An unwrapped error is already what we want.
+    ok('a plain message is untouched',
+      ipcErrorMessage(new Error('No handler registered'), 'x') === 'No handler registered')
+
+    // The fallback exists because a rejection is not always an Error, and an
+    // empty toast would say nothing at all.
+    ok('a non-error falls back', ipcErrorMessage({ nope: true }, 'Failed to add account') ===
+      'Failed to add account')
+    ok('an empty message falls back', ipcErrorMessage(new Error('   '), 'Fallback') === 'Fallback')
+    ok('a bare wrapper with nothing after it falls back',
+      ipcErrorMessage(new Error("Error invoking remote method 'a:b': Error: "), 'Fallback') ===
+        'Fallback')
   }
 
   console.log(

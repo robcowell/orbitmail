@@ -28,6 +28,7 @@ import { exposeFlushHook } from './stores/persistence'
 import { printMessageDetail, printThreadDetails } from './utils/printMessage'
 import { summarizeSyncStatus, syncErrorDetail, deriveConnectivity } from './utils/syncStatus'
 import { formatWakeAt } from './utils/snoozePresets'
+import { ipcErrorMessage } from './utils/ipcError'
 
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
@@ -46,7 +47,7 @@ function StatusBar() {
     try {
       await window.orbitMail.sync.refresh()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Sync failed')
+      setToast(ipcErrorMessage(err, 'Sync failed'))
     }
   }
 

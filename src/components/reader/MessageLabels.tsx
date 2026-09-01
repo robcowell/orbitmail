@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Folder, MessageLabel } from '../../../shared/types'
 import { useMailStore, createMailboxForAccount, refreshMessages } from '../../stores/mailStore'
 import { Tag, Tray, X, Check, Minus, MagnifyingGlass, PlusCircle } from '../icons'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 // How many of the messages asked about carry a label. Gmail labels a
 // conversation, but it also lets one reply carry a label its siblings do not —
@@ -52,7 +53,7 @@ export function MessageLabels({
     try {
       setLabels(await window.orbitMail.messages.labels(messageIds))
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Could not read labels')
+      setToast(ipcErrorMessage(err, 'Could not read labels'))
     }
     // messageIds is covered by idKey, which the caller of `load` depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,7 +71,7 @@ export function MessageLabels({
         const folders = await window.orbitMail.messages.availableLabels(accountId)
         if (!cancelled) setAvailable(folders)
       } catch (err) {
-        if (!cancelled) setToast(err instanceof Error ? err.message : 'Could not list labels')
+        if (!cancelled) setToast(ipcErrorMessage(err, 'Could not list labels'))
       }
     })()
     return () => {
@@ -141,7 +142,7 @@ export function MessageLabels({
       // is looking at.
       await refreshMessages()
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Label change failed')
+      setToast(ipcErrorMessage(err, 'Label change failed'))
     } finally {
       setBusyFolderId(null)
     }

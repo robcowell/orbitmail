@@ -11,6 +11,7 @@ import {
 } from '../../../shared/ai-models'
 import { useMailStore, setGlobalPreference } from '../../stores/mailStore'
 import { SettingToggle } from './SettingToggle'
+import { ipcErrorMessage } from '../../utils/ipcError'
 
 // The body of what used to be AiSettingsDialog, minus its overlay and Close
 // button — the settings shell owns both now.
@@ -48,7 +49,7 @@ export function AiPane() {
       setConfigured(true)
       setToast('Anthropic API key saved')
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to save API key')
+      setToast(ipcErrorMessage(err, 'Failed to save API key'))
     } finally {
       setSaving(false)
     }
@@ -61,7 +62,7 @@ export function AiPane() {
       setConfigured(false)
       setToast('Anthropic API key removed')
     } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Failed to remove API key')
+      setToast(ipcErrorMessage(err, 'Failed to remove API key'))
     } finally {
       setSaving(false)
     }

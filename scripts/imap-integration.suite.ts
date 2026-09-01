@@ -2879,6 +2879,23 @@ async function main(): Promise<void> {
     ok('every invoked channel has a main-process handler', orphans.length === 0,
       orphans.length ? `missing: ${orphans.join(', ')}` : `${handled.size} handlers`)
 
+    // The other half of the spine, which this check did not cover. Main→renderer
+    // events use webContents.send / ipcRenderer.on rather than handle / invoke,
+    // so a listener wired in the preload with nothing ever sending to it is
+    // exactly as silent as the missing handler above — worse, in fact: an
+    // invoke at least throws, while a listener that never fires just sits there.
+    // Added with compose:sendFailed, whose whole purpose is to say something the
+    // user would otherwise never hear.
+    const listened = [...preload.matchAll(/ipcRenderer\.on\(\s*'([^']+)'/g)].map((m) => m[1])
+    const sent = new Set(
+      [...mainSource.matchAll(/webContents\.send\(\s*\n?\s*'([^']+)'/g)].map((m) => m[1])
+    )
+    const unsent = [...new Set(listened)].filter((channel) => !sent.has(channel))
+
+    ok('preload declares event channels', listened.length > 5, `${listened.length} channels`)
+    ok('every channel the renderer listens on is sent by main', unsent.length === 0,
+      unsent.length ? `never sent: ${unsent.join(', ')}` : `${sent.size} senders`)
+
     // Sending closed the composer, and closing it asked "save this message as a
     // draft?" about the message that had just gone out — the renderer still
     // held the id of the draft compose:send had already deleted, so the flush

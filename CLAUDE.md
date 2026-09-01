@@ -213,7 +213,11 @@ message is back **on the server** — the pure half is covered by `test:store` a
 the Message-ID lookup by `test:imap`, but neither can render a toast, click its
 button, or see where the mail actually ended up. **shortcuts** presses a real
 `a` and checks a reply-all composer opens addressed to everyone on the thread
-but us — asserting only that a window opened would prove nothing. All ten also
+but us — asserting only that a window opened would prove nothing. **send-failure**
+points the outgoing server at a closed port and reads the *toast in the main
+window*: a held send runs on the scheduler long after the composer has gone, so
+a failure used to reach only `console.warn` — the message stayed in Drafts and
+nothing said so. All eleven also
 assert **nothing threw**. **snooze** moves a real message to the Snoozed folder
 and asserts against the *server* that it left the inbox and came back when due —
 the only thing snooze actually promises, and invisible from inside the app.

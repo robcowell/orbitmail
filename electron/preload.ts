@@ -111,6 +111,14 @@ const api: OrbitMailAPI = {
       ipcRenderer.on('compose:sent', listener)
       return () => ipcRenderer.removeListener('compose:sent', listener)
     },
+    onSendFailed: (callback) => {
+      const listener = (
+        _e: unknown,
+        info: { subject: string; message: string; keptAsDraft: boolean }
+      ) => callback(info)
+      ipcRenderer.on('compose:sendFailed', listener)
+      return () => ipcRenderer.removeListener('compose:sendFailed', listener)
+    },
     onSendScheduled: (callback) => {
       const listener = (
         _e: unknown,

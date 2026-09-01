@@ -2456,7 +2456,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Tray icon | The count→icon mapping: nothing unread shows the plain icon, single digits show that number, ten or more collapses to `9+`, a fractional count floors instead of naming a file that does not exist, and junk (negative, `NaN`) falls back to the plain icon. Every file the mapping can name is checked to exist in `build/icons/tray/`, and the tooltip keeps the exact number past nine, singular at one. |
 | Launcher badge | The Unity `LauncherEntry` signal is a valid D-Bus object path (a percent-encoded app URI is not, and every emit silently failed), the count is typed `int64`, and zero hides the badge. |
 | Gmail labels | A label carried by the whole conversation counts every message; one carried by a single reply reports *one*, not the conversation (the difference the picker draws a dash for). The Inbox is a label and says so; a virtual view is not offered as one, and neither is anything a message can only be moved to. Another account holding the same `Message-ID` contributes no label — asserted against `listMessageCopies` itself, because the label-level check passes whether or not the scoping exists, and a leaked copy is what `addLabel` would take its COPY *from*. Adding a label every message already carries, or removing one none carries, does nothing at all (`failed` is asserted too — without the filter it would attempt a server round-trip and report a failure rather than a no-op). Labelling a non-Gmail account is refused, and a label deleted underneath the picker is an error rather than a crash. |
-| IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. |
+| IPC contract | Every channel `preload.ts` invokes has an `ipcMain.handle` in `main.ts`. Added after two channels were wired into the preload but not main — clean build, green suite, runtime failure. **Both halves of the spine**: main→renderer events (`webContents.send` / `ipcRenderer.on`) are checked the same way, because a listener nothing ever sends to is more silent than a missing handler — an invoke at least throws. |
 | Docs | Every `npm run` script and file path the docs cite exists, the documented Electron version matches `package.json`, and no document claims credentials are built into a package (CLAUDE.md rule 6). Prose is not checked; references are. |
 | mbox export | `From ` lines inside a body are escaped, at the start of a body too, already-escaped lines gain a marker (mboxrd, so it is reversible), and a word merely starting with "From" is untouched; 8-bit content survives byte for byte; the separator carries an asctime date and copes with an unusable one; and an end-to-end export of a message *containing* a From line produces one separator per message, not one per line, in an owner-only file. |
 | POP3 sync window | The `Date` header is read case-insensitively and reassembled when folded onto a continuation line; a missing or unparseable date yields null so the message is *not* skipped on a guess; and a `Date:` line appearing after the headers is not mistaken for one. |
@@ -2605,6 +2605,18 @@ synced → window closed with no save-as-draft prompt → the recipient's copy r
 back off IMAP. It also asserts nothing threw, which is how the destroyed-window
 bug below was found.
 
+**`e2e-send-failure.suite.ts` — a send that fails tells the user.** The same
+path, with the outgoing server on port 1 so the send cannot succeed: the
+composer closes, the hold expires, the scheduler runs the send, SMTP refuses,
+and the **toast in the main window** is read back off the DOM. Asserted there
+rather than on an IPC message or a store field, because "the user is told" is
+the entire thing under test — the defect was that a failed send reached only
+`console.warn`. Also asserts the draft survives (the toast promises it) and that
+nothing is filed in Sent. It **earned its place on its first run**, failing
+because nodemailer's `ESOCKET` wrapper was leaking `connect ECONNREFUSED
+127.0.0.1:1` to the user; the classifier now reads the syscall out of the
+message. No unit test could have caught either the silence or the leak.
+
 **`e2e-signature.suite.ts` — the signature follows the From account.** Opens a
 composer, types into it, and switches From across three accounts (one with a
 signature, another with a different one, a third with none), asserting the block is
@@ -2695,6 +2707,32 @@ Things worth knowing before touching these:
   check here goes green suspiciously easily, suspect these first.
 - Docker orchestration is shared with `test:imap` in `scripts/greenmail.mjs`;
   each runner brings its own container name and host ports.
+
+### A send that fails now says so
+
+A send runs on the **scheduler**, after the undo window closes and long after
+the composer has gone. `runDueActions` deletes an action *before* running it and
+never retries — losing an action is recoverable, sending twice is not — so a
+failure existed for exactly one moment and reached only `console.warn`:
+
+```
+[orbit-mail] Scheduled send failed and will not be retried: Error: connect ECONNREFUSED
+```
+
+The message stayed in Drafts (`performSend` deletes the draft only once the send
+resolves, which is the right order), but nothing said so. The last thing the user
+saw was the send being accepted. **A message silently not sent is the worst
+failure this app has**, and no amount of better wording helps when nothing
+reaches the window.
+
+`compose:sendFailed` carries `{ subject, message, keptAsDraft }` to the main
+window, which toasts it. `keptAsDraft` is not decoration: the toast promises the
+message is recoverable, and a send with no draft behind it cannot promise that.
+
+This is only visible end to end — the defect *was* that nothing reached the
+window — so `e2e-send-failure.suite.ts` drives a real composer against an
+outgoing server on port 1 and asserts on **the toast text in the main window**,
+plus that the draft survives and nothing is filed in Sent.
 
 ## Pure main-process logic (`test:pure`)
 
@@ -2794,6 +2832,22 @@ must **not** raise the button, and a flagged failure containing none of them
 must still raise it. Under the old inference the first was a false positive and
 the second a false negative. `test:imap` proves the flag survives the trip
 end to end, against a real server that rejects a real password.
+
+`describeSendFailure` is the third caller, and it reads the SMTP reply rather
+than only the transport: a send fails differently from a connection, because the
+transport can be perfectly healthy and the *server* still refuse. A rejected
+recipient (`rejected` + a 550-554 `responseCode`) names **the addresses**, not
+"a recipient" — that is the difference between fixing a typo and hunting through
+four addresses for it — and an over-size message (552/523) is checked first,
+because both carry addresses and "too large" is the actionable half.
+
+**nodemailer relabels socket failures as its own `ESOCKET`** and leaves the real
+cause only in the message, so a refused SMTP connection arrives as
+`{ code: 'ESOCKET', message: 'connect ECONNREFUSED 127.0.0.1:1' }`. Reading
+`code` alone classified that as `unknown` and showed the user the raw string.
+The classifier matches the syscall name in the message too, on word boundaries.
+That gap was found by the send-failure e2e check on its first run, not by
+reading the code — which is the argument for the check existing.
 
 The response tidier drops the IMAP command tag and status word (`3 NO …`), and
 is deliberately **case-sensitive**: `NO` and `BAD` are uppercase in the protocol,

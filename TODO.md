@@ -111,6 +111,59 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **A send that fails now tells the user.** Asked for as "do the SMTP send
+  errors too", on the assumption it was the wording. It was not: the wording
+  never reached anybody.
+
+  A send runs on the **scheduler**, after the undo window closes and long after
+  the composer has gone. `runDueActions` deletes an action before running it and
+  never retries, so the failure existed for one moment and went to
+  `console.warn`:
+
+  ```
+  [orbit-mail] Scheduled send failed and will not be retried: Error: connect ECONNREFUSED
+  ```
+
+  The message did stay in Drafts — `performSend` deletes the draft only after
+  the send resolves, which is the right order — but nothing said so, and the
+  last thing the user saw was the send being accepted. **A message silently not
+  sent is the worst failure this app has.**
+
+  `compose:sendFailed` now carries `{ subject, message, keptAsDraft }` to the
+  main window, which toasts it. `keptAsDraft` is not decoration: the toast
+  promises the message is recoverable, and a send with no draft behind it cannot
+  promise that.
+
+  `describeSendFailure` reads the SMTP reply rather than only the transport,
+  because a send fails differently from a connection — the transport can be
+  healthy and the server still refuse. A rejected recipient names **the
+  addresses** rather than saying "a recipient", which is the difference between
+  fixing a typo and hunting for it; an over-size message is checked first, since
+  both carry addresses and "too large" is the actionable half.
+
+  **The e2e check earned its place on its first run.** It failed, showing
+  `Not sent: connect ECONNREFUSED 127.0.0.1:1` — nodemailer relabels socket
+  failures as its own `ESOCKET` and leaves the real cause only in the message,
+  so reading `code` alone classified it as `unknown` and leaked the raw string
+  to the user. That is precisely the failure this module exists to prevent, and
+  reading the code would not have found it. The classifier now matches the
+  syscall name in the message too, on word boundaries so prose containing the
+  word is not mistaken for it.
+
+  Two things went in alongside, both prompted by this rather than planned:
+
+  - **The IPC contract check now covers events**, not just `invoke`/`handle`. A
+    listener in the preload that nothing ever sends to is *more* silent than a
+    missing handler — an invoke at least throws. Confirmed to fail when the
+    `webContents.send` is removed.
+  - **Seven mutants survived** the first sweep of `describeSendFailure`, all in
+    the 550-554 range check and the `rejected` filter. Fixed with tests, not
+    allowlist entries: the range boundaries, a 421 that must *not* read as a
+    recipient problem, and junk entries in `rejected` that must not reach the
+    screen.
+
+  `test:e2e` is now eleven suites, all passing.
+
 - **The Re-authenticate button is a flag, not a guess about wording.** The
   follow-up the entry below recorded as deliberately deferred.
 
@@ -198,10 +251,9 @@ does. Preserving that needs prefix or trigram tokenisation.
   response carrying no matching word (`535 5.7.8 Bad credentials`), and then
   confirmed to fail when the wording drops "login".
 
-  **Left undone at the time:** inferring intent from prose. That was done
-  immediately afterwards — see the entry above. SMTP send failures are still
-  left alone; nodemailer's messages (`Invalid login: 535 …`) are already
-  readable.
+  **Left undone at the time:** inferring intent from prose, and SMTP send
+  failures. Both were done immediately afterwards — see the entries above. The
+  send one turned out not to be a wording problem at all.
 
 - **A failed manual account setup says which server refused and why, instead of
   "Command failed".** Found immediately after the Gmail fix below, adding the

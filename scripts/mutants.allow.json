@@ -419,6 +419,12 @@
     {
       "file": "electron/services/connection-failure.ts",
       "rule": "nullish->or",
+      "code": "const e = (err ?? {}) as { responseCode?: unknown; rejected?: unknown }",
+      "reason": "Same argument as the identical line in classifyConnectionFailure: the result is only property-accessed (.responseCode/.rejected), and every falsy non-nullish value `||` would swap for {} \u2014 0, '', false, NaN \u2014 yields undefined for both properties anyway, so no input distinguishes them. describeSendFailure also passes the original `err` straight to classifyConnectionFailure, which reads its own copy, so nothing downstream sees the difference either."
+    },
+    {
+      "file": "electron/services/connection-failure.ts",
+      "rule": "nullish->or",
       "code": ")[0] ?? ''",
       "reason": "The array is filtered by `typeof v === 'string' && v.trim().length > 0`, so element [0] is either a non-empty string or undefined \u2014 never a falsy string. `??` and `||` can only differ on a falsy non-nullish element, which the filter has already excluded. The filter itself is load-bearing and pinned separately by test:pure ('a blank response does not beat a real one'), which is what stops that guarantee being quietly removed."
     }

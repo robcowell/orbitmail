@@ -39,6 +39,45 @@ export interface ConnectionFailure {
   response: string
   /** The library's own message, for when there is nothing better. */
   message: string
+  /**
+   * Whether signing in again is the fix. Drives the **Re-authenticate** button.
+   *
+   * True for a rejected login, and for anything explicitly marked by
+   * `markReauthRequired` — the OAuth failures whose text this module cannot
+   * classify, because they are sentences we wrote ourselves rather than
+   * anything a mail server said.
+   */
+  needsReauth: boolean
+}
+
+/**
+ * A property, not a subclass: these errors cross from `oauth-*.ts` through
+ * `imap-sync.ts` and are re-wrapped on the way, and `instanceof` does not
+ * survive that. A plain marker does.
+ */
+const REAUTH_MARKER = 'orbitReauthRequired'
+
+/**
+ * Mark an error as one that only signing in again will fix.
+ *
+ * Used where the failure is *known* — an absent refresh token, a refresh the
+ * provider refused, a consent that was revoked. Those messages are our own
+ * prose, so no amount of pattern-matching on them is honest: the code that
+ * throws is the only place that actually knows.
+ */
+export function markReauthRequired<T>(err: T): T {
+  if (err && typeof err === 'object') {
+    ;(err as Record<string, unknown>)[REAUTH_MARKER] = true
+  }
+  return err
+}
+
+export function isReauthRequired(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === 'object' &&
+    (err as Record<string, unknown>)[REAUTH_MARKER] === true
+  )
 }
 
 interface Errorish {
@@ -87,7 +126,7 @@ export function classifyConnectionFailure(err: unknown): ConnectionFailure {
     return 'unknown'
   })()
 
-  return { kind, response, message }
+  return { kind, response, message, needsReauth: kind === 'auth' || isReauthRequired(err) }
 }
 
 /**
@@ -140,23 +179,26 @@ export function describeConnectionFailure(
  * renders `${email}: ${error}` (`syncStatus.ts`), so naming the account here
  * prints it twice.
  *
- * **The `auth` sentence must contain a word `REAUTH_PATTERN` matches**
- * (`/auth|token|login|expired|invalid_grant|consent/i`, in
- * `src/utils/syncStatus.ts`) — that regex, run over this prose, is what raises
- * the **Re-authenticate** button. Wording that reads perfectly well but happens
- * to avoid those words silently removes the user's way out. Equally, the other
- * branches must *not* match it, or a DNS typo offers a pointless re-auth. Both
- * directions are pinned in `test:store`, which runs the real strings from here
- * through the real `summarizeSyncStatus`.
+ * Returns the flag **alongside** the wording rather than leaving it to be
+ * re-derived downstream. It used to be inferred in the renderer by running
+ * `/auth|token|login|expired|invalid_grant|consent/i` over this prose, which
+ * meant rewording a sentence could silently remove the user's only way out of a
+ * failing account — and that a DNS typo could offer a pointless re-auth if its
+ * wording happened to contain "token". The two cannot drift apart now because
+ * one call produces both.
  *
  * An unrecognised failure passes its message through untouched, which is what
  * preserves the already-friendly errors written elsewhere —
  * `formatGmailAuthError`, the missing-refresh-token message, and the O365 token
- * errors all arrive here as `unknown`.
+ * errors all arrive here as `unknown`, and carry their re-auth flag as a
+ * `markReauthRequired` marker rather than as words in a sentence.
  */
-export function describeAccountSyncFailure(err: unknown): string {
-  const { kind, response, message } = classifyConnectionFailure(err)
-
+export function describeAccountSyncFailure(err: unknown): {
+  message: string
+  needsReauth: boolean
+} {
+  const { kind, response, message, needsReauth } = classifyConnectionFailure(err)
+  const reason = ((): string => {
   switch (kind) {
     case 'certificate':
       return (
@@ -170,7 +212,6 @@ export function describeAccountSyncFailure(err: unknown): string {
     case 'timeout':
       return 'The mail server did not respond.'
     case 'auth':
-      // "login" is load-bearing: see the note above.
       return (
         'The mail server rejected the login' +
         (response ? ` (${response})` : '') +
@@ -179,4 +220,7 @@ export function describeAccountSyncFailure(err: unknown): string {
     default:
       return message
   }
+  })()
+
+  return { message: reason, needsReauth }
 }

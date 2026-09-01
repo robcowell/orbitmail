@@ -1307,7 +1307,8 @@ async function main() {
     const { summarizeSyncStatus, syncErrorDetail } = require(join(outDir, 'syncStatus.cjs'))
 
     const acct = (id, email, over = {}) => ({
-      accountId: id, email, syncing: false, lastSyncAt: null, error: null, ...over
+      accountId: id, email, syncing: false, lastSyncAt: null, error: null,
+      needsReauth: false, ...over
     })
     const status = (accounts) => ({
       syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0,
@@ -1349,11 +1350,30 @@ async function main() {
       JSON.stringify(syncErrorDetail(many.failing)))
 
     // Re-auth is offered for credential failures only; a dropped connection
-    // must not send the user round an OAuth loop that fixes nothing.
-    ok('an expired credential offers re-authentication',
-      summarizeSyncStatus(status([acct('a', 'a@x', { error: 'invalid_grant' })])).needsReauth)
+    // must not send the user round an OAuth loop that fixes nothing. The verdict
+    // is the main process's, carried on the status — it used to be re-derived
+    // here by running a regex over `error`, so the button was a property of the
+    // wording and a reworded sentence silently removed it.
+    ok('an account flagged by the main process offers re-authentication',
+      summarizeSyncStatus(
+        status([acct('a', 'a@x', { error: 'invalid_grant', needsReauth: true })])
+      ).needsReauth)
     ok('a network failure does not',
-      !summarizeSyncStatus(status([acct('a', 'a@x', { error: 'no route to host' })])).needsReauth)
+      !summarizeSyncStatus(
+        status([acct('a', 'a@x', { error: 'no route to host', needsReauth: false })])
+      ).needsReauth)
+    // The two assertions that prove the regex is gone: the words no longer
+    // matter in either direction.
+    ok('an error whose wording is full of auth words is not promoted',
+      !summarizeSyncStatus(
+        status([acct('a', 'a@x', {
+          error: 'the token expired while consenting to a login', needsReauth: false
+        })])
+      ).needsReauth)
+    ok('and a flagged failure worded with none of them still offers it',
+      summarizeSyncStatus(
+        status([acct('a', 'a@x', { error: 'the mail server said no', needsReauth: true })])
+      ).needsReauth)
 
     // The newest wins whichever order the accounts arrive in. Both directions
     // are needed: the reducer's condition has three parts, and each is masked
@@ -1415,7 +1435,7 @@ async function main() {
 
     const acct = (id, over = {}) => ({
       accountId: id, email: id + '@x', syncing: false,
-      lastSyncAt: null, error: null, reachedServer: null, ...over
+      lastSyncAt: null, error: null, needsReauth: false, reachedServer: null, ...over
     })
     const status = (accounts, over = {}) => ({
       syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0,
@@ -1994,17 +2014,21 @@ async function main() {
   }
 
   // -------------------------------------------------------------------------
-  section('Re-authenticate: the button survives a rewording of the error')
+  section('Re-authenticate: carried as a flag, not inferred from the wording')
   // -------------------------------------------------------------------------
   {
-    // `summarizeSyncStatus` decides whether to offer Re-authenticate by running
-    // /auth|token|login|expired|invalid_grant|consent/i over the error *prose*
-    // written in the main process. Nothing enforces that; rewording a sentence
-    // in `connection-failure.ts` can silently remove the user's way out of a
-    // failing account, and rewording another can offer a pointless re-auth for
-    // a DNS typo. Both directions are pinned here, against the real strings.
+    // This used to be a regex — /auth|token|login|expired|invalid_grant|consent/i
+    // run in the renderer over prose written in the main process. The button was
+    // therefore a property of the wording: rewording a sentence could silently
+    // remove the user's only way out of a failing account, and a DNS failure
+    // whose message happened to contain "token" offered a pointless re-auth.
+    //
+    // The flag is set where the failure is classified and travels on the status.
+    // Both modules are pure, so this runs the real producer's verdict through
+    // the real consumer — which is the only thing that proves they agree.
     const { summarizeSyncStatus } = require(join(outDir, 'syncStatus.cjs'))
-    const { describeAccountSyncFailure } = require(join(outDir, 'connectionFailure.cjs'))
+    const { describeAccountSyncFailure, markReauthRequired } =
+      require(join(outDir, 'connectionFailure.cjs'))
 
     const withCode = (code, message = 'x') => Object.assign(new Error(message), { code })
     const imapAuth = Object.assign(new Error('Command failed'), {
@@ -2012,34 +2036,23 @@ async function main() {
       response: '3 NO [AUTHENTICATIONFAILED] Invalid credentials'
     })
 
-    const summarize = (err) =>
-      summarizeSyncStatus({
+    // The real end-to-end shape: what the main process would store, read by the
+    // renderer exactly as it reads it in the app.
+    const summarize = (err) => {
+      const { message, needsReauth } = describeAccountSyncFailure(err)
+      return summarizeSyncStatus({
         syncing: false, lastSyncAt: null, syncCurrent: 0, syncTotal: 0,
         accounts: {
           a1: {
             accountId: 'a1', email: 'a@b.test', syncing: false, lastSyncAt: null,
-            error: describeAccountSyncFailure(err)
+            error: message, needsReauth
           }
         }
       })
+    }
 
     ok('a rejected login offers Re-authenticate',
-      summarize(imapAuth).needsReauth === true, describeAccountSyncFailure(imapAuth))
-
-    // That one passes for the wrong reason if you are not careful: its quoted
-    // response contains "AUTHENTICATIONFAILED", so the pattern matches the
-    // *server's* text no matter how the prose is worded. This is the honest
-    // version — an auth failure whose response carries no matching word, so
-    // only the sentence written in `connection-failure.ts` can raise the button.
-    const plainAuth = Object.assign(new Error('Invalid login: 535 Bad credentials'), {
-      code: 'EAUTH',
-      response: '535 5.7.8 Bad credentials'
-    })
-    const plainText = describeAccountSyncFailure(plainAuth)
-    ok('the quoted response alone would not raise the button',
-      !/auth|token|login|expired|invalid_grant|consent/i.test('535 5.7.8 Bad credentials'))
-    ok('so the wording itself must, and does',
-      summarize(plainAuth).needsReauth === true, plainText)
+      summarize(imapAuth).needsReauth === true)
 
     for (const [label, err] of [
       ['a hostname typo', withCode('ENOTFOUND')],
@@ -2048,15 +2061,32 @@ async function main() {
       ['a certificate mismatch', withCode('ERR_TLS_CERT_ALTNAME_INVALID')]
     ]) {
       ok(`${label} does not offer a pointless Re-authenticate`,
-        summarize(err).needsReauth === false, describeAccountSyncFailure(err))
+        summarize(err).needsReauth === false, describeAccountSyncFailure(err).message)
     }
 
-    // The friendly OAuth errors written elsewhere pass through unchanged, and
-    // they must keep raising the button too — that is how a Gmail account whose
-    // consent was revoked gets fixed.
-    ok('an OAuth failure passed through still offers Re-authenticate',
-      summarize(new Error('No refresh token stored for a@b. Remove the account and sign in again.'))
-        .needsReauth === true)
+    // An OAuth failure is a sentence we wrote, not anything a server said, so no
+    // classifier can read it — the throwing code marks it instead. This is the
+    // case the regex used to catch by accident, and the one most likely to be
+    // lost in a rewrite.
+    ok('a marked OAuth failure still offers Re-authenticate',
+      summarize(markReauthRequired(
+        new Error('No refresh token stored for a@b. Remove the account and sign in again.')
+      )).needsReauth === true)
+
+    // The regex is gone, and these two prove it in both directions: wording full
+    // of the old trigger words must not raise the button, and a flagged failure
+    // containing none of them must still raise it. Under the old inference the
+    // first of these was a false positive and the second a false negative.
+    ok('wording alone no longer raises the button',
+      summarize(new Error('the token expired while consenting to a login')).needsReauth === false,
+      describeAccountSyncFailure(new Error('the token expired while consenting to a login')).message)
+
+    const plainAuth = Object.assign(new Error('Invalid login: 535 Bad credentials'), {
+      code: 'EAUTH', response: '535 5.7.8 Bad credentials'
+    })
+    ok('and a credential failure quoting no trigger word still does',
+      summarize(plainAuth).needsReauth === true,
+      describeAccountSyncFailure(plainAuth).message)
   }
 
   // -------------------------------------------------------------------------

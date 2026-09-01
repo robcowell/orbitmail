@@ -141,6 +141,7 @@ function accountEntry(accountId: string): AccountSyncStatus {
     syncing: false,
     lastSyncAt: null,
     error: null,
+    needsReauth: false,
     reachedServer: null
   }
   accountStatus.set(accountId, created)
@@ -160,6 +161,7 @@ export function initSyncFromPersistence(): void {
       syncing: false,
       lastSyncAt: perAccount[account.id] ?? legacy,
       error: null,
+      needsReauth: false,
       // Nothing has been attempted this run, so reachability is unknown rather
       // than good: a restart must not assert the servers are up.
       reachedServer: null
@@ -1184,14 +1186,19 @@ export async function syncAccount(
  * which meant a password changed at the host — the single most likely reason a
  * working account stops syncing — reported itself as `Command failed`.
  */
-function accountSyncError(email: string, err: unknown): string {
-  if (!(err instanceof Error)) return `Sync failed for ${email}`
+function accountSyncError(
+  email: string,
+  err: unknown
+): { message: string; needsReauth: boolean } {
+  if (!(err instanceof Error)) {
+    return { message: `Sync failed for ${email}`, needsReauth: false }
+  }
   return describeAccountSyncFailure(err)
 }
 
 export async function refreshAccount(accountId: string, provider: Provider): Promise<void> {
   resetSyncProgress()
-  setAccountStatus(accountId, { syncing: true, error: null })
+  setAccountStatus(accountId, { syncing: true, error: null, needsReauth: false })
 
   try {
     const total = await countNewMessagesForAccount(accountId, provider)
@@ -1216,7 +1223,7 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
     // A manual refresh should also pull server flag changes (read/star).
     void reconcileAccountFlags(accountId, provider).catch(() => {})
   } catch (err) {
-    const message = accountSyncError(
+    const { message, needsReauth } = accountSyncError(
       getAccountTokens(accountId)?.email ?? accountId,
       err
     )
@@ -1225,6 +1232,7 @@ export async function refreshAccount(accountId: string, provider: Provider): Pro
     setAccountStatus(accountId, {
       syncing: false,
       error: message,
+      needsReauth,
       reachedServer: reachedServer(err)
     })
     throw err instanceof Error ? err : new Error(message)
@@ -1238,7 +1246,7 @@ export async function refreshAllAccounts(): Promise<void> {
   const errors: string[] = []
   // Which accounts failed, so a success can clear a *stale* error and a failure
   // can be attributed to the mailbox that actually produced it.
-  const failed = new Map<string, string>()
+  const failed = new Map<string, { message: string; needsReauth: boolean }>()
   // Whether each failure was "refused" or "never got there" — the offline
   // banner is derived from this, not from navigator.onLine.
   const unreachable = new Set<string>()
@@ -1246,7 +1254,7 @@ export async function refreshAllAccounts(): Promise<void> {
   resetSyncProgress()
   setManyAccountStatus(
     accounts.map((a) => a.id),
-    { syncing: true, error: null }
+    { syncing: true, error: null, needsReauth: false }
   )
 
   // Accounts sync independently through their own pooled connections, so run
@@ -1256,9 +1264,9 @@ export async function refreshAllAccounts(): Promise<void> {
       try {
         return await countNewMessagesForAccount(account.id, account.provider)
       } catch (err) {
-        const message = accountSyncError(account.email, err)
+        const { message, needsReauth } = accountSyncError(account.email, err)
         errors.push(message)
-        failed.set(account.id, message)
+        failed.set(account.id, { message, needsReauth })
         if (!reachedServer(err)) unreachable.add(account.id)
         return 0
       }
@@ -1275,9 +1283,9 @@ export async function refreshAllAccounts(): Promise<void> {
           onProgress: incrementSyncProgress
         })
       } catch (err) {
-        const message = accountSyncError(account.email, err)
+        const { message, needsReauth } = accountSyncError(account.email, err)
         errors.push(message)
-        failed.set(account.id, message)
+        failed.set(account.id, { message, needsReauth })
         if (!reachedServer(err)) unreachable.add(account.id)
         return 0
       }
@@ -1294,16 +1302,17 @@ export async function refreshAllAccounts(): Promise<void> {
   // timestamp even while another one is failing — that is the whole point.
   const now = Date.now()
   for (const account of accounts) {
-    const message = failed.get(account.id)
+    const failure = failed.get(account.id)
     accountStatus.set(account.id, {
       ...accountEntry(account.id),
       email: account.email,
       syncing: false,
-      error: message ?? null,
-      lastSyncAt: message ? accountEntry(account.id).lastSyncAt : now,
-      reachedServer: message ? !unreachable.has(account.id) : true
+      error: failure?.message ?? null,
+      needsReauth: failure?.needsReauth ?? false,
+      lastSyncAt: failure ? accountEntry(account.id).lastSyncAt : now,
+      reachedServer: failure ? !unreachable.has(account.id) : true
     })
-    if (!message) setAccountLastSyncAt(account.id, now)
+    if (!failure) setAccountLastSyncAt(account.id, now)
   }
   if (failed.size < accounts.length) setLastSyncAt(now)
   emitSyncStatus()

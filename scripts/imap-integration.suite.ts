@@ -5682,6 +5682,15 @@ async function main(): Promise<void> {
       incoming: { host: HOST, port: 1, security: 'none' },
       outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
     })
+    // Reachable, and refused: the real server rejects this password. That is the
+    // failure Re-authenticate exists for, and the only way to see the flag
+    // travel from where it is classified to where the button reads it.
+    const wrongPass = db.saveManualAccount('imap', {
+      authType: 'password', email: 'wrongpass@example.com', displayName: 'Wrong Password',
+      username: 'rob', password: 'not-the-password',
+      incoming: { host: HOST, port: IMAP_PORT, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
 
     await sync.refreshAllAccounts().catch(() => {})
 
@@ -5704,6 +5713,22 @@ async function main(): Promise<void> {
       status.lastSyncAt !== null, `lastSyncAt=${status.lastSyncAt}`)
     ok('a failure does not fake freshness on the account that failed',
       b?.lastSyncAt === null, `lastSyncAt=${b?.lastSyncAt}`)
+
+    // needsReauth is set where the failure is classified and carried on the
+    // status, rather than re-derived in the renderer by pattern-matching the
+    // error prose. Both directions, against a real server: a rejected login
+    // raises it, and a connection that never landed does not — sending someone
+    // round a sign-in loop fixes nothing when the port is simply closed.
+    const w = status.accounts[wrongPass.id]
+    ok('a real rejected login is flagged for re-authentication',
+      w?.needsReauth === true, `error=${String(w?.error).slice(0, 70)}`)
+    ok('and says the login was rejected rather than "Command failed"',
+      /rejected the login/.test(String(w?.error)), String(w?.error).slice(0, 90))
+    ok('a refused connection is not flagged',
+      b?.needsReauth === false, `error=${String(b?.error).slice(0, 70)}`)
+    ok('nor is a healthy account', h?.needsReauth === false)
+    ok('being refused still counts as reaching the server',
+      w?.reachedServer === true, String(w?.reachedServer))
     ok('nothing is left marked as syncing once the pass ends',
       status.syncing === false && !h?.syncing && !b?.syncing,
       `any=${status.syncing} healthy=${h?.syncing} broken=${b?.syncing}`)
@@ -5714,6 +5739,9 @@ async function main(): Promise<void> {
     ok('a fresh success leaves no stale error behind',
       sync.getSyncStatus().accounts[healthy.id]?.error === null,
       String(sync.getSyncStatus().accounts[healthy.id]?.error))
+    ok('and no stale Re-authenticate button',
+      sync.getSyncStatus().accounts[healthy.id]?.needsReauth === false,
+      String(sync.getSyncStatus().accounts[healthy.id]?.needsReauth))
 
     // Status is keyed by account id and is not covered by the DB cascade, so
     // removal has to drop it explicitly or a deleted account keeps reporting.
@@ -5725,6 +5753,8 @@ async function main(): Promise<void> {
 
     db.removeAccount(healthy.id)
     sync.forgetAccountSyncStatus(healthy.id)
+    db.removeAccount(wrongPass.id)
+    sync.forgetAccountSyncStatus(wrongPass.id)
   }
 
   // -------------------------------------------------------------------------

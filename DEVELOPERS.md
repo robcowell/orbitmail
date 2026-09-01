@@ -2443,6 +2443,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Undo lookup | A relocated message is findable by its RFC Message-ID and reports the folder it now sits in; every row for a Message-ID comes back, not just the first, so a Gmail row already in the destination can be told from one that is not; the lookup is scoped to one account, so an identical Message-ID in another account is not restored. |
 | Unified search | A null `accountId` searches every account and returns them interleaved newest-first, not grouped; an account id still scopes to that account alone; an **empty string** returns nothing rather than everything; the limit bounds the merged set rather than applying per account. |
 | Reachability | End to end: a real refused connection records `reachedServer: false` on the *account*, and a successful sync records `true`. What counts as refused is arithmetic and lives in `test:pure`; that it reaches the account needs a server to refuse it. |
+| Re-authenticate, end to end | A third real account with the wrong password: the server rejects the login, the status carries `needsReauth: true` and an error naming the rejection rather than `Command failed`, while the account pointed at a closed port carries `false` — being refused still counts as reaching the server. A later success clears the flag, not just the message. |
 | Per-account sync status | Two real accounts, one pointed at a closed port: the failing one carries its own error, the healthy one carries none and still reports a last-synced time. A failure does not stamp freshness on the account that failed; a later success clears a stale error; removing an account stops it reporting. (Turning that state into one line of status-bar wording is `test:store`.) |
 | Inline images (inbound) | A `multipart/related` message parsed by the real mailparser: the referenced image is marked inline and *is* already a `data:` URI in the body, the `.pdf` beside it is not marked, and an `image/svg+xml` is left alone because mailparser did not embed it either. A message whose only part is a signature logo carries no attachments at all; without an HTML body nothing is hidden. |
 | Inline images (backfill) | Every copy of an embedded image is marked, not just the first — the parts outnumber the `data:` URIs, so consuming matches would leave half behind. A size match under a different image MIME counts; an image the body never embedded stays visible; a document of a colliding size is never touched. `has_attachments` clears only once nothing but embedded images is left, and a second run is a no-op. |
@@ -2758,22 +2759,41 @@ An `unknown` kind passes the message through untouched. That is what preserves
 the already-friendly errors written elsewhere — `formatGmailAuthError`, the
 missing-refresh-token message and the O365 token errors all arrive as `unknown`.
 
-**The Re-authenticate button is inferred from this prose.** `summarizeSyncStatus`
-runs `/auth|token|login|expired|invalid_grant|consent/i` over the error text to
-decide whether to offer it. So the `auth` sentence must contain a word that
-regex matches — "login" is load-bearing — and the others must *not*, or a DNS
-typo offers a pointless re-auth. Nothing in the type system enforces either
-direction, and both are one wording change from breaking silently, so
-`test:store` bundles this main-process module alongside `syncStatus.ts` and runs
-the real strings through the real consumer. The auth assertion deliberately uses
-an error whose quoted response contains **no** matching word (`535 5.7.8 Bad
-credentials`); the first version of that test passed against any wording,
-because the server's own `[AUTHENTICATIONFAILED]` was matching the regex rather
-than the sentence being tested.
+**The Re-authenticate button is a flag, not an inference.**
+`describeAccountSyncFailure` returns `{ message, needsReauth }`, and the flag
+travels on `AccountSyncStatus` to the renderer, which reads it directly.
 
-Inferring intent from prose is the fragile part, not the wording. The durable
-fix is a `needsReauth` flag on `AccountSyncStatus` set where the failure is
-classified; it is not done, and the coupling is pinned by test instead.
+It was not always so, and the history is the reason the current shape is worth
+keeping. `summarizeSyncStatus` used to run
+`/auth|token|login|expired|invalid_grant|consent/i` over the error *prose* to
+decide whether to offer the button. That made the button a property of the
+wording: rewording the auth sentence could silently remove the user's only way
+out of a failing account, and a DNS failure whose message happened to contain
+"token" would offer a pointless re-auth. Nothing in the type system connected
+the two, and nothing failed when they diverged.
+
+The `auth` kind sets the flag on its own. The OAuth failures cannot be
+classified that way — `formatGmailAuthError`, the missing-refresh-token errors
+and the Microsoft refresh failures are sentences *we* wrote, not anything a
+server said — so the code that throws marks them with `markReauthRequired`. That
+is a plain property rather than an Error subclass, because those errors cross
+from `oauth-*.ts` through `imap-sync.ts` and are re-wrapped on the way, and
+`instanceof` does not survive that.
+
+The flag is cleared when a new attempt starts, so a fixed password takes the
+button away rather than leaving it until the next failure. `pollForNewMessages`
+is deliberately excluded: it swallows sync errors by design and preserves both
+`error` and `needsReauth` untouched, so a background poll neither raises nor
+clears the button.
+
+`test:store` bundles this main-process module alongside `syncStatus.ts` and runs
+the real producer's verdict through the real consumer, because that is the only
+thing that proves the two agree. Two of its assertions exist specifically to
+prove the regex is gone: an error whose wording is full of the old trigger words
+must **not** raise the button, and a flagged failure containing none of them
+must still raise it. Under the old inference the first was a false positive and
+the second a false negative. `test:imap` proves the flag survives the trip
+end to end, against a real server that rejects a real password.
 
 The response tidier drops the IMAP command tag and status word (`3 NO …`), and
 is deliberately **case-sensitive**: `NO` and `BAD` are uppercase in the protocol,
@@ -3009,7 +3029,7 @@ against this suite.
 | Area | What it asserts |
 |------|-----------------|
 | Delete/refresh race | A list refresh landing *while* a delete is in flight does not resurrect the row, in the list or the count. The main process removes the local SQLite row only after the IMAP round-trip returns, so a refresh in that window reads a DB that still holds the message; `withPendingRemoval` holds it out until the op settles. |
-| Re-authenticate coupling | `summarizeSyncStatus` infers the button from a regex over prose written in the main process, so the real strings from `describeAccountSyncFailure` are run through the real consumer: a rejected login raises it, and a DNS typo, refused connection, timeout and certificate mismatch do not. The auth case uses a response containing no matching word, so only the sentence itself can raise it. |
+| Re-authenticate flag | The real verdict from `describeAccountSyncFailure` run through the real `summarizeSyncStatus`: a rejected login raises the button; a DNS typo, refused connection, timeout and certificate mismatch do not; an OAuth failure marked by `markReauthRequired` does, despite being unclassifiable from its text. Two assertions prove the old regex is gone — wording full of the trigger words does not raise it, and a flagged failure containing none of them still does. |
 | IPC error text | Electron's `Error invoking remote method '…': Error:` wrapper is stripped, along with the class tag behind it, while a colon inside the real message survives; a non-error, an empty message and a bare wrapper all fall back rather than showing an empty toast. |
 | Pane layout | The reader keeps its minimum at every window width; a squeeze takes from the list first and the sidebar second; the sidebar collapses below 900px and returns above it; an explicit preference wins in both directions but loses to arithmetic when it cannot fit; the panes always sum exactly to the window, so nothing overflows sideways. |
 | List header | Names the folder and qualifies it by account only when more than one exists; reports how much of the list is loaded ("20 of 143 conversations") and stops claiming a full count while showing part of one; counts conversations or messages according to the view; folds an active unread filter into the noun ("3 unread conversations") rather than repeating it beside the count; groups large numbers; and still names an unresolvable folder rather than rendering an empty header. |

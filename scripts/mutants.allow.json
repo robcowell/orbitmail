@@ -369,12 +369,6 @@
       "reason": "The same field, read a second time in the same module: an object or absent, with no falsy-but-present case between them."
     },
     {
-      "file": "src/utils/syncStatus.ts",
-      "rule": "nullish->or",
-      "code": "needsReauth: failing.some((a) => REAUTH_PATTERN.test(a.error ?? '')),",
-      "reason": "`error` is a non-empty message or null, and the fallback is the empty string. An error of '' \u2014 if one could occur \u2014 is tested against the same pattern as the fallback, so the two operators give the same answer either way."
-    },
-    {
       "file": "src/utils/search.ts",
       "rule": "nullish->or",
       "code": "const name = folderName.get(result.folderId) ?? 'Mailbox'",

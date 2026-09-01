@@ -111,6 +111,54 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **The Re-authenticate button is a flag, not a guess about wording.** The
+  follow-up the entry below recorded as deliberately deferred.
+
+  `summarizeSyncStatus` decided whether to offer the button by running
+  `/auth|token|login|expired|invalid_grant|consent/i` over the error *prose*
+  written in the main process. That made the button a property of the wording,
+  with nothing in the type system connecting the two and nothing failing when
+  they diverged. It was one sentence away from removing a user's only way out of
+  a failing account, and it already produced a latent false positive: any
+  failure whose message happened to contain "token" offered a pointless re-auth.
+
+  `describeAccountSyncFailure` now returns `{ message, needsReauth }` — one call
+  produces both, so they cannot drift — and the flag travels on
+  `AccountSyncStatus` to the renderer, which reads it directly. The regex is
+  deleted.
+
+  **The OAuth failures needed a second mechanism.** `formatGmailAuthError`, the
+  missing-refresh-token errors and the Microsoft refresh failures are sentences
+  *we* wrote, not anything a mail server said, so no classifier can honestly
+  read them — the old regex caught them by accident. The code that throws marks
+  them with `markReauthRequired` instead. A plain property rather than an Error
+  subclass, because those errors cross from `oauth-*.ts` through `imap-sync.ts`
+  and are re-wrapped on the way, and `instanceof` does not survive that.
+
+  Two details that are decisions rather than mechanics:
+
+  - **The flag clears when a new attempt starts**, alongside the error, so a
+    fixed password takes the button away instead of leaving it until the next
+    failure. `test:imap` asserts that.
+  - **`pollForNewMessages` is deliberately untouched.** It swallows sync errors
+    by design and preserves both `error` and `needsReauth`, so a background poll
+    neither raises nor clears the button. Making it clear the flag but not the
+    error would have left the status bar showing a failure with no way to act on
+    it.
+
+  Two assertions exist purely to prove the regex is gone: wording full of the
+  old trigger words must **not** raise the button, and a flagged failure
+  containing none of them must still raise it. Under the old inference the first
+  was a false positive and the second a false negative. `test:imap` proves it
+  end to end with a third real account whose password the GreenMail server
+  rejects — the flag reaches the account status, while the account pointed at a
+  closed port does not get it.
+
+  The stale `mutants.allow.json` entry justifying the deleted regex line was
+  removed rather than left to rot. Mutation sweeps after the change:
+  `connection-failure.ts` 23 of 25 caught with 2 justified, `syncStatus.ts` 13
+  of 16 with 3 justified.
+
 - **Errors say what went wrong, across the whole app.** Asked for directly after
   the two account bugs below: *"more meaningful error messages would massively
   help the user."* A survey found two distinct problems.
@@ -150,12 +198,10 @@ does. Preserving that needs prefix or trigram tokenisation.
   response carrying no matching word (`535 5.7.8 Bad credentials`), and then
   confirmed to fail when the wording drops "login".
 
-  **Left undone, deliberately:** inferring intent from prose is the fragile
-  part. The durable fix is a `needsReauth` flag on `AccountSyncStatus`, set where
-  the failure is classified rather than re-derived by regex downstream. That
-  changes the IPC payload, so it was out of scope here; the coupling is pinned
-  by test in the meantime. SMTP send failures were also left — nodemailer's
-  messages (`Invalid login: 535 …`) are already readable.
+  **Left undone at the time:** inferring intent from prose. That was done
+  immediately afterwards — see the entry above. SMTP send failures are still
+  left alone; nodemailer's messages (`Invalid login: 535 …`) are already
+  readable.
 
 - **A failed manual account setup says which server refused and why, instead of
   "Command failed".** Found immediately after the Gmail fix below, adding the

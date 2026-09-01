@@ -241,6 +241,22 @@ export interface AccountSyncStatus {
   /** This account's own failure, unjoined with anyone else's. */
   error: string | null
   /**
+   * Whether signing in again is the fix — what raises the **Re-authenticate**
+   * button.
+   *
+   * Set where the failure is classified, in the main process, because that is
+   * the only place that knows. The renderer used to infer it by running
+   * `/auth|token|login|expired|invalid_grant|consent/i` over `error`, which made
+   * the button a property of the *prose*: rewording a sentence could silently
+   * remove the user's only way out of a failing account, and a DNS failure whose
+   * message happened to contain "token" would offer a pointless re-auth. Nothing
+   * in the type system connected the two, and nothing failed when they diverged.
+   *
+   * Cleared when a new attempt starts, so a fixed password takes the button away
+   * rather than leaving it until the next failure.
+   */
+  needsReauth: boolean
+  /**
    * Whether the last attempt reached the server at all. An account that was
    * refused — an expired token, a wrong password — counts as **reached**: the
    * server answered, it just said no, and that is not an outage.

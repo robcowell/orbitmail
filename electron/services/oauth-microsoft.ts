@@ -7,6 +7,7 @@ import {
 import { startLoopbackServer, openExternalAuthUrl, generateState } from './oauth-loopback'
 import type { TokenData } from './db-service'
 import { getMicrosoftOAuthConfig } from './oauth-config'
+import { markReauthRequired } from './connection-failure'
 
 // Delegated scopes for IMAP/SMTP client access to Exchange Online via XOAUTH2.
 // These are requested dynamically at sign-in and consented by the user, so they do
@@ -111,8 +112,10 @@ export async function authenticateMicrosoft(): Promise<TokenData> {
 
 export async function refreshMicrosoftToken(tokenData: TokenData): Promise<TokenData> {
   if (!tokenData.refreshToken) {
-    throw new Error(
-      `No Microsoft refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+    throw markReauthRequired(
+      new Error(
+        `No Microsoft refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+      )
     )
   }
 
@@ -123,7 +126,9 @@ export async function refreshMicrosoftToken(tokenData: TokenData): Promise<Token
   })
 
   if (!result?.accessToken) {
-    throw new Error(`Failed to refresh Microsoft access for ${tokenData.email}.`)
+    throw markReauthRequired(
+      new Error(`Failed to refresh Microsoft access for ${tokenData.email}.`)
+    )
   }
 
   return {

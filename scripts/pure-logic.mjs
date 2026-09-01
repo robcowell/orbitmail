@@ -482,8 +482,10 @@ async function main() {
   section('Connection failures: the reason, not "Command failed"')
   // -------------------------------------------------------------------------
   {
-    const { classifyConnectionFailure, describeConnectionFailure, describeAccountSyncFailure } =
-      load('connection-failure')
+    const {
+      classifyConnectionFailure, describeConnectionFailure, describeAccountSyncFailure,
+      markReauthRequired
+    } = load('connection-failure')
 
     // The shape ImapFlow actually produces for a rejected LOGIN, captured from
     // a real server. `message` is the useless part; `response` is the answer.
@@ -562,7 +564,7 @@ async function main() {
       unknownDlg)
 
     // --- Status-bar wording: reason only, because the display adds the address.
-    const sync = (err) => describeAccountSyncFailure(err)
+    const sync = (err) => describeAccountSyncFailure(err).message
     const syncAuth = sync(imapAuth)
     ok('the sync reason never repeats the address (syncStatus.ts renders it)',
       !syncAuth.includes('@'), syncAuth)
@@ -585,6 +587,41 @@ async function main() {
     for (const m of [auth, cert, unknownDlg, syncAuth, sync(withCode('ENOTFOUND'))]) {
       ok('the message is a single line', !m.includes('\n'), JSON.stringify(m))
     }
+
+    // --- needsReauth travels with the wording, rather than being re-derived --
+    // The renderer used to run a regex over the prose above to decide whether to
+    // offer Re-authenticate. It reads this instead, so the two cannot drift.
+    const reauth = (err) => describeAccountSyncFailure(err).needsReauth
+    ok('a rejected login needs re-authentication', reauth(imapAuth) === true)
+    for (const [label, err] of [
+      ['a hostname typo', withCode('ENOTFOUND')],
+      ['a refused connection', withCode('ECONNREFUSED')],
+      ['a timeout', withCode('ETIMEDOUT')],
+      ['a certificate mismatch', withCode('ERR_TLS_CERT_ALTNAME_INVALID')]
+    ]) {
+      ok(`${label} does not`, reauth(err) === false, label)
+    }
+
+    // The OAuth failures are sentences we wrote, not anything a server said, so
+    // no classifier can read them. The code that throws marks them instead.
+    const marked = markReauthRequired(
+      new Error('No refresh token stored for a@b. Remove the account and sign in again.')
+    )
+    ok('an explicitly marked error needs re-authentication', reauth(marked) === true)
+    ok('and its message is still passed through untouched',
+      describeAccountSyncFailure(marked).message === marked.message)
+    ok('marking survives the classifier seeing it as unknown',
+      classifyConnectionFailure(marked).kind === 'unknown' &&
+        classifyConnectionFailure(marked).needsReauth === true)
+
+    // The point of the whole change: a failure whose *prose* contains the words
+    // the old regex looked for must NOT raise the button on that basis alone.
+    const wordy = new Error('the token bucket expired while consenting to a login')
+    ok('wording that merely contains the old regex words does not raise it',
+      reauth(wordy) === false, describeAccountSyncFailure(wordy).message)
+
+    ok('marking a non-object is a no-op rather than a crash',
+      markReauthRequired(null) === null && reauth(null) === false)
   }
 
   console.log(

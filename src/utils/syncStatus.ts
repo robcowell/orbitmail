@@ -46,8 +46,6 @@ export interface ConnectivityView {
   message: string | null
 }
 
-const REAUTH_PATTERN = /auth|token|login|expired|invalid_grant|consent/i
-
 export function summarizeSyncStatus(status: SyncStatus): SyncStatusSummary {
   const all = Object.values(status.accounts ?? {})
   const failing = all.filter((a) => a.error)
@@ -69,7 +67,9 @@ export function summarizeSyncStatus(status: SyncStatus): SyncStatusSummary {
         : failing.length === 1
           ? `${failing[0].email}: ${failing[0].error}`
           : `${failing.length} accounts are not syncing`,
-    needsReauth: failing.some((a) => REAUTH_PATTERN.test(a.error ?? '')),
+    // Reported by the main process, where the failure is classified — not
+    // re-derived from the wording of `error`. See AccountSyncStatus.
+    needsReauth: failing.some((a) => a.needsReauth),
     healthyLastSyncAt,
     mixed: failing.length > 0 && healthy.length > 0
   }

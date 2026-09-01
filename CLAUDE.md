@@ -176,10 +176,9 @@ it, and the selection advances to the next row down. It also bundles
 state into one line, `src/utils/search.ts` for which account(s) a query runs
 against, `src/utils/ipcError.ts` for stripping Electron's channel wrapper off an
 error before a toast shows it, `electron/services/connection-failure.ts` — a
-*main-process* module, deliberately: it writes the sync error prose and
-`syncStatus.ts` decides whether to offer **Re-authenticate** by running a regex
-over that prose, so the only honest test of that coupling runs the real
-producer's strings through the real consumer — and
+*main-process* module, deliberately: it decides `needsReauth`, `syncStatus.ts`
+consumes it, and the only honest test of that contract runs the real producer's
+verdict through the real consumer — and
 `src/utils/emailColorScheme.ts` for the dark-mode
 contrast rule that decides whether a message renders on a light surface — the same trick works for any pure
 renderer logic, which is why that classifier is string work and not a DOM walk.

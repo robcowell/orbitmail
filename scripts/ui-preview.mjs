@@ -299,6 +299,7 @@ const OVERRIDES = {
       'acc-1': {
         accountId: 'acc-1', email: 'you@example.com',
         syncing: false, lastSyncAt: Date.now() - 120000, error: null,
+        needsReauth: false,
         reachedServer: true
       },
       'acc-2': {
@@ -307,6 +308,7 @@ const OVERRIDES = {
         error: 'Authentication failed: token expired',
         // Refused, not unreachable — which is why the offline banner stays
         // away here even though this account is failing.
+        needsReauth: false,
         reachedServer: true
       }
     }

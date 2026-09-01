@@ -2,6 +2,7 @@ import { OAuth2Client, CodeChallengeMethod } from 'google-auth-library'
 import { startLoopbackServer, openExternalAuthUrl, generateState } from './oauth-loopback'
 import { updateAccountTokens, type TokenData } from './db-service'
 import { getGoogleOAuthConfig } from './oauth-config'
+import { markReauthRequired } from './connection-failure'
 
 const GMAIL_SCOPE = 'https://mail.google.com/'
 
@@ -121,8 +122,10 @@ export async function resolveGoogleAccessToken(
     if (tokenData.expiryDate && tokenData.expiryDate > Date.now() + 60000) {
       return { accessToken: tokenData.accessToken, tokenData }
     }
-    throw new Error(
-      `No refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+    throw markReauthRequired(
+      new Error(
+        `No refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+      )
     )
   }
 
@@ -136,8 +139,10 @@ export async function resolveGoogleAccessToken(
   const response = await client.getAccessToken()
   const accessToken = response?.token
   if (!accessToken) {
-    throw new Error(
-      `Unable to refresh Google access for ${tokenData.email}. Remove the account and sign in again.`
+    throw markReauthRequired(
+      new Error(
+        `Unable to refresh Google access for ${tokenData.email}. Remove the account and sign in again.`
+      )
     )
   }
 
@@ -227,12 +232,14 @@ export function formatGmailAuthError(err: unknown, email: string): Error {
     return err instanceof Error ? err : new Error(message)
   }
 
-  return new Error(
-    `Gmail sign-in failed for ${email}. Check that:\n` +
-      `• The OAuth app is "In production" (to allow any Gmail account), or this address is on the test-user allowlist\n` +
-      `• You clicked through any "Google hasn't verified this app" warning (Advanced → Go to Orbit Mail)\n` +
-      `• IMAP is enabled in Gmail settings\n` +
-      `• You ticked "Read, compose, send and permanently delete all your email from Gmail" on the consent screen — it is off by default\n` +
-      `Then remove the account in Orbit Mail and add it again.`
+  return markReauthRequired(
+    new Error(
+      `Gmail sign-in failed for ${email}. Check that:\n` +
+        `• The OAuth app is "In production" (to allow any Gmail account), or this address is on the test-user allowlist\n` +
+        `• You clicked through any "Google hasn't verified this app" warning (Advanced → Go to Orbit Mail)\n` +
+        `• IMAP is enabled in Gmail settings\n` +
+        `• You ticked "Read, compose, send and permanently delete all your email from Gmail" on the consent screen — it is off by default\n` +
+        `Then remove the account in Orbit Mail and add it again.`
+    )
   )
 }

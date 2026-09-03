@@ -193,7 +193,11 @@ draft flush and parent/child destroy order are invisible to it. Each suite impor
 `electron/main.ts` whole and run in their own Electron process. **send** drives
 `drafts.open` → the composer → a click on the real Send button → GreenMail, then
 checks the draft is deleted, the message is in Sent, the recipient got it, and the
-window closed without a save-as-draft prompt. **signature** types into a composer
+window closed without a save-as-draft prompt. Its draft carries an **attachment**
+on purpose: approval is per compose session and the composer closes the moment
+Send is clicked, so a held send used to reach `sendMail` with the user's own file
+no longer approved — everything up to the click passed, and the message just
+stayed in Drafts. **signature** types into a composer
 and switches the From account across three accounts, checking the signature block
 is swapped, removed and re-appended without eating what was typed. **format** drives
 the toolbar's font and size selects in a real editor — `document.execCommand` *is*

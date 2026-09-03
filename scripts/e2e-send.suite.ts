@@ -25,7 +25,7 @@
  *   "Continue editing" uses and the one that populates it.
  */
 import { app, dialog, BrowserWindow } from 'electron'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { ImapFlow } from 'imapflow'
@@ -116,13 +116,24 @@ async function main(): Promise<void> {
   // A draft, as autosave would have left one. Its id is what the close-time
   // flush hands back, and a send deletes the row — the combination that used to
   // ask "Save this message as a draft?" about a message already sent.
+  //
+  // It carries an attachment, which is the part that broke: approval is per
+  // compose session and the composer closes the instant Send is clicked, so by
+  // the time the held send actually ran, the file the user chose was no longer
+  // approved and `sendMail` refused it. The message stayed in Drafts and the
+  // only sign was a toast ten seconds later. Nothing above the hold can see
+  // that — the click succeeds either way — so the assertion that catches it is
+  // the draft still being there after the hold expires.
   const subject = `E2E send ${process.pid}`
+  const attachmentPath = join(userData, `e2e-attachment-${process.pid}.txt`)
+  writeFileSync(attachmentPath, 'attached by the end-to-end check')
   const draftId = drafts.saveDraft({
     accountId: account.id,
     to: EMAIL,
     subject,
     bodyText: 'sent by the end-to-end check',
-    bodyHtml: '<p>sent by the end-to-end check</p>'
+    bodyHtml: '<p>sent by the end-to-end check</p>',
+    attachmentPaths: [attachmentPath]
   })
   ok('a draft exists before the send',
     !!draftId && drafts.countDrafts(account.id) === 1,
@@ -156,6 +167,9 @@ async function main(): Promise<void> {
        return {
          subject: subj && subj.value,
          hasSend: !!send,
+         attachments: document.body.textContent.includes(
+           ${JSON.stringify(`e2e-attachment-${process.pid}.txt`)}
+         ),
          flush: typeof window.__orbitMailFlushDraft
        }
      })()`, true
@@ -171,6 +185,10 @@ async function main(): Promise<void> {
     composer.subject === subject, JSON.stringify(composer))
   ok('the close-time flush hook is installed', composer.flush === 'function')
   ok('the Send button is there', composer.hasSend === true)
+  // Not decoration: the chips come from compose:statAttachments, which only
+  // describes approved paths, and what the component holds is what it sends.
+  ok('the draft’s attachment is on the composer', composer.attachments === true,
+    JSON.stringify(composer))
 
   // The real button, so this goes through the component's own handleSend.
   await composeWin.webContents.executeJavaScript(
@@ -223,15 +241,21 @@ async function main(): Promise<void> {
   await check.connect()
   const lock = await check.getMailboxLock('INBOX')
   let delivered = 0
+  let withAttachment = 0
   try {
-    for await (const msg of check.fetch({ all: true }, { envelope: true })) {
-      if (msg.envelope?.subject === subject) delivered++
+    for await (const msg of check.fetch({ all: true }, { envelope: true, source: true })) {
+      if (msg.envelope?.subject !== subject) continue
+      delivered++
+      if (String(msg.source ?? '').includes(`e2e-attachment-${process.pid}.txt`)) withAttachment++
     }
   } finally {
     lock.release()
     await check.logout()
   }
   ok('the recipient receives it', delivered === 1, `delivered=${delivered}`)
+  // The file itself, off the server: a send that quietly dropped the attachment
+  // would satisfy every check above this one.
+  ok('and the attachment came with it', withAttachment === 1, `withAttachment=${withAttachment}`)
 
   // Window and sync callbacks fire after the composer has gone; a destroyed
   // window read through an unguarded reference throws in one of them.

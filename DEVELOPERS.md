@@ -2605,6 +2605,18 @@ synced → window closed with no save-as-draft prompt → the recipient's copy r
 back off IMAP. It also asserts nothing threw, which is how the destroyed-window
 bug below was found.
 
+The draft carries **an attachment**, and that is not incidental. Attachment
+approval is per compose session and is withdrawn when the composer closes, but a
+send is *held* for ten seconds and the composer closes the instant Send is
+clicked — so by the time the send actually ran, the file the user had chosen was
+no longer approved and `sendMail` refused it. Every check up to the click passed:
+the composer opened, the button worked, the window closed. What failed was the
+draft still being in Drafts after the hold expired, and the attachment never
+arriving at the recipient. Both are asserted here. The scheduler's `send` handler
+now re-approves the paths out of its own persisted action row — the same
+reasoning as `drafts:open`, and the only thing that also makes a send timed for
+*tomorrow* survive a restart.
+
 **`e2e-send-failure.suite.ts` — a send that fails tells the user.** The same
 path, with the outgoing server on port 1 so the send cannot succeed: the
 composer closes, the hold expires, the scheduler runs the send, SMTP refuses,

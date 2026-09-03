@@ -111,6 +111,38 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Sending a message with an attachment failed silently after the hold.**
+  Reported as a forward, but it was every send with an attachment: *"Not sent:
+  Refusing to attach a file that was not chosen in this compose window …
+  The message is still in Drafts."*
+
+  The attachment allowlist approves a path at the three moments a user can
+  actually choose one, and withdraws approval when the compose window closes —
+  approval is per compose session, which is the right scope for a renderer that
+  could otherwise name `~/.ssh/id_rsa`. What it did not account for is that a
+  send no longer happens while the composer is open. `compose:send` *schedules*
+  the send ten seconds out so it can be taken back, then closes the composer
+  immediately; the `closed` handler clears the approvals, and the scheduler then
+  runs `sendMail` against paths nothing approves any more. A timed send was
+  worse still: scheduled for tomorrow, it might not even run in the same
+  process.
+
+  The check was in the wrong place. It sat in `sendMail` — the moment the file
+  is read — when the thing being defended is the moment the *renderer's* paths
+  enter main. So `compose:send` now asserts them before anything is queued
+  (which also means the user is told while the composer is still on screen,
+  instead of by a toast ten seconds after the window vanished), and the
+  scheduler's `send` handler re-approves the paths out of its own persisted
+  action row before running. That row is main's own state, written only by
+  `compose:send` and only after the assert — the same reasoning `drafts:open`
+  already uses to re-approve a draft's attachments across a restart. The
+  `sendMail` check stays as it was: it is defence in depth, not the boundary.
+
+  The e2e **send** suite now sends an attachment, and would have caught this on
+  its first run: the click, the close and the no-draft-prompt checks all pass
+  against the broken build, and the draft-is-gone and attachment-arrived checks
+  do not.
+
 - **A send that fails now tells the user.** Asked for as "do the SMTP send
   errors too", on the assumption it was the wording. It was not: the wording
   never reached anybody.

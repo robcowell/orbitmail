@@ -23,7 +23,8 @@ import { takeNewMailNotice } from './services/new-mail-notice'
 import {
   approveAttachmentPath,
   isAttachmentApproved,
-  clearApprovedAttachments
+  clearApprovedAttachments,
+  assertAttachmentsApproved
 } from './services/attachment-allowlist'
 import { initTray, destroyTray, isTrayActive } from './tray'
 import { cleanupExportDir, sweepStaleExportDirs } from './services/temp-export'
@@ -1542,6 +1543,14 @@ function registerIpc(): void {
   registerHandler('send', async (action) => {
     const payload = action.payload as { compose?: ComposePayload } | null
     if (!payload?.compose) return
+    // Every send is held before it goes, and the composer closes the moment the
+    // user clicks Send — taking its approvals with it (see the `closed` handler).
+    // By the time this runs, the files the user chose are no longer approved, and
+    // a timed send may not even have been scheduled in this process. These paths
+    // came out of main's own scheduled-action row, which only `compose:send` writes
+    // and only after asserting them, so main approves them again — the same
+    // reasoning as `drafts:open`. Paths from the renderer are still never approved.
+    for (const path of payload.compose.attachmentPaths ?? []) approveAttachmentPath(path)
     try {
       await performSend(payload.compose)
     } catch (err) {
@@ -1562,6 +1571,12 @@ function registerIpc(): void {
   ipcMain.handle('compose:send', async (_, payload: ComposePayload, sendAt?: number) => {
     const account = listAccounts().find((a) => a.id === payload.accountId)
     if (!account) throw new Error('Account not found')
+    // This is where the renderer's paths enter main, so this is where they are
+    // checked — while the composer is still open to be told about it. Refusing
+    // here means an unapproved path never reaches the queue: `sendMail` checks
+    // again, but by then the failure is a toast about a message already gone
+    // from the screen.
+    assertAttachmentsApproved(payload.attachmentPaths)
     // A send in the past is a send now; the scheduler would run it on its next
     // tick anyway, and pretending otherwise would show a countdown to nothing.
     const scheduled = typeof sendAt === 'number' && sendAt > Date.now()

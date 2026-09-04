@@ -13,6 +13,10 @@
 // - `e2e-send-failure.suite.ts` — a send that fails: the scheduler runs it long
 //   after the composer has gone, so the failure had nowhere to appear and
 //   reached only console.warn. Asserts the toast in the main window.
+// - `e2e-sent-copy-failure.suite.ts` — a send that *works* but whose Sent copy
+//   cannot be filed: the quietest failure the app had, reduced to a console.warn
+//   while an account's sent mail went unfiled for weeks. Asserts the toast leads
+//   with the message having been sent, and that the server really has it.
 // - `e2e-format.suite.ts` — the compose toolbar's font family and size, where
 //   `document.execCommand` *is* the implementation and there is nothing
 //   underneath it to unit-test. Ends by reopening the draft, because inline
@@ -65,6 +69,7 @@ const PORTS = { imap: 3243, imaps: 4093, smtp: 3225 }
 const SUITES = [
   { name: 'send', entry: 'e2e-send.suite.ts' },
   { name: 'send-failure', entry: 'e2e-send-failure.suite.ts' },
+  { name: 'sent-copy-failure', entry: 'e2e-sent-copy-failure.suite.ts' },
   { name: 'signature', entry: 'e2e-signature.suite.ts' },
   { name: 'format', entry: 'e2e-format.suite.ts' },
   { name: 'window', entry: 'e2e-window.suite.ts' },

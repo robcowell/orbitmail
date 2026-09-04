@@ -107,7 +107,10 @@ const api: OrbitMailAPI = {
     scheduleSend: (payload, sendAt) => ipcRenderer.invoke('compose:send', payload, sendAt),
     cancelSend: (scheduledId) => ipcRenderer.invoke('compose:cancelSend', scheduledId),
     onSent: (callback) => {
-      const listener = (_e: unknown, subject: string) => callback(subject)
+      const listener = (
+        _e: unknown,
+        info: { subject: string; sentCopyFailure?: string }
+      ) => callback(info)
       ipcRenderer.on('compose:sent', listener)
       return () => ipcRenderer.removeListener('compose:sent', listener)
     },

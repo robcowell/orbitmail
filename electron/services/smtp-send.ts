@@ -19,6 +19,7 @@ import { resolveGoogleAccessToken } from './oauth-google'
 import { refreshMicrosoftToken } from './oauth-microsoft'
 import { assertAttachmentsApproved } from './attachment-allowlist'
 import { harvestContacts } from './contacts'
+import { describeSentCopyFailure } from './connection-failure'
 
 async function ensureFreshToken(
   accountId: string,
@@ -88,10 +89,23 @@ function mailerIdentity(): string {
   return `Orbit Mail ${app.getVersion()} (${os} ${process.arch}; Electron ${process.versions.electron})`
 }
 
+/**
+ * What happened *after* the message went out. The send itself is reported by
+ * throwing, so an empty result means everything worked.
+ */
+export interface SendOutcome {
+  /**
+   * Why the Sent copy could not be filed, if it could not — already worded for
+   * the user by `describeSentCopyFailure`, as a reason fragment the caller
+   * frames. Absent when the copy was filed, and when the provider files its own.
+   */
+  sentCopyFailure?: string
+}
+
 export async function sendMail(
   payload: ComposePayload,
   provider: Provider
-): Promise<void> {
+): Promise<SendOutcome> {
   // Before any credential or transport work: a payload naming a file the user
   // never chose must do nothing at all, not fail halfway through a send.
   assertAttachmentsApproved(payload.attachmentPaths)
@@ -230,10 +244,16 @@ export async function sendMail(
       await appendToSentFolder(payload.accountId, provider, await sentCopyOf(raw))
     } catch (err) {
       // The message is already delivered; failing the send now would be a lie,
-      // and would tempt the user into sending it a second time.
+      // and would tempt the user into sending it a second time. So it is
+      // *reported*, not thrown — this used to stop at the console.warn below,
+      // and a whole account's sent mail went unfiled and unmentioned for weeks
+      // because the Sent folder's name was one the app did not recognise.
       console.warn('[orbit-mail] Sent copy could not be filed:', err)
+      return { sentCopyFailure: describeSentCopyFailure(err) }
     }
   }
+
+  return {}
 }
 
 export type ComposeMode = NonNullable<ComposePayload['mode']>

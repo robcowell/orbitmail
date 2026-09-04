@@ -2448,7 +2448,8 @@ reimplementing them, so it exercises the shipping code paths:
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
-| Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does. |
+| Send | SMTP submission succeeds; the message is filed in `Sent` exactly once and shares its Message-ID with the delivered copy; the **delivered** copy carries no `Bcc` header, while the **filed** copy does; a clean send reports an empty outcome. |
+| Sent copy that cannot be filed | With the incoming server on a dead port the send still resolves — the message is delivered, so throwing would be a lie — and `sendMail` **reports** the failure in its result instead of swallowing it into a `console.warn`, worded by `describeSentCopyFailure` rather than as "Command failed". |
 | Attachments | Two parts sharing a filename get distinct cache paths **and** distinct content — the second used to overwrite the first on disk *and* resolve to the first MIME part, so it was never downloaded. (Which extensions count as executable is arithmetic and lives in `test:pure`.) |
 | Scheduler | Something overdue runs at the next start, so a quit does not lose it, while something not yet due is left alone. A completed action is gone from the table and a second run does not repeat it. A handler that throws does not stall the queue and its row is **not** retried into a duplicate. Cancelling reports whether it won the race — twice, or after the action ran, both report false. An unparseable payload is dropped rather than wedging the queue. Removing an account cascades to its scheduled work. |
 | Undo lookup | A relocated message is findable by its RFC Message-ID and reports the folder it now sits in; every row for a Message-ID comes back, not just the first, so a Gmail row already in the destination can be told from one that is not; the lookup is scoped to one account, so an identical Message-ID in another account is not restored. |
@@ -2639,6 +2640,30 @@ nothing is filed in Sent. It **earned its place on its first run**, failing
 because nodemailer's `ESOCKET` wrapper was leaking `connect ECONNREFUSED
 127.0.0.1:1` to the user; the classifier now reads the syscall out of the
 message. No unit test could have caught either the silence or the leak.
+
+**`e2e-sent-copy-failure.suite.ts` — a send that *works* but is never filed.**
+The quietest failure the app had. `appendToSentFolder` throwing is caught in
+`smtp-send.ts` and reduced to a `console.warn` — rightly, since the message is
+already delivered and failing the send would tempt a second one — and
+`syncSentFolder` failing is caught in `main.ts` with a bare `catch {}`. Between
+them, an account whose Sent folder was named `sent-mail` sent mail for weeks with
+every copy unfiled and nothing on screen saying so; the report was "I can't see
+it in sent items" and the diagnosis took a database dump. Here the **incoming**
+server points at port 1 while outgoing stays real, which is the bug's exact
+shape: the send succeeds, the APPEND cannot. It reads the toast off the main
+window's DOM and asserts it *leads with the message having been sent* and never
+contains "Not sent" — read the wrong way round, this toast costs the recipient a
+duplicate — then checks delivery against the **server** with a second client,
+because that is the promise the toast makes.
+
+It **earned its place on its first run**, and not on the silence it was written
+for. The warning was sent as an `app:toast` and the scheduler's own
+`notifySendCompleted` followed it a tick later, overwriting it with
+"Message sent": the toast the suite read back was the wrong one, and a user would
+have seen nothing. Two messages about one send race by construction, so the
+verdict now rides on `compose:sent` itself and there is only one. Nothing but a
+real window could have shown that — both messages were sent, both handlers ran,
+and every unit-level fact about them was correct.
 
 **`e2e-signature.suite.ts` — the signature follows the From account.** Opens a
 composer, types into it, and switches From across three accounts (one with a
@@ -2863,6 +2888,19 @@ recipient (`rejected` + a 550-554 `responseCode`) names **the addresses**, not
 "a recipient" — that is the difference between fixing a typo and hunting through
 four addresses for it — and an over-size message (552/523) is checked first,
 because both carry addresses and "too large" is the actionable half.
+
+`describeSentCopyFailure` is the fourth, and the only one whose news is *smaller*
+than it looks: the message was sent and the recipient has it — what failed is the
+IMAP APPEND that saves the user's own copy. That makes the sentence's leading
+clause load-bearing rather than stylistic, since read as "not sent" it costs the
+recipient a duplicate, and the caller frames it accordingly. Two causes are read
+from the IMAP reply ahead of the connection classifier because neither is a
+connection fault and each has a different answer: `[TRYCREATE]`/`[NONEXISTENT]`
+(or the prose, since a server may send one without the other) means no Sent
+folder could be identified, and `[OVERQUOTA]` means the mailbox is full. The
+first deliberately **names the fault and suggests nothing**: `detectFolderTypes`
+is the only thing that assigns a folder its role and there is no way for a user
+to designate one, so any "do X" here would be an instruction that does nothing.
 
 **nodemailer relabels socket failures as its own `ESOCKET`** and leaves the real
 cause only in the message, so a refused SMTP connection arrives as

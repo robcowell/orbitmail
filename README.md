@@ -348,6 +348,14 @@ main window rather than in the composer. It says which server refused and why,
 and the message stays in Drafts, so you can fix the problem and send it again.
 "The server refused this address" is usually a typo in a recipient.
 
+**A message says "Message sent, but no copy was saved to Sent"**  
+The message went out and the recipient has it — do **not** send it again. What
+failed is the separate step of saving your own copy into the Sent folder on the
+server, so the message will not appear in Sent. Orbit Mail says why: a mailbox
+that is full, a connection that dropped, or no Sent folder it could identify on
+that account. Only accounts set up by hand do this step at all; Gmail and
+Microsoft 365 file sent mail themselves.
+
 **Sync errors in the status bar**  
 The status bar names the account and the reason. "Rejected the login" means the
 password stopped working — most often because it was changed with your provider;

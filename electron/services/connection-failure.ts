@@ -267,6 +267,85 @@ export function describeSendFailure(err: unknown): string {
 }
 
 /**
+ * Wording for a message that **was sent** but whose copy could not be filed in
+ * Sent.
+ *
+ * This is the only failure in the app where the bad news is strictly smaller
+ * than it looks: the recipient has the message. The caller frames that part —
+ * this returns the reason only, as `describeSendFailure` does — but the two must
+ * never be confused on screen, because a user who reads "not filed" as "not
+ * sent" will send it again.
+ *
+ * Two causes are read from the IMAP reply before the connection classifier gets
+ * a look, because neither is a connection problem and both have a different
+ * answer:
+ *
+ * - **No such mailbox.** The reason this function exists. A server that does not
+ *   flag its Sent folder `\Sent` and does not spell it one of the ways
+ *   `FOLDER_NAME_MAP` knows leaves the Sent role unheld, and the append goes to
+ *   a literal `Sent` that is not there. That shipped: mail from a `mail/sent-mail`
+ *   account was delivered and then invisible, for weeks, because this failure
+ *   reached only `console.warn`. It names the fault and stops — there is no way
+ *   for a user to designate a folder's role, so there is no action to suggest.
+ * - **Over quota.** Nothing about the account is misconfigured and re-sending
+ *   will not help; the mailbox is full.
+ *
+ * IMAP puts these in a response code — `[TRYCREATE]`, `[NONEXISTENT]`,
+ * `[OVERQUOTA]` — which ImapFlow exposes on `serverResponseCode`, with the
+ * sentence on `responseText`. Both are matched, since a server may send the
+ * prose without the code.
+ */
+export function describeSentCopyFailure(err: unknown): string {
+  const e = (err ?? {}) as { serverResponseCode?: unknown }
+  const { kind, response, message } = classifyConnectionFailure(err)
+  const serverCode = typeof e.serverResponseCode === 'string' ? e.serverResponseCode : ''
+  const haystack = `${serverCode} ${response} ${message}`
+
+  if (
+    /\b(TRYCREATE|NONEXISTENT)\b/i.test(haystack) ||
+    /does\s?n[o']t exist|no such mailbox/i.test(haystack)
+  ) {
+    // Deliberately stops at naming the fault. There is no way for a user to
+    // designate a folder's role — `detectFolderTypes` is the only thing that
+    // assigns one — so any "do X to fix it" here would be an instruction that
+    // does nothing.
+    return (
+      'no Sent folder could be found on this account' + (response ? ` (${response})` : '') + '.'
+    )
+  }
+
+  if (/\bOVERQUOTA\b/i.test(haystack) || /quota/i.test(haystack)) {
+    return (
+      'the mailbox is full' +
+      (response ? ` (${response})` : '') +
+      '. Freeing space on the server will let the next copy through.'
+    )
+  }
+
+  switch (kind) {
+    case 'auth':
+      return (
+        'the incoming server rejected the login' +
+        (response ? ` (${response})` : '') +
+        '. If the password changed, update it in Settings → Accounts.'
+      )
+    case 'certificate':
+      return (
+        'the incoming server presented a certificate that does not cover its ' +
+        'hostname. Check the server name in Settings → Accounts.'
+      )
+    case 'dns':
+      return 'the incoming server could not be found.'
+    case 'refused':
+      return 'the incoming server refused the connection.'
+    case 'timeout':
+      return 'the incoming server did not respond.'
+    default:
+      return response || message
+  }
+}
+
+/**
  * Wording for the status bar and the sidebar's per-account warning.
  *
  * **Returns the reason only, never the address.** The display layer already

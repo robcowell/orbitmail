@@ -792,8 +792,20 @@ export interface OrbitMailAPI {
      * not paper over.
      */
     cancelSend: (scheduledId: string) => Promise<CancelSendResult>
-    /** Fires when a held send has actually gone. */
-    onSent: (callback: (subject: string) => void) => () => void
+    /**
+     * Fires when a held send has actually gone.
+     *
+     * `sentCopyFailure` is why the message could not also be saved into the
+     * account's Sent folder — the send still succeeded, and the recipient has
+     * it. It rides on *this* message rather than a second one because the two
+     * are alternative endings to the same send and the window shows one toast:
+     * sent separately, the plain "Message sent" overwrote the warning within a
+     * tick and the user was told nothing. Only manual IMAP accounts file a copy
+     * at all; Gmail and O365 servers do it themselves.
+     */
+    onSent: (
+      callback: (info: { subject: string; sentCopyFailure?: string }) => void
+    ) => () => void
     /**
      * Fires when a held send **failed**, in the main window.
      *

@@ -127,7 +127,7 @@ import {
 } from './services/imap-idle'
 import { closeAccountPool, closeAllPools } from './services/imap-pool'
 import { reclaimFreelistIfLarge } from './db'
-import { sendMail, buildReplyPayload } from './services/smtp-send'
+import { sendMail, buildReplyPayload, type SendOutcome } from './services/smtp-send'
 import { describeSendFailure } from './services/connection-failure'
 import { autodetectMailSettings } from './services/mail-autoconfig'
 import {
@@ -486,10 +486,18 @@ const UNDO_SEND_MS = 10_000
  */
 const SNOOZE_FOLDER = 'Snoozed'
 
-/** Told the renderer once the message is actually away, so it can say so. */
-function notifySendCompleted(subject: string): void {
+/**
+ * Told the renderer once the message is actually away, so it can say so.
+ *
+ * Carries `sentCopyFailure` rather than leaving it to a second message, because
+ * the two are alternative endings to the *same* send and the renderer shows one
+ * toast. Sent separately — a completion notice plus an `app:toast` — the
+ * completion overwrote the warning within a tick and the user learnt nothing.
+ * Found by `e2e-sent-copy-failure.suite.ts` on its first run.
+ */
+function notifySendCompleted(subject: string, sentCopyFailure?: string): void {
   const win = liveMainWindow()
-  if (win) win.webContents.send('compose:sent', subject)
+  if (win) win.webContents.send('compose:sent', { subject, sentCopyFailure })
 }
 
 /**
@@ -1507,10 +1515,10 @@ function registerIpc(): void {
   // The send itself, with no scheduling around it. Called by the scheduler when
   // an undo window closes or a timed send falls due — never directly by the
   // renderer, which now only ever *schedules* a send.
-  const performSend = async (payload: ComposePayload): Promise<void> => {
+  const performSend = async (payload: ComposePayload): Promise<SendOutcome> => {
     const account = listAccounts().find((a) => a.id === payload.accountId)
     if (!account) throw new Error('Account not found')
-    await sendMail(payload, account.provider)
+    const outcome = await sendMail(payload, account.provider)
     // The draft has been sent, so it is no longer a draft. Deliberately after
     // sendMail resolves: dropping it first would lose the message if the send
     // then failed, which is precisely what drafts exist to prevent.
@@ -1522,7 +1530,14 @@ function registerIpc(): void {
       notifyMessagesUpdated()
     } catch {
       // Sending succeeded; a Sent-folder sync hiccup shouldn't fail the send.
+      // Not reported either, unlike a failed *file*: the copy is on the server,
+      // so the next ordinary sync brings it in. Nothing is lost, and there is
+      // nothing for the user to do about it.
     }
+    // Handed back rather than announced here: the caller is the one that tells
+    // the user the send finished, and a message that went out but was not filed
+    // is that same ending worded differently, not a second event.
+    return outcome
   }
 
   /** Cancel any timed send waiting on this draft. Returns true if there was one. */
@@ -1551,8 +1566,9 @@ function registerIpc(): void {
     // and only after asserting them, so main approves them again — the same
     // reasoning as `drafts:open`. Paths from the renderer are still never approved.
     for (const path of payload.compose.attachmentPaths ?? []) approveAttachmentPath(path)
+    let outcome: SendOutcome
     try {
-      await performSend(payload.compose)
+      outcome = await performSend(payload.compose)
     } catch (err) {
       // The scheduler deletes an action *before* running it and does not retry,
       // so this is the only moment the failure exists. Telling the user is not
@@ -1565,7 +1581,7 @@ function registerIpc(): void {
       })
       throw err
     }
-    notifySendCompleted(payload.compose.subject ?? '')
+    notifySendCompleted(payload.compose.subject ?? '', outcome.sentCopyFailure)
   })
 
   ipcMain.handle('compose:send', async (_, payload: ComposePayload, sendAt?: number) => {

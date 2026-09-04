@@ -5836,8 +5836,9 @@ async function main(): Promise<void> {
     await client.mailboxCreate('Sent').catch(() => {})
     const sent = db.upsertFolder(account.id, 'Sent', 'Sent', 'sent')
 
-    const sendErr = await rejects(() =>
-      sendMail(
+    let sendOutcome: { sentCopyFailure?: string } | null = null
+    const sendErr = await rejects(async () => {
+      sendOutcome = await sendMail(
         {
           accountId: account.id,
           to: EMAIL,
@@ -5848,7 +5849,7 @@ async function main(): Promise<void> {
         } as never,
         'imap'
       )
-    )
+    })
     ok('SMTP submission succeeds', sendErr === null, sendErr?.message ?? '')
 
     await sync.syncFolder(client, account.id, sent.id, 'Sent')
@@ -5922,7 +5923,66 @@ async function main(): Promise<void> {
       /^bcc:\s*hidden@example\.com\s*$/im.test(filed),
       filed.match(/^bcc:.*$/im)?.[0] ?? 'no Bcc header on the filed copy')
 
+    // A send whose copy files cleanly reports nothing. The empty outcome is the
+    // signal the toast is keyed off, so it has to mean what it says.
+    ok('a filed copy reports no failure', sendOutcome !== null &&
+      sendOutcome.sentCopyFailure === undefined,
+      JSON.stringify(sendOutcome))
+
     await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
+  section('Send: a copy that cannot be filed is reported, not swallowed')
+  // -------------------------------------------------------------------------
+  {
+    // The message is delivered and the APPEND fails. `sendMail` must still
+    // resolve — throwing here would be a lie that costs the recipient a
+    // duplicate — but it must *say so* in its result, which is what reaches the
+    // main window as a toast. It used to reach `console.warn` and stop there,
+    // and an account whose Sent folder was named `sent-mail` sent mail for
+    // weeks with nothing filed and nothing said.
+    //
+    // The failure is injected by pointing the account's *incoming* server at
+    // port 1 while outgoing stays real: the same shape as the bug, and no fault
+    // injection needed. GreenMail creates a mailbox on APPEND, so a missing
+    // Sent folder cannot be produced against it — that wording is covered by
+    // `npm run test:pure`.
+    const { sendMail } = await import('../electron/services/smtp-send')
+    const unfiled = db.saveManualAccount('imap', {
+      authType: 'password',
+      email: EMAIL,
+      displayName: 'Unfiled Sent Copy',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: HOST, port: 1, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    } as never)
+
+    let outcome: { sentCopyFailure?: string } | null = null
+    const err = await rejects(async () => {
+      outcome = await sendMail(
+        {
+          accountId: unfiled.id,
+          to: EMAIL,
+          subject: 'Integration send unfiled',
+          bodyText: 'delivered but not filed',
+          bodyHtml: '<p>delivered but not filed</p>'
+        } as never,
+        'imap'
+      )
+    })
+    ok('the send still succeeds — the message is delivered', err === null, err?.message ?? '')
+    ok('and the unfiled copy is reported rather than swallowed',
+      outcome !== null && typeof outcome!.sentCopyFailure === 'string',
+      JSON.stringify(outcome))
+    ok('in words the user can read, not "Command failed"',
+      outcome !== null && /incoming server refused the connection/.test(
+        outcome!.sentCopyFailure ?? ''),
+      outcome?.sentCopyFailure ?? 'none')
+
+    db.removeAccount(unfiled.id)
+    sync.forgetAccountSyncStatus(unfiled.id)
   }
 
   // -------------------------------------------------------------------------

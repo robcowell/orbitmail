@@ -221,7 +221,14 @@ but us — asserting only that a window opened would prove nothing. **send-failu
 points the outgoing server at a closed port and reads the *toast in the main
 window*: a held send runs on the scheduler long after the composer has gone, so
 a failure used to reach only `console.warn` — the message stayed in Drafts and
-nothing said so. All eleven also
+nothing said so. **sent-copy-failure** is its mirror: the outgoing server is real
+and the *incoming* one points at a closed port, so the message genuinely goes out
+and only the APPEND that files the copy fails. It asserts the toast **leads with
+the message having been sent** and never says "Not sent" — read the wrong way
+round it costs the recipient a duplicate — and checks delivery against the
+server, since that is what the toast promises. It caught a real defect on its
+first run: the warning was a separate `app:toast` and the scheduler's own
+"Message sent" overwrote it a tick later, so the user saw nothing. All twelve also
 assert **nothing threw**. **snooze** moves a real message to the Snoozed folder
 and asserts against the *server* that it left the inbox and came back when due —
 the only thing snooze actually promises, and invisible from inside the app.
@@ -235,7 +242,9 @@ path, signatures, zoom, message actions, keyboard shortcuts, or anything
 window-lifecycle. Windows appear on screen for a few seconds.
 Read the traps in DEVELOPERS.md → End-to-end first: the send suite has twice
 passed while proving nothing, once from picking windows by index and once from a
-composer that never loaded its draft. When you report a check, say which of the
+composer that never loaded its draft. And two toasts about one event race: if a
+check reads a toast, something else sending one is a bug in the *app*, not a
+flake to sleep around. When you report a check, say which of the
 five commands you ran.
 
 **Do not treat `tsc -b` as a pass/fail gate.** The source does not cleanly pass a standalone `tsc -b` even on `main` (target/lib and third-party typing mismatches that esbuild transpiles past). Use `npm run build`.

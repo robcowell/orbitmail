@@ -726,6 +726,87 @@ async function main() {
     }
   }
 
+  // -------------------------------------------------------------------------
+  section('Sent copy: the message went out, the copy did not')
+  // -------------------------------------------------------------------------
+  {
+    // The one failure where the bad news is smaller than it looks — the
+    // recipient has the message. It reached only console.warn until now, which
+    // is how an account whose Sent folder is named `sent-mail` sent mail for
+    // weeks with nothing filed and nothing said.
+    const { describeSentCopyFailure } = load('connection-failure')
+
+    // ImapFlow puts the response code on `serverResponseCode` and the sentence
+    // on `responseText`. A server may send the prose without the code, so both
+    // are matched.
+    const noMailbox = describeSentCopyFailure(Object.assign(new Error('Command failed'), {
+      serverResponseCode: 'TRYCREATE',
+      responseText: '3 NO [TRYCREATE] Mailbox does not exist'
+    }))
+    ok('a missing mailbox is named as a missing Sent folder',
+      /no Sent folder could be found/.test(noMailbox), noMailbox)
+    ok('and it carries the server’s own words',
+      /Mailbox does not exist/.test(noMailbox), noMailbox)
+    ok('with the IMAP tag and status word stripped',
+      !/\bNO\b/.test(noMailbox) && !noMailbox.includes('3 NO'), noMailbox)
+    // There is no way for a user to designate a folder's role, so the wording
+    // must not tell them to. An instruction that does nothing is worse than
+    // none: it sends someone looking for a setting that is not there.
+    ok('and suggests no action, because there is none to suggest',
+      !/Settings|sidebar|open/i.test(noMailbox), noMailbox)
+
+    ok('the prose alone is enough, without the response code',
+      /no Sent folder could be found/.test(
+        describeSentCopyFailure(Object.assign(new Error('Command failed'), {
+          responseText: 'NO Mailbox doesn\'t exist: Sent'
+        })))) 
+    ok('and so is “no such mailbox”',
+      /no Sent folder could be found/.test(
+        describeSentCopyFailure(new Error('No such mailbox'))))
+    // And the code alone, with prose that says nothing — the two are read
+    // together precisely because a server may send either without the other.
+    ok('the response code alone is enough, without the prose',
+      /no Sent folder could be found/.test(
+        describeSentCopyFailure(Object.assign(new Error('Command failed'), {
+          serverResponseCode: 'NONEXISTENT',
+          responseText: 'NO Command failed'
+        }))))
+
+    const full = describeSentCopyFailure(Object.assign(new Error('Command failed'), {
+      serverResponseCode: 'OVERQUOTA',
+      responseText: 'NO [OVERQUOTA] Quota exceeded'
+    }))
+    ok('an over-quota mailbox is reported as full, not as a missing folder',
+      /the mailbox is full/.test(full) && !/no Sent folder/.test(full), full)
+    ok('and says what would fix it, because something would',
+      /Freeing space/.test(full), full)
+    // Dovecot sends `[OVERQUOTA]`; other servers say it only in words. Either
+    // on its own has to be enough, or the half that is missing decides it.
+    ok('quota in the server’s prose alone is enough',
+      /the mailbox is full/.test(
+        describeSentCopyFailure(Object.assign(new Error('Command failed'), {
+          responseText: 'NO Quota exceeded'
+        }))))
+
+    // A connection fault must not read as a misconfigured account: the folder
+    // is fine, the network was not. It names the *incoming* server, since the
+    // append is IMAP — the outgoing one just worked, by definition.
+    ok('a refused connection is not reported as a missing folder',
+      describeSentCopyFailure(Object.assign(new Error('x'), { code: 'ECONNREFUSED' })) ===
+        'the incoming server refused the connection.')
+    ok('a timeout names the incoming server',
+      /incoming server did not respond/.test(
+        describeSentCopyFailure(Object.assign(new Error('x'), { code: 'ETIMEDOUT' }))))
+    ok('and anything unrecognised keeps its detail',
+      describeSentCopyFailure(new Error('something odd')) === 'something odd')
+
+    // The frame in main.ts leads with the send having succeeded. A fragment
+    // that opened with a capital would read as a new sentence and break it.
+    for (const m of [noMailbox, full, describeSentCopyFailure(new Error('x'))]) {
+      ok('the sent-copy failure is a single line', !m.includes('\n'), JSON.stringify(m))
+    }
+  }
+
   console.log(
     `\n${failures === 0 ? 'all pure-logic checks passed' : `${failures} pure-logic check(s) FAILED`}`
   )

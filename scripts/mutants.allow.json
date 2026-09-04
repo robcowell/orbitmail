@@ -2,7 +2,7 @@
   "_comment": [
     "Mutants that survive because no test could observe them, not because a test is missing.",
     "Every entry needs a reason someone can check. Writing one is the point: it forces the",
-    "question 'is this genuinely unobservable, or have I just not thought of the case?' \u2014",
+    "question 'is this genuinely unobservable, or have I just not thought of the case?' —",
     "which is how two real gaps in syncStatus.ts were found rather than allowlisted.",
     "Matched on file + rule + the trimmed source line, so an entry stops applying when the",
     "line it justifies is edited. That is deliberate: the justification should be re-read."
@@ -24,43 +24,43 @@
       "file": "src/utils/folders.ts",
       "rule": "lte->lt",
       "code": "if (imapPath.length <= name.length + 1) return undefined",
-      "reason": "The guard and the function's last line cover the same case twice. It differs from `<` only when the path is exactly the delimiter plus the name ('/Receipts'), and there the slice produces '' \u2014 which the trailing `|| undefined` turns into undefined anyway. Checked against every combination of four names and eight prefixes: no input distinguishes them. The guard is kept for the comment above it, which explains a real off-by-one that predates it."
+      "reason": "The guard and the function's last line cover the same case twice. It differs from `<` only when the path is exactly the delimiter plus the name ('/Receipts'), and there the slice produces '' — which the trailing `|| undefined` turns into undefined anyway. Checked against every combination of four names and eight prefixes: no input distinguishes them. The guard is kept for the comment above it, which explains a real off-by-one that predates it."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
       "rule": "lte->lt",
       "code": "return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)",
-      "reason": "The sRGB linearisation knee. It differs from `<` only at s exactly 0.03928, which is channel 10.0164 \u2014 and every channel here comes from an integer 0-255 divided by 255, so that value cannot occur. Unreachable rather than untested."
+      "reason": "The sRGB linearisation knee. It differs from `<` only at s exactly 0.03928, which is channel 10.0164 — and every channel here comes from an integer 0-255 divided by 255, so that value cannot occur. Unreachable rather than untested."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
       "rule": "lte->lt",
       "code": "if (h.length === 4 && parseInt(h[3] + h[3], 16) <= 25) return null",
-      "reason": "Differs from `<` only when the alpha is exactly 25, and a four-digit hex doubles a single nibble \u2014 so its alpha can only be 0, 17, 34, 51 \u2026 255. 25 is not among them. The eight-digit form CAN be exactly 25 ('#ffffff19') and that boundary is tested."
+      "reason": "Differs from `<` only when the alpha is exactly 25, and a four-digit hex doubles a single nibble — so its alpha can only be 0, 17, 34, 51 … 255. 25 is not among them. The eight-digit form CAN be exactly 25 ('#ffffff19') and that boundary is tested."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
       "rule": "or->and",
       "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
-      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers — neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
       "rule": "or->and",
       "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
-      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers — neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
       "rule": "or->and",
       "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
-      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers — neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
       "rule": "or->and",
       "code": "if (!v || v === 'transparent' || v === 'inherit' || v === 'initial' || v === 'currentcolor') {",
-      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers \u2014 neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
+      "reason": "The guard is an early return, not the only defence. Turning any of its `||` into `&&` makes it never fire, and the value then falls through to the rgb() and hex parsers — neither of which matches 'transparent', 'inherit', 'initial', 'currentcolor' or an empty string, so the function returns null anyway. Verified by running those five values against both regexes. The guard is kept because it states the intent; four separate mutations of it are the same fact reported four times."
     },
     {
       "file": "electron/services/thread-util.ts",
@@ -72,19 +72,19 @@
       "file": "electron/services/db-service.ts",
       "rule": "lte->lt",
       "code": "if (syncDays <= 0) return 0",
-      "reason": "Redundant second lock. `getSyncCutoffTimestamp` on the next line returns null for anything <= 0 and the null is checked, so a syncDays of 0 returns 0 either way. The guard is here because the consequence of it being wrong is deleting the account's entire mail \u2014 worth two locks even when only one can be observed."
+      "reason": "Redundant second lock. `getSyncCutoffTimestamp` on the next line returns null for anything <= 0 and the null is checked, so a syncDays of 0 returns 0 either way. The guard is here because the consequence of it being wrong is deleting the account's entire mail — worth two locks even when only one can be observed."
     },
     {
       "file": "electron/services/db-service.ts",
       "rule": "or->and",
       "code": "accountLabel: account?.email || account?.displayName || 'Orbit Mail',",
-      "reason": "`&&` binds tighter than `||`, so the mutant reads `email || (displayName && 'Orbit Mail')` and the first arm still wins. `accounts.email` is NOT NULL and an account cannot be created without one (saveAccount keys on the address), so the later arms are unreachable \u2014 they are there for a row corrupted by hand. The other `||` on this line is caught."
+      "reason": "`&&` binds tighter than `||`, so the mutant reads `email || (displayName && 'Orbit Mail')` and the first arm still wins. `accounts.email` is NOT NULL and an account cannot be created without one (saveAccount keys on the address), so the later arms are unreachable — they are there for a row corrupted by hand. The other `||` on this line is caught."
     },
     {
       "file": "electron/services/db-service.ts",
       "rule": "or->and",
       "code": "if (!likePattern || accountId === '') return []",
-      "reason": "Both arms reach the same result by a different route. Falling through with a null likePattern builds a query whose LIKE parameters are null, which matches nothing; falling through with an empty accountId scopes to `account_id = ''`, which no row has. The early return is a shortcut, not the thing that makes the answer right \u2014 asserted from the outside, the two are indistinguishable."
+      "reason": "Both arms reach the same result by a different route. Falling through with a null likePattern builds a query whose LIKE parameters are null, which matches nothing; falling through with an empty accountId scopes to `account_id = ''`, which no row has. The early return is a shortcut, not the thing that makes the answer right — asserted from the outside, the two are indistinguishable."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -114,13 +114,13 @@
       "file": "electron/services/db-service.ts",
       "rule": "gt->gte",
       "code": "if (changed > 0) recalculateFolderUnread(folderId)",
-      "reason": "recalculateFolderUnread recomputes the count from the rows, so running it when nothing changed writes back the value already there. The guard avoids a folder-sized COUNT on every poll that finds no flag changes \u2014 which is most of them \u2014 and nothing downstream can tell the difference."
+      "reason": "recalculateFolderUnread recomputes the count from the rows, so running it when nothing changed writes back the value already there. The guard avoids a folder-sized COUNT on every poll that finds no flag changes — which is most of them — and nothing downstream can tell the difference."
     },
     {
       "file": "electron/services/db-service.ts",
       "rule": "lt->lte",
       "code": "if (!cur || r.date < cur.date || (r.date === cur.date && own < cur.id)) {",
-      "reason": "The mutated `<` is the tie-break `own <= cur.id`, reached only when the dates are equal. `own === cur.id` means this row *is* the current representative, so replacing it with itself stores the same value. The date comparison on the same line \u2014 the one that decides which message roots a thread \u2014 is caught."
+      "reason": "The mutated `<` is the tie-break `own <= cur.id`, reached only when the dates are equal. `own === cur.id` means this row *is* the current representative, so replacing it with itself stores the same value. The date comparison on the same line — the one that decides which message roots a thread — is caught."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -138,7 +138,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "return row?.signature ?? ''",
-      "reason": "setAccountSignature stores `signature.trim() || null`, so the column is either null or a non-empty string \u2014 the empty string is never written. The suite asserts exactly that (a whitespace-only signature reads back as ''), which is what makes this equivalence checkable rather than assumed."
+      "reason": "setAccountSignature stores `signature.trim() || null`, so the column is either null or a non-empty string — the empty string is never written. The suite asserts exactly that (a whitespace-only signature reads back as ''), which is what makes this equivalence checkable rather than assumed."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -150,7 +150,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "? repByRoot.get(find(own))?.id ?? own",
-      "reason": "The stored id is a canonical Message-ID, and canonicalizeMessageId returns null rather than an empty string, so a representative's id is never falsy. `own` is non-empty for the same reason \u2014 the branch is only entered when it is truthy."
+      "reason": "The stored id is a canonical Message-ID, and canonicalizeMessageId returns null rather than an empty string, so a representative's id is never falsy. `own` is non-empty for the same reason — the branch is only entered when it is truthy."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -168,7 +168,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "latestMessageId: latest?.id ?? '',",
-      "reason": "A row id is a UUID \u2014 never the empty string \u2014 so the fallback is reachable only when there is no latest row at all, where both operators give ''."
+      "reason": "A row id is a UUID — never the empty string — so the fallback is reachable only when there is no latest row at all, where both operators give ''."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -186,7 +186,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "snippet: latest?.snippet ?? '',",
-      "reason": "Same again \u2014 a NOT NULL text column whose fallback is the empty string it might itself hold."
+      "reason": "Same again — a NOT NULL text column whose fallback is the empty string it might itself hold."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -228,7 +228,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "references: r.references ?? null,",
-      "reason": "The falsy-but-present case is an empty References header, which reaches every consumer through tokenizeReferences \u2014 and tokenizeReferences returns [] for '' and for null alike. Neither the threading nor the reply builder can tell the two apart."
+      "reason": "The falsy-but-present case is an empty References header, which reaches every consumer through tokenizeReferences — and tokenizeReferences returns [] for '' and for null alike. Neither the threading nor the reply builder can tell the two apart."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -240,7 +240,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "return rows.map((r) => ({ ...rowToSweepTask(r), completedAt: r.completed_at ?? 0 }))",
-      "reason": "completed_at is set from Date.now() when a task is ticked off, so the only falsy value it could hold is 0 \u2014 and the fallback is 0. These rows are selected with `status = 'completed'`, so the column is never NULL here either."
+      "reason": "completed_at is set from Date.now() when a task is ticked off, so the only falsy value it could hold is 0 — and the fallback is 0. These rows are selected with `status = 'completed'`, so the column is never NULL here either."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -252,7 +252,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "return { messageCount: counted.n, latestMessageId: newest?.mid ?? null }",
-      "reason": "`mid` is COALESCE(message_id, id) \u2014 a Message-ID or a row UUID, neither of which is empty. The fallback only fires when the thread has no rows."
+      "reason": "`mid` is COALESCE(message_id, id) — a Message-ID or a row UUID, neither of which is empty. The fallback only fires when the thread has no rows."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -270,7 +270,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "const storedMax = folder?.highestSyncedUid ?? 0",
-      "reason": "The column starts at 0 and only rises, and the fallback is 0 \u2014 the falsy-but-present value and the fallback are the same."
+      "reason": "The column starts at 0 and only rises, and the fallback is 0 — the falsy-but-present value and the fallback are the same."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -282,7 +282,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "return row?.server_uid ?? null",
-      "reason": "server_uid is a POP3 UIDL. pop3-sync only ever writes a UIDL it read from the maildrop listing, and an entry with no UIDL is not a message it can identify \u2014 so the empty string is never stored."
+      "reason": "server_uid is a POP3 UIDL. pop3-sync only ever writes a UIDL it read from the maildrop listing, and an entry with no UIDL is not a message it can identify — so the empty string is never stored."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -300,7 +300,7 @@
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
       "code": "const unread = row?.value ?? 0",
-      "reason": "folders.unread_count is NOT NULL DEFAULT 0, so the falsy value it can hold is 0 \u2014 the same as the fallback."
+      "reason": "folders.unread_count is NOT NULL DEFAULT 0, so the falsy value it can hold is 0 — the same as the fallback."
     },
     {
       "file": "electron/services/db-service.ts",
@@ -324,13 +324,13 @@
       "file": "electron/services/network-reachability.ts",
       "rule": "nullish->or",
       "code": "if ('code' in err) return String((err as { code?: unknown }).code ?? '')",
-      "reason": "The falsy-but-present cases are `code: ''` \u2014 where both operators give '' \u2014 and a numeric `code: 0`, where `??` gives '0'. Neither is in UNREACHABLE_CODES, and the caller guards with `if (code && ...)`, so '0' and '' both fall through to the message matching and produce the same classification. No thrown object in Node carries a zero errno anyway; the `??` is there to keep the return type a string."
+      "reason": "The falsy-but-present cases are `code: ''` — where both operators give '' — and a numeric `code: 0`, where `??` gives '0'. Neither is in UNREACHABLE_CODES, and the caller guards with `if (code && ...)`, so '0' and '' both fall through to the message matching and produce the same classification. No thrown object in Node carries a zero errno anyway; the `??` is there to keep the return type a string."
     },
     {
       "file": "electron/services/network-reachability.ts",
       "rule": "nullish->or",
       "code": "return String((err as { message?: unknown }).message ?? '')",
-      "reason": "A `message` of '' gives '' under both operators. A numeric `message: 0` gives '0' under `??`, which matches none of the unreachable patterns \u2014 the same answer as ''. The classification cannot distinguish them."
+      "reason": "A `message` of '' gives '' under both operators. A numeric `message: 0` gives '0' under `??`, which matches none of the unreachable patterns — the same answer as ''. The classification cannot distinguish them."
     },
     {
       "file": "electron/services/thread-util.ts",
@@ -354,7 +354,7 @@
       "file": "src/utils/syncStatus.ts",
       "rule": "gt->gte",
       "code": "a.lastSyncAt !== null && (newest === null || a.lastSyncAt > newest)",
-      "reason": "A reduce picking the newest timestamp. On a tie the two operators choose different *objects* and the same *number*, and only the number is returned \u2014 `a.lastSyncAt` and `newest` are equal in exactly the case where they differ."
+      "reason": "A reduce picking the newest timestamp. On a tie the two operators choose different *objects* and the same *number*, and only the number is returned — `a.lastSyncAt` and `newest` are equal in exactly the case where they differ."
     },
     {
       "file": "src/utils/syncStatus.ts",
@@ -372,7 +372,7 @@
       "file": "src/utils/search.ts",
       "rule": "nullish->or",
       "code": "const name = folderName.get(result.folderId) ?? 'Mailbox'",
-      "reason": "The map holds folder display names, which come from an IMAP path's last segment and are never empty \u2014 a mailbox with no name cannot be selected or listed. Only a missing folder id reaches the fallback, where both operators take it."
+      "reason": "The map holds folder display names, which come from an IMAP path's last segment and are never empty — a mailbox with no name cannot be selected or listed. Only a missing folder id reaches the fallback, where both operators take it."
     },
     {
       "file": "src/utils/listHeader.ts",
@@ -384,7 +384,7 @@
       "file": "src/utils/listHeader.ts",
       "rule": "nullish->or",
       "code": ": (folder?.unreadCount ?? 0)",
-      "reason": "unread_count is NOT NULL DEFAULT 0, so the only falsy value it can hold is 0 \u2014 which is also the fallback."
+      "reason": "unread_count is NOT NULL DEFAULT 0, so the only falsy value it can hold is 0 — which is also the fallback."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
@@ -396,7 +396,7 @@
       "file": "src/utils/emailColorScheme.ts",
       "rule": "lt->lte",
       "code": "return lum !== null && contrast(lum, DARK_SURFACE) < MIN_CONTRAST",
-      "reason": "Boundary-only, and the boundary is unreachable. Checked exhaustively: over all 16,777,216 integer RGB values, no colour produces a contrast against DARK_SURFACE of exactly 4.5 \u2014 the closest any comes is 7.7e-9 away. A fractional channel is expressible in CSS (`rgb(127.3, 0, 0)`) but would have to land on that ratio exactly, which is a transcendental equality no stylesheet is written to hit."
+      "reason": "Boundary-only, and the boundary is unreachable. Checked exhaustively: over all 16,777,216 integer RGB values, no colour produces a contrast against DARK_SURFACE of exactly 4.5 — the closest any comes is 7.7e-9 away. A fractional channel is expressible in CSS (`rgb(127.3, 0, 0)`) but would have to land on that ratio exactly, which is a transcendental equality no stylesheet is written to hit."
     },
     {
       "file": "src/utils/emailColorScheme.ts",
@@ -414,19 +414,25 @@
       "file": "electron/services/connection-failure.ts",
       "rule": "nullish->or",
       "code": "const e = (err ?? {}) as Errorish",
-      "reason": "The result is only ever property-accessed (.message/.code/.response/.responseText/.authenticationFailed), and every falsy non-nullish value that `||` would replace with {} \u2014 0, '', false, NaN \u2014 yields undefined for all five properties anyway. `?? {}` and `|| {}` are therefore indistinguishable here. The separate `String(err ?? '')` on the next line IS distinguishable and is pinned by test:pure ('a falsy non-nullish thrown value is kept, not discarded')."
+      "reason": "The result is only ever property-accessed (.message/.code/.response/.responseText/.authenticationFailed), and every falsy non-nullish value that `||` would replace with {} — 0, '', false, NaN — yields undefined for all five properties anyway. `?? {}` and `|| {}` are therefore indistinguishable here. The separate `String(err ?? '')` on the next line IS distinguishable and is pinned by test:pure ('a falsy non-nullish thrown value is kept, not discarded')."
     },
     {
       "file": "electron/services/connection-failure.ts",
       "rule": "nullish->or",
       "code": "const e = (err ?? {}) as { responseCode?: unknown; rejected?: unknown }",
-      "reason": "Same argument as the identical line in classifyConnectionFailure: the result is only property-accessed (.responseCode/.rejected), and every falsy non-nullish value `||` would swap for {} \u2014 0, '', false, NaN \u2014 yields undefined for both properties anyway, so no input distinguishes them. describeSendFailure also passes the original `err` straight to classifyConnectionFailure, which reads its own copy, so nothing downstream sees the difference either."
+      "reason": "Same argument as the identical line in classifyConnectionFailure: the result is only property-accessed (.responseCode/.rejected), and every falsy non-nullish value `||` would swap for {} — 0, '', false, NaN — yields undefined for both properties anyway, so no input distinguishes them. describeSendFailure also passes the original `err` straight to classifyConnectionFailure, which reads its own copy, so nothing downstream sees the difference either."
     },
     {
       "file": "electron/services/connection-failure.ts",
       "rule": "nullish->or",
       "code": ")[0] ?? ''",
-      "reason": "The array is filtered by `typeof v === 'string' && v.trim().length > 0`, so element [0] is either a non-empty string or undefined \u2014 never a falsy string. `??` and `||` can only differ on a falsy non-nullish element, which the filter has already excluded. The filter itself is load-bearing and pinned separately by test:pure ('a blank response does not beat a real one'), which is what stops that guarantee being quietly removed."
+      "reason": "The array is filtered by `typeof v === 'string' && v.trim().length > 0`, so element [0] is either a non-empty string or undefined — never a falsy string. `??` and `||` can only differ on a falsy non-nullish element, which the filter has already excluded. The filter itself is load-bearing and pinned separately by test:pure ('a blank response does not beat a real one'), which is what stops that guarantee being quietly removed."
+    },
+    {
+      "file": "electron/services/connection-failure.ts",
+      "rule": "nullish->or",
+      "code": "const e = (err ?? {}) as { serverResponseCode?: unknown }",
+      "reason": "The third instance of this line, and the same argument as the other two: the result is only property-accessed (.serverResponseCode), and every falsy non-nullish value `||` would swap for {} — 0, '', false, NaN — yields undefined for it anyway, so no input distinguishes them. describeSentCopyFailure also hands the original `err` to classifyConnectionFailure, which reads its own copy, so nothing downstream sees the difference either."
     }
   ]
 }

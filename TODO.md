@@ -25,17 +25,7 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
   image change" class of bug. Recorded because the disk cost is real, not because
   it is obviously worth paying to fix.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
-- **A failed Sent-copy file is invisible to the user.** `appendToSentFolder`
-  throwing is caught in `smtp-send.ts` and reduced to a `console.warn`, and
-  `syncSentFolder` failing is caught in `main.ts` with a bare `catch {}`. Both are
-  right not to fail the send — the mail is already delivered, and failing would
-  tempt a second send — but the user is told nothing, so a message that was sent
-  simply never appears in Sent. That is exactly how the `sent-mail` folder-typing
-  bug (see Done) stayed hidden. The fix is the #194 shape: a toast in the main
-  window saying the message was sent but the Sent copy could not be filed. Not
-  bundled with the typing fix, which is a one-line lookup change and did not need
-  a new IPC path to review alongside it.
-- - **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
+- **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
 
 ## Performance
 
@@ -120,6 +110,46 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **A message that was sent but never filed in Sent now says so.** The loose end
+  from the `sent-mail` folder-typing fix. `appendToSentFolder` throwing was caught
+  in `smtp-send.ts` and reduced to a `console.warn`, and `syncSentFolder` failing
+  to a bare `catch {}` in `main.ts`. Both are right not to fail the send — the
+  message is already delivered, and failing would tempt a second one — but the
+  user was told nothing, which is how an account's sent mail went unfiled for
+  weeks and the report arrived as "I can't see it in sent items".
+
+  `sendMail` now returns a `SendOutcome` carrying `sentCopyFailure` instead of
+  swallowing it, worded by `describeSentCopyFailure` in `connection-failure.ts`
+  — the fourth of that module's describers and the only one whose news is
+  *smaller* than it looks. `[TRYCREATE]`/`[NONEXISTENT]` reads as "no Sent folder
+  could be found", `[OVERQUOTA]` as a full mailbox, and both are checked ahead of
+  the connection classifier because neither is a connection fault. The first
+  **names the fault and suggests nothing**: there is no way for a user to
+  designate a folder's role, so a "do X to fix it" would have been an instruction
+  that does nothing. (An early draft of this said "opening that folder once in
+  the sidebar is enough for Orbit Mail to learn it", which is not true of
+  anything in the code.)
+
+  The `syncSentFolder` catch is deliberately still silent: there the copy *is* on
+  the server and the next ordinary sync brings it in, so there is nothing lost
+  and nothing to do.
+
+  **The e2e check earned its place on its first run, and not on the silence it
+  was written for.** The warning went out as an `app:toast` and the scheduler's
+  own `notifySendCompleted` followed a tick later, overwriting it with
+  "Message sent" — the suite read back the wrong toast, and a user would have
+  seen nothing at all. Two messages about one send race by construction, so the
+  verdict now rides on `compose:sent` itself: one channel, one toast, no ordering
+  to get wrong. `onSent` changed from `(subject: string)` to
+  `{ subject, sentCopyFailure? }` across the three-file spine and the renderer.
+  Nothing below a real window could have found it — both messages were sent, both
+  handlers ran, and every unit-level fact about them was correct.
+
+  The toast's leading clause is load-bearing, not stylistic: read as "not sent" it
+  costs the recipient a duplicate. `e2e-sent-copy-failure.suite.ts` asserts it
+  leads with the send having succeeded and never contains "Not sent", and checks
+  delivery against the *server*, because that is the promise being made.
 
 - **A reply from a cPanel/Courier IMAP account was delivered and then invisible.**
   Reported as "I sent a reply to terry and I can't see it in sent items". The

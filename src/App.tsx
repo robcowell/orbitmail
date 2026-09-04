@@ -245,10 +245,17 @@ function MainApp() {
       useMailStore.getState().setToast('Opened for editing — no longer scheduled to send')
     })
 
-    const unsubSent = window.orbitMail.compose.onSent(() => {
+    const unsubSent = window.orbitMail.compose.onSent((info) => {
       const store = useMailStore.getState()
       store.setPendingSend(null)
-      store.setToast('Message sent')
+      // The message went out either way. When its copy could not be filed the
+      // sentence still leads with that, because read as "not sent" it would
+      // cost the recipient a duplicate.
+      store.setToast(
+        info.sentCopyFailure
+          ? `Message sent, but no copy was saved to Sent — ${info.sentCopyFailure}`
+          : 'Message sent'
+      )
     })
 
     // A held send that failed. The pending-send indicator has to be cleared

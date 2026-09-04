@@ -108,6 +108,12 @@ const FOLDER_NAME_MAP: Record<string, FolderType> = {
   'Sent Mail': 'sent',
   'Sent Items': 'sent',
   Sent: 'sent',
+  // cPanel/Courier installations name the mailbox `sent-mail` under a `mail/`
+  // prefix, and some Dovecot configurations use the run-together spellings.
+  // None of them are flagged \Sent by every server that serves them.
+  'sent-mail': 'sent',
+  sentmail: 'sent',
+  sent_mail: 'sent',
   Drafts: 'drafts',
   Trash: 'trash',
   Deleted: 'trash',
@@ -120,6 +126,21 @@ const FOLDER_NAME_MAP: Record<string, FolderType> = {
   'Junk Email': 'junk',
   'Junk E-mail': 'junk',
   Spam: 'junk'
+}
+
+// Matched case-insensitively. Mailbox names are whatever the server chose to
+// call them, and case is not one of the things it agrees with us about: an
+// account whose folders are `mail/drafts` and `mail/sent-mail` got `drafts`
+// typed only because that server happens to flag it \Drafts, while `sent-mail`
+// — flagged by nothing and spelled by nobody's convention — stayed `custom`.
+// The Sent role then had no holder, so sent copies were appended to a literal
+// `Sent` mailbox that did not exist and the sidebar had no Sent folder to show.
+const FOLDER_NAME_LOOKUP = new Map<string, FolderType>(
+  Object.entries(FOLDER_NAME_MAP).map(([name, type]) => [name.toLowerCase(), type])
+)
+
+function folderTypeFromName(name: string): FolderType | undefined {
+  return FOLDER_NAME_LOOKUP.get(name.trim().toLowerCase())
 }
 
 export type SyncStatusState = SyncStatus
@@ -636,7 +657,7 @@ export function detectFolderType(
     const mapped = SPECIAL_USE_MAP[flag]
     if (mapped) return mapped
   }
-  return FOLDER_NAME_MAP[name] ?? 'custom'
+  return folderTypeFromName(name) ?? 'custom'
 }
 
 function specialUseFlags(specialUse?: string | string[] | null): string[] {
@@ -722,7 +743,7 @@ export function detectFolderTypes<T extends TypedMailbox>(
     const fromFlags = specialUseFlags(mb.specialUse)
       .map((flag) => SPECIAL_USE_MAP[flag])
       .find((mapped): mapped is FolderType => !!mapped)
-    const role = fromFlags ?? FOLDER_NAME_MAP[mb.name]
+    const role = fromFlags ?? folderTypeFromName(mb.name)
     types.set(mb.path, role ?? 'custom')
     if (!role) continue
 

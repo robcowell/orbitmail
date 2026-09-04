@@ -25,7 +25,17 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
   image change" class of bug. Recorded because the disk cost is real, not because
   it is obviously worth paying to fix.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
-- **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
+- **A failed Sent-copy file is invisible to the user.** `appendToSentFolder`
+  throwing is caught in `smtp-send.ts` and reduced to a `console.warn`, and
+  `syncSentFolder` failing is caught in `main.ts` with a bare `catch {}`. Both are
+  right not to fail the send — the mail is already delivered, and failing would
+  tempt a second send — but the user is told nothing, so a message that was sent
+  simply never appears in Sent. That is exactly how the `sent-mail` folder-typing
+  bug (see Done) stayed hidden. The fix is the #194 shape: a toast in the main
+  window saying the message was sent but the Sent copy could not be filed. Not
+  bundled with the typing fix, which is a one-line lookup change and did not need
+  a new IPC path to review alongside it.
+- - **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
 
 ## Performance
 
@@ -110,6 +120,43 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **A reply from a cPanel/Courier IMAP account was delivered and then invisible.**
+  Reported as "I sent a reply to terry and I can't see it in sent items". The
+  message was sent — SMTP submission completed, the recipient got it, the draft
+  was deleted, and `harvestContacts` (which runs only *after* `transport.sendMail`
+  resolves) had written the recipient with `sent_count = 1`. Nothing was stuck:
+  `scheduled_actions` was empty.
+
+  The account's mailboxes are `INBOX`, `mail/drafts`, `mail/trash`,
+  `mail/sent-mail` and `mail/SPAM.incoming`. The server flags Drafts and Trash
+  `\Drafts`/`\Trash` — which is how two lowercase names got their roles at all,
+  since `FOLDER_NAME_MAP` was matched exact-case — but does **not** flag
+  `sent-mail` `\Sent`. It matched no flag and none of `Sent`/`Sent Mail`/`Sent
+  Items`, so it was typed `custom` and the Sent role had no holder on that
+  account. Three things then failed, all of them quietly:
+
+  - `appendToSentFolder` resolved no sent mailbox and fell back to its literal
+    `path = 'Sent'`, a mailbox that does not exist on this server. The `APPEND`
+    failed and was swallowed by `console.warn('Sent copy could not be filed')` —
+    deliberately, because a failed *file* must not fail a completed *send*, but
+    the user gets no signal.
+  - `syncSentFolder` does the same lookup and returns early, so the post-send
+    sync was a no-op inside a bare `catch {}`.
+  - The sidebar groups by `folder.type` against `STANDARD_TYPES`, so there was no
+    Sent row to look in even had a copy existed.
+
+  Confirmed against the server rather than inferred: `folders.server_message_count`
+  for `mail/sent-mail` — written from a real `STATUS ... MESSAGES` — was `0`,
+  recorded 17 minutes after the send. No copy was filed anywhere.
+
+  Fixed by matching `FOLDER_NAME_MAP` case-insensitively (a normalized lookup
+  built once from the same map, so there is still one list of names) and adding
+  the `sent-mail`, `sentmail` and `sent_mail` spellings. `upsertFolder` already
+  re-types on every sync, so existing installs are corrected by the next sync with
+  no migration. Deliberately *not* done here: surfacing the swallowed
+  "Sent copy could not be filed" as a toast the way #194 did for held sends — it
+  is a real gap, and it is a different change; it is under Outstanding.
 
 - **Sending a message with an attachment failed silently after the hold.**
   Reported as a forward, but it was every send with an attachment: *"Not sent:

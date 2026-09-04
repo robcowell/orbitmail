@@ -797,7 +797,18 @@ the control, and the README says so.
   4. First-listed on a draw, so a stable server listing gives a stable role.
 
   Everything that matched a role but did not win it drops to `custom`.
-  `FOLDER_NAME_MAP` is the fallback for servers advertising no SPECIAL-USE.
+  `FOLDER_NAME_MAP` is the fallback for servers advertising no SPECIAL-USE. It is
+  matched **case-insensitively** against the mailbox's own name, and a server
+  flagging *some* of its folders is not evidence it flags them all: a
+  cPanel/Courier account whose mailboxes are `mail/drafts`, `mail/trash` and
+  `mail/sent-mail` got the first two typed from `\Drafts`/`\Trash` while
+  `sent-mail` — unflagged, and matching none of `Sent`/`Sent Mail`/`Sent Items`
+  under the old exact-case lookup — stayed `custom`. With no holder for the Sent
+  role, `appendToSentFolder` fell back to appending to a literal `Sent` mailbox
+  that did not exist on that server; the APPEND failed into a `console.warn`,
+  `syncSentFolder` returned early, and the sidebar (which groups by folder type)
+  had no Sent row. Mail was delivered and then invisible. `sent-mail`, `sentmail`
+  and `sent_mail` are in the map for that reason.
 
   `resolveRoleMailbox` applies the same ranking to a raw mailbox list, and
   send-filing (`appendToSentFolder`) and the post-send sync use it. They each
@@ -2487,7 +2498,7 @@ reimplementing them, so it exercises the shipping code paths:
 | Unique-index dedupe | A duplicate `(folder_id, uid)` row (a pre-constraint DB) blocks `CREATE UNIQUE INDEX`; `dedupeMessagesByFolderUid` collapses each key to one row — keeping the one carrying AI analysis/sweep cache — so the index builds, and is a no-op on a healthy table. |
 | Attachment metadata | `toAttachmentMeta` preserves filename/type/size (including the size-from-`content.length` fallback) and returns no content Buffer, so the sync batch can drop the parsed buffers instead of retaining them. |
 | Attachment index | `attachments.message_id` has an index, and the planner uses it (`EXPLAIN QUERY PLAN` shows the index, not a `SCAN`) — so a message-id lookup and the delete cascade are not full scans. |
-| Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. The account's own `Sent Items` beats a grafted `INBOX/admin/Sent Items` when both are flagged *and* when only the grafted one is; a folder one level under `INBOX` keeps its role (Courier namespacing); an unflagged lookalike deeper still is untouched; a flagged deep folder still beats a shallow name match; equally shallow rivals keep first-listed; depth is measured with the server's delimiter (`.` as well as `/`); and `resolveRoleMailbox` — which send-filing uses — returns the same mailbox the folder list does. |
+| Folder roles | SPECIAL-USE is honoured whether imapflow hands it back as a string or an array, and case-insensitively; a server-flagged Trash outranks a folder merely *named* "Deleted Items" (which is demoted to `custom`); the name map still decides when no mailbox is flagged; and `upsertFolder` re-types an existing folder instead of freezing the first guess. Name matching is case-insensitive (`SENT`, `drafts`, `Sent-Mail`) and knows the `sent-mail`/`sentmail`/`sent_mail` spellings. The account's own `Sent Items` beats a grafted `INBOX/admin/Sent Items` when both are flagged *and* when only the grafted one is; a folder one level under `INBOX` keeps its role (Courier namespacing); a grafted lookalike deeper still loses the role; a flagged deep folder still beats a shallow name match; equally shallow rivals keep first-listed; depth is measured with the server's delimiter (`.` as well as `/`); and `resolveRoleMailbox` — which send-filing uses — returns the same mailbox the folder list does. The whole cPanel shape is asserted end to end: an unflagged `mail/sent-mail` takes the sent role alongside flagged lowercase `mail/drafts`/`mail/trash`, and `resolveRoleMailbox` hands send-filing `mail/sent-mail` rather than the non-existent `Sent` it used to fall back to. |
 | Delete durability | Deleting the newest message in a folder (which lowers the local max UID, so the next sync searches a range starting past the end) does not re-import it on the following syncs, does not duplicate the survivors, and does not wedge the watermark for mail that arrives afterwards. A move leaves the source and lands in the destination exactly once. |
 | Autoconfig | A `STARTTLS` socketType parses to `starttls`, not `ssl` — `'starttls'.includes('tls')` made an SSL-first check swallow it, storing a plaintext-upgrade account as implicit SSL. Also covers `SSL`→`ssl`, the parser defaults when `socketType` is absent (incoming ssl, outgoing starttls), and the port fallback for an unrecognized type (143→starttls, 465→ssl). Note the last-resort `guessFromDomain` fills `imap.<domain>`/`smtp.<domain>`, which is a **guess and says so** — on shared hosting those names often resolve but present a certificate for the *provider's* domain, so the connection fails TLS validation. The dialog's failure message now explains that specific case rather than reporting `Command failed`. |
 

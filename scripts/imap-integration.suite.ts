@@ -465,6 +465,25 @@ async function main(): Promise<void> {
       detectFolderType('Bin') === 'trash')
     ok('an ordinary folder stays custom', detectFolderType('Rotary') === 'custom')
 
+    // Names are matched case-insensitively, and the map carries the spellings a
+    // server actually uses. A cPanel/Courier account whose mailboxes are
+    // `mail/drafts`, `mail/trash` and `mail/sent-mail` typed the first two only
+    // because that server flags them \Drafts and \Trash; `sent-mail` matched
+    // neither a flag nor the map's `Sent`/`Sent Mail`/`Sent Items`, so it stayed
+    // `custom` and the account had no Sent folder at all.
+    ok('the sent-mail spelling is recognised',
+      detectFolderType('sent-mail') === 'sent', detectFolderType('sent-mail'))
+    ok('the run-together spellings are recognised',
+      detectFolderType('sentmail') === 'sent' && detectFolderType('sent_mail') === 'sent',
+      `${detectFolderType('sentmail')} / ${detectFolderType('sent_mail')}`)
+    ok('a name match ignores case',
+      detectFolderType('SENT') === 'sent' &&
+        detectFolderType('drafts') === 'drafts' &&
+        detectFolderType('Sent-Mail') === 'sent' &&
+        detectFolderType('inbox') === 'inbox',
+      `${detectFolderType('SENT')} / ${detectFolderType('drafts')} / ` +
+        `${detectFolderType('Sent-Mail')} / ${detectFolderType('inbox')}`)
+
     // The account-wide pass: the server's flag outranks a name match elsewhere.
     const mailboxes = [
       { name: 'INBOX', path: 'INBOX', specialUse: '\\Inbox' },
@@ -514,7 +533,10 @@ async function main(): Promise<void> {
     ok('a nested role with no shallower rival still takes it',
       grafted.get('INBOX/admin/Junk Email') === 'junk',
       String(grafted.get('INBOX/admin/Junk Email')))
-    ok('an unflagged lookalike deeper still is left alone',
+    // `sent-mail` is a name the map now knows, so this one is a real rival for
+    // the role rather than a non-match — and it must still lose it, being both
+    // grafted and deeper than the account's own Sent.
+    ok('a grafted lookalike deeper still loses the role',
       grafted.get('INBOX/info/mail/sent-mail') === 'custom',
       String(grafted.get('INBOX/info/mail/sent-mail')))
     ok('among equally shallow rivals the first listed keeps the role',
@@ -578,6 +600,36 @@ async function main(): Promise<void> {
     ok('depth respects the server’s hierarchy delimiter',
       dotted.get('Sent') === 'sent' && dotted.get('INBOX.shared.Sent') === 'custom',
       `${dotted.get('Sent')} / ${dotted.get('INBOX.shared.Sent')}`)
+
+    // The shape that produced the bug: a server that flags Drafts and Trash but
+    // not Sent, with the mailbox spelled `sent-mail` under a `mail/` prefix.
+    // Sent had no holder, so `appendToSentFolder` fell back to appending to a
+    // literal `Sent` mailbox that does not exist on this server — the APPEND
+    // failed, the error was swallowed, `syncSentFolder` returned early, and the
+    // sidebar (which groups by folder type) had no Sent row. The message was
+    // delivered and then vanished as far as the user could tell.
+    const cpanel = [
+      { name: 'INBOX', path: 'INBOX', specialUse: '\\Inbox' },
+      { name: 'drafts', path: 'mail/drafts', specialUse: '\\Drafts' },
+      { name: 'trash', path: 'mail/trash', specialUse: '\\Trash' },
+      { name: 'sent-mail', path: 'mail/sent-mail' },
+      { name: 'SPAM.incoming', path: 'mail/SPAM.incoming' }
+    ]
+    const cpanelTypes = detectFolderTypes(cpanel)
+    ok('an unflagged sent-mail takes the sent role',
+      cpanelTypes.get('mail/sent-mail') === 'sent',
+      String(cpanelTypes.get('mail/sent-mail')))
+    ok('the flagged lowercase folders keep theirs',
+      cpanelTypes.get('mail/drafts') === 'drafts' && cpanelTypes.get('mail/trash') === 'trash',
+      `${cpanelTypes.get('mail/drafts')} / ${cpanelTypes.get('mail/trash')}`)
+    ok('an unrelated folder is still custom',
+      cpanelTypes.get('mail/SPAM.incoming') === 'custom',
+      String(cpanelTypes.get('mail/SPAM.incoming')))
+    // What appendToSentFolder asks for. Undefined here is the whole bug: it
+    // falls back to the literal path 'Sent'.
+    ok('send-filing resolves the real path instead of falling back to “Sent”',
+      resolveRoleMailbox(cpanel, 'sent')?.path === 'mail/sent-mail',
+      String(resolveRoleMailbox(cpanel, 'sent')?.path))
   }
 
   // -------------------------------------------------------------------------

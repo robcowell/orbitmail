@@ -178,6 +178,7 @@ plus the OAuth setup for Gmail and Microsoft, are in **[INSTALL.md](INSTALL.md)*
 |-----|--------|
 | `C` | Compose |
 | `R` | Reply — to the open conversation's latest message, or the selected one |
+| `A` | Reply All, to the same message `R` would reply to |
 | `F` | Forward, the same message `R` would reply to |
 | `/` | Search |
 | `Shift` / `Ctrl` + click | Select a range of rows, or add and remove single ones. Delete, Archive and Move then act on all of them |

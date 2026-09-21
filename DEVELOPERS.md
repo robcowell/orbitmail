@@ -2142,6 +2142,8 @@ open the app at a size the user cannot read well enough to fix.
 
 What the app defends against, and the tests that keep it that way. All of this
 was added or hardened in a July 2026 audit pass; `TODO.md` lists what remains.
+Vulnerabilities are reported privately through GitHub — see
+[`SECURITY.md`](SECURITY.md), which also sets out what is in scope.
 
 ### Rendered email is hostile input
 

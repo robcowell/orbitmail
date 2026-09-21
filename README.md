@@ -393,6 +393,7 @@ Orbit Mail hands links to your default browser — check you have one set.
 - **[DEVELOPERS.md](DEVELOPERS.md)** — architecture, security posture, packaging,
   contributing
 - **[TODO.md](TODO.md)** — backlog, known bugs, and decisions taken
+- **[SECURITY.md](SECURITY.md)** — how to report a security problem privately
 
 ## License
 

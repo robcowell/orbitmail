@@ -111,6 +111,19 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **A security policy, and a private way to report.** Suggested by a security
+  architect: the repo is public and had no `SECURITY.md`, so the only visible
+  route for a vulnerability was a public issue. `SECURITY.md` points reporters at
+  GitHub's private vulnerability reporting, says only the latest release is
+  patched, and draws the scope around what the app actually holds — rendered
+  mail, credentials, OAuth, attachments, transport. Bring-your-own OAuth
+  credentials is listed as out of scope because it is the design, and gaps
+  already written down in DEVELOPERS.md and here are out of scope unless they are
+  worse than described. No email address is published; a reporter who cannot use
+  GitHub asks for a contact in an issue with no details. Responses are promised
+  as best effort, not to a deadline — a one-person project should not commit to
+  an SLA it cannot keep.
+
 - **A message that was sent but never filed in Sent now says so.** The loose end
   from the `sent-mail` folder-typing fix. `appendToSentFolder` throwing was caught
   in `smtp-send.ts` and reduced to a `console.warn`, and `syncSentFolder` failing

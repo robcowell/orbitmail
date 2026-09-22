@@ -351,6 +351,9 @@ function AccountDetail({ account }: { account: Account }) {
   // modal, which is what this used to be, cannot say how much is about to go.
   const [confirmingRemove, setConfirmingRemove] = useState(false)
   const [removing, setRemoving] = useState(false)
+  const [signingIn, setSigningIn] = useState(false)
+  const [signInResult, setSignInResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const signsInThroughBrowser = account.provider === 'gmail' || account.provider === 'o365'
 
   const loadInfo = () => {
     let cancelled = false
@@ -376,6 +379,7 @@ function AccountDetail({ account }: { account: Account }) {
     setDisplayName(account.displayName)
     setSyncDays(account.syncDays)
     setConfirmingRemove(false)
+    setSignInResult(null)
     return loadInfo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account.id])
@@ -414,6 +418,20 @@ function AccountDetail({ account }: { account: Account }) {
       loadInfo()
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const handleSignInAgain = async () => {
+    setSigningIn(true)
+    setSignInResult(null)
+    try {
+      await window.orbitMail.accounts.reauthenticate(account.id)
+      setSignInResult({ ok: true, message: `Signed in again as ${account.email}.` })
+      loadInfo()
+    } catch (err) {
+      setSignInResult({ ok: false, message: ipcErrorMessage(err, 'Sign-in did not complete') })
+    } finally {
+      setSigningIn(false)
     }
   }
 
@@ -539,6 +557,34 @@ function AccountDetail({ account }: { account: Account }) {
         </div>
       </section>
 
+      {signsInThroughBrowser && (
+        <section className="settings-section">
+          <h3>Sign-in</h3>
+          <p className="account-hint">
+            Signs in to {account.email} again in your browser. Use it when the status bar reports
+            a sign-in problem
+            {account.provider === 'o365' &&
+              ', or so that Orbit Mail can send through Microsoft Graph if your organisation has SMTP turned off'}
+            . Your mail and settings stay as they are.
+          </p>
+          {signInResult && (
+            <p className={`account-hint${signInResult.ok ? '' : ' is-error'}`} role="status">
+              {signInResult.message}
+            </p>
+          )}
+          <div className="settings-section-actions">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={signingIn}
+              onClick={() => void handleSignInAgain()}
+            >
+              {signingIn ? 'Waiting for the browser…' : 'Sign in again'}
+            </button>
+          </div>
+        </section>
+      )}
+
       <SignatureSettings account={account} info={info} onSaved={loadInfo} />
 
       <ConnectionSettings account={account} />
@@ -641,7 +687,13 @@ export function AccountsPane() {
               role="tab"
               aria-selected={account.id === selectedId}
               className={`settings-account-tab${account.id === selectedId ? ' is-active' : ''}`}
-              onClick={() => setSelectedId(account.id)}
+              onClick={() => {
+                // Picking a tab replaces the account Settings was opened for.
+                // Left in place, the effect above snaps the selection straight
+                // back to it, and the picker cannot leave that account.
+                useMailStore.setState({ settingsAccountId: null })
+                setSelectedId(account.id)
+              }}
               title={account.email}
             >
               {accountLabel(account)}

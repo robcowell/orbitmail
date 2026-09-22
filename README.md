@@ -216,7 +216,10 @@ The gear, or `Ctrl` + `,`. What you can change today:
   either, and whether remote images load everywhere or only for senders you have
   allowed.
 - **Accounts** — rename an account, choose how much mail to keep on this
-  computer, see what it is using, sync it, or remove it. Removing tells you how
+  computer, see what it is using, sync it, or remove it. A Gmail or Microsoft
+  365 account has **Sign in again**, for when the status bar reports a sign-in
+  problem: it signs you in in the browser and keeps everything else as it is,
+  and it refuses if you pick a different account there. Removing tells you how
   many messages and how much disk space go with it; your mail on the server is
   untouched. For IMAP and POP3 accounts you can also change the server, port,
   security and password, with a **Test connection** button — settings that do
@@ -358,9 +361,8 @@ and the message stays in Drafts, so you can fix the problem and send it again.
 Orbit Mail sends Microsoft 365 mail through Microsoft Graph, which doesn't need
 SMTP. An account added with an earlier version hasn't given it permission to
 yet, so it still sends over SMTP, which many organisations switch off. It is
-not your password. Sign in to the account again — **Add Account → Microsoft
-365**, with the same address — and it switches over; your mail and settings
-stay as they are. An account added by hand with a password can only use SMTP,
+not your password. In Settings → Accounts, pick the account and click **Sign in
+again**, and it switches over; your mail and settings stay as they are. An account added by hand with a password can only use SMTP,
 so there a Microsoft 365 admin has to allow it: in the admin center, Users →
 Active users → you → Mail → Manage email apps → tick **Authenticated SMTP**. It
 can take up to an hour to apply.
@@ -377,7 +379,9 @@ Microsoft 365 file sent mail themselves.
 The status bar names the account and the reason. "Rejected the login" means the
 password stopped working — most often because it was changed with your provider;
 update it in Settings → Accounts. Otherwise click **Retry**, or
-**Re-authenticate** if it is an account problem.
+**Re-authenticate** if it is an account problem, which opens that account's
+settings: **Sign in again** for Gmail and Microsoft 365, the password for an
+account added by hand.
 
 **Unread counts look wrong**  
 Click **Refresh**, or **Sync now** on the account. Note the window title counts

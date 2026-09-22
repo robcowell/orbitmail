@@ -270,8 +270,8 @@ export function describeSendFailure(err: unknown): string {
     if (e.graphUnavailable === true) {
       return (
         'Microsoft 365 has SMTP sending turned off for this mailbox. Sign in to ' +
-        'this account again (Add Account → Microsoft 365, same address) so Orbit ' +
-        'Mail can send through Microsoft Graph instead, which does not need SMTP.'
+        'this account again (Settings → Accounts → Sign in again) so Orbit Mail ' +
+        'can send through Microsoft Graph instead, which does not need SMTP.'
       )
     }
     return (
@@ -331,7 +331,7 @@ function describeGraphRefusal(status: number, code: string, detail: string): str
   if (status === 401) {
     return (
       'Microsoft did not accept this account’s sign-in for sending' + said +
-      '. Sign in to it again: Add Account → Microsoft 365, same address.'
+      '. Sign in to it again in Settings → Accounts.'
     )
   }
   if (status === 403) {

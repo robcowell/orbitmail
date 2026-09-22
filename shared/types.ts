@@ -660,6 +660,12 @@ export interface OrbitMailAPI {
   accounts: {
     list: () => Promise<Account[]>
     add: (provider: 'gmail' | 'o365') => Promise<Account>
+    /**
+     * Sign an existing Gmail or Microsoft 365 account in again, in the browser,
+     * keeping its mail and settings. Refuses, changing nothing, if a different
+     * address signs in.
+     */
+    reauthenticate: (accountId: string) => Promise<void>
     addManual: (input: ManualAccountInput) => Promise<Account>
     autodetect: (email: string) => Promise<AutodetectResult>
     remove: (accountId: string) => Promise<void>

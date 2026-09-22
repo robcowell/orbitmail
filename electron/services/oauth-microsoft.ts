@@ -54,7 +54,8 @@ function extractRefreshToken(msal: PublicClientApplication): string | undefined 
   }
 }
 
-export async function authenticateMicrosoft(): Promise<TokenData> {
+/** `loginHint` pre-fills that address at Microsoft's sign-in, for Sign in again. */
+export async function authenticateMicrosoft(loginHint?: string): Promise<TokenData> {
   const state = generateState()
   const loopback = await startLoopbackServer({ expectedState: state })
   // RFC 8252 loopback redirect. Entra ignores the port for loopback URIs, so the
@@ -74,6 +75,7 @@ export async function authenticateMicrosoft(): Promise<TokenData> {
       extraScopesToConsent: [GRAPH_SEND_SCOPE],
       redirectUri,
       prompt: 'select_account',
+      ...(loginHint ? { loginHint } : {}),
       state,
       codeChallenge: challenge,
       codeChallengeMethod: 'S256'
@@ -102,7 +104,7 @@ export async function authenticateMicrosoft(): Promise<TokenData> {
     throw new Error(
       'Microsoft did not return a refresh token, so the account would stop working after ' +
         'restart. In your Entra app registration enable "Allow public client flows" and keep ' +
-        'the "offline_access" scope, then add the account again.'
+        'the "offline_access" scope, then sign in again.'
     )
   }
 
@@ -160,7 +162,7 @@ export async function refreshMicrosoftToken(tokenData: TokenData): Promise<Token
   if (!tokenData.refreshToken) {
     throw markReauthRequired(
       new Error(
-        `No Microsoft refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+        `No Microsoft refresh token stored for ${tokenData.email}. Sign in to it again in Settings → Accounts.`
       )
     )
   }

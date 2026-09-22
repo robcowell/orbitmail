@@ -374,3 +374,19 @@ unfiltered when you need to know what a script will actually see.
 Whichever you use: a wait loop must be able to end. Bound it with a maximum
 number of iterations, so a wrong assumption about the command surfaces as a loop
 that gave up rather than one nobody notices.
+
+**`gh pr edit --base` fails on this repo, and it is easy to miss.** It goes
+through a GraphQL query that touches classic Projects, which GitHub has
+deprecated, and it errors out without changing the base. That merged a stack
+wrong: #213–#216 were meant to land on `main` one by one, and after #213 each
+retarget failed, so #214 and #215 merged into their *stacked* branches. The work
+reached `main` only because #216 contained all of it. Retarget with REST
+instead, and **read the base back before merging**:
+
+```sh
+gh api -X PATCH repos/robcowell/orbitmail/pulls/<n> -f base=main --jq .base.ref
+gh pr view <n> --json baseRefName --jq .baseRefName   # must say main
+```
+
+The same goes for any step a script takes on trust: a merge loop should check
+that each merge landed where intended, not just that the command exited 0.

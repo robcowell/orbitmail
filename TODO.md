@@ -111,6 +111,19 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Settings → About shows the running version.** Asked for right after
+  installing 0.8.1, to check it had taken, and there was nowhere in the app to
+  look: no About panel, and nothing else that showed the version. The only
+  in-app trace was the `User-Agent` on sent mail. A category in Settings rather
+  than an application menu, because the app has no menu of its own and
+  Electron's default one is hidden behind `Alt` and has no About item on Linux.
+  The version comes from `app:getVersionInfo` in the running process rather
+  than a build-time `define`, so it cannot report one version while running
+  another. It also shows Electron, Chromium and Node, because a bug report's
+  first question is which Chromium is rendering the mail. Checked in
+  `ui:preview` in both themes, including that each button calls
+  `shell.openExternal` with the right URL, since preview answers are fixtures.
+
 - **imapflow 1.4.3 → 2.0.5, which clears the last `npm audit` finding.** 1.4.3
   bundled nodemailer 9.0.1, below the 9.1.0 that fixes GHSA-2x7j-588g-ccc2 and
   three moderate advisories. That copy was not reachable — imapflow loaded only

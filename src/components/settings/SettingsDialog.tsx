@@ -4,12 +4,14 @@ import { AccountsPane } from './AccountsPane'
 import { GeneralPane } from './GeneralPane'
 import { PrivacyPane } from './PrivacyPane'
 import { AiPane } from './AiPane'
+import { AboutPane } from './AboutPane'
 
 const CATEGORIES: { id: SettingsCategory; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'privacy', label: 'Privacy' },
-  { id: 'ai', label: 'AI' }
+  { id: 'ai', label: 'AI' },
+  { id: 'about', label: 'About' }
 ]
 
 interface SettingsDialogProps {
@@ -84,6 +86,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
             {category === 'privacy' && <PrivacyPane />}
             {category === 'ai' && <AiPane />}
             {category === 'accounts' && <AccountsPane />}
+            {category === 'about' && <AboutPane />}
           </div>
         </div>
 

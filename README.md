@@ -228,6 +228,9 @@ The gear, or `Ctrl` + `,`. What you can change today:
   bill — a more capable model, a higher effort, and a fuller summary each add to
   it. A change applies to the next thing you ask for; results already saved are
   kept.
+- **About** — which version you are running, and the Electron and Chromium
+  versions underneath it, with links to that version's release notes, the
+  website, and where to report a problem.
 
 The gear beside an account in the sidebar, and right-clicking a folder, both
 open this screen on that account.

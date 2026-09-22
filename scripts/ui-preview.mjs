@@ -330,6 +330,7 @@ const OVERRIDES = {
   },
   'app.getSecureStorageStatus': { available: true },
   'app.getPlatformCapabilities': { trayActive: true, notificationsSupported: true, mailtoHandlerActive: false },
+  'app.getVersionInfo': { version: '0.8.1', electron: '44.0.0', chromium: '152.0.7390.54', node: '24.18.1' },
   'drafts.list': [],
   'contacts.suggest': [],
   'preferences.get': {

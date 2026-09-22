@@ -867,6 +867,23 @@ async function main() {
     const reset = (fn) => { requests = []; route = fn }
     const rejects = async (p) => { try { await p; return null } catch (err) { return err } }
 
+    // The cached Graph token. Used only with enough life left for a whole send;
+    // anything else means asking Microsoft for a fresh one.
+    const { usableGraphToken, GRAPH_TOKEN_MARGIN_MS } = load('graph-send')
+    const now = 1_000_000_000
+    ok('a cached token with time to spare is used',
+      usableGraphToken({ graphAccessToken: 'g', graphExpiryDate: now + GRAPH_TOKEN_MARGIN_MS + 1 }, now) === 'g')
+    ok('one inside the margin is not, so it cannot expire mid-send',
+      usableGraphToken({ graphAccessToken: 'g', graphExpiryDate: now + GRAPH_TOKEN_MARGIN_MS }, now) === null)
+    ok('nor is an expired one',
+      usableGraphToken({ graphAccessToken: 'g', graphExpiryDate: now - 1 }, now) === null)
+    ok('nor a token whose expiry was never recorded',
+      usableGraphToken({ graphAccessToken: 'g' }, now) === null)
+    ok('nor an account that has none',
+      usableGraphToken({ graphExpiryDate: now + 3_600_000 }, now) === null && usableGraphToken({}, now) === null)
+    ok('the margin is minutes, not milliseconds or hours',
+      GRAPH_TOKEN_MARGIN_MS >= 60_000 && GRAPH_TOKEN_MARGIN_MS <= 10 * 60_000, String(GRAPH_TOKEN_MARGIN_MS))
+
     // Size: base64 grows the MIME by a third, and the limit is on what is sent.
     const maxRaw = Math.floor(SIMPLE_SEND_LIMIT / 4) * 3
     ok('a message whose base64 fits the limit goes in one request', fitsSimpleSend(maxRaw))

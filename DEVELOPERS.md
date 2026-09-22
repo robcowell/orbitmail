@@ -149,8 +149,21 @@ not consented to Graph.
   `outlook.office.com` IMAP/SMTP scopes, and one token request cannot span two
   resources. So sign-in asks for it through `extraScopesToConsent` (one consent
   screen), and `acquireGraphSendToken` exchanges the stored refresh token for a
-  Graph token at send time. The Graph token is not stored; the rotated refresh
-  token is.
+  Graph token at send time. That token is **cached** in the account's encrypted
+  record (`graphAccessToken`/`graphExpiryDate`) and reused while it has more
+  than two minutes left (`usableGraphToken`), because exchanging on every send
+  was a round trip to Microsoft on each one. Signing in again replaces the whole
+  record, so it drops the cache with the consent it came from. A cached token
+  Graph answers with 401 is replaced and the send retried **once**; a 401 means
+  nothing was sent, and the large path has already deleted its draft. A fresh
+  token that is refused is reported. `decryptCredentials` rebuilds the OAuth
+  record field by field, so these two fields had to be added there too: until
+  the DB contract checked, the cache was written on every send and dropped on
+  every read.
+- **Timing.** Every send logs one line to the main process's stdout, e.g.
+  `[orbit-mail] send via graph sent in 1840ms: sign-in 2ms, graph token (cached)
+  0ms, prepare 35ms, deliver 1790ms`. `performSend` then logs the Sent-folder
+  sync separately, because the "Message sent" toast waits for it.
 - **Fallback.** An account added before Graph sending has not consented. The
   token exchange then fails with `AADSTS65001` (or `65004`, or
   `interaction_required`), `acquireGraphSendToken` returns `null`, and the send
@@ -2380,8 +2393,9 @@ after 5 minutes and closes on every path.
 
 Microsoft sign-in also asks for Graph `Mail.Send`. It grants what `SMTP.Send`
 already did — sending as the user — through a different door, and nothing
-broader: no read access through Graph. The Graph access token is fetched per
-send and **never stored**; only the refresh token is, encrypted as before. An
+broader: no read access through Graph. The Graph access token is cached until
+it nearly expires, in the same `safeStorage`-encrypted record as the refresh
+token, so it is protected exactly as well as that. An
 upload session's URL comes back from Graph over TLS and carries its own
 authorisation, so the chunks are sent **without** the bearer token. That keeps
 the token to requests addressed to `graph.microsoft.com`, and is also what
@@ -2540,7 +2554,7 @@ reimplementing them, so it exercises the shipping code paths:
 | OAuth | The loopback listener accepts a callback only when its `state` matches this attempt's, so an injected authorization code cannot complete a sign-in; a genuine callback still works after rejected ones; an abandoned sign-in times out and releases the port. (Needs no mail server, but rides along here rather than adding a second test command.) |
 | TLS | `'starttls'` requires the upgrade and *refuses* a server that does not offer it — GreenMail's plain port advertises no STARTTLS, so it is an accurate stand-in. Includes a guard proving the old mapping would have logged in over plaintext. |
 | Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
-| Database contract | `scripts/db-contract.suite.ts`, run here on the real `better-sqlite3` and again under `test:db` on the node:sqlite shim — 187 assertions over blocking, threading, thread listing, search scoping, the AI cache surviving a re-sync, POP3 skip dates, contact harvesting, signing in again (the right address only, display name kept) and account removal. Running it in both places is what makes the fast runner trustworthy; see below. |
+| Database contract | `scripts/db-contract.suite.ts`, run here on the real `better-sqlite3` and again under `test:db` on the node:sqlite shim — 189 assertions over blocking, threading, thread listing, search scoping, the AI cache surviving a re-sync, POP3 skip dates, contact harvesting, signing in again (the right address only, display name kept, cached Graph token dropped) and account removal. Running it in both places is what makes the fast runner trustworthy; see below. |
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |

@@ -62,6 +62,21 @@ export class GraphSendError extends Error {
   }
 }
 
+/**
+ * A cached Graph token counts as usable only with this much life left, so it
+ * cannot expire between being picked and the last request of a large send.
+ */
+export const GRAPH_TOKEN_MARGIN_MS = 2 * 60 * 1000
+
+/** The cached Graph token if it is still good for a whole send, else null. */
+export function usableGraphToken(
+  cached: { graphAccessToken?: string; graphExpiryDate?: number },
+  now: number
+): string | null {
+  if (!cached.graphAccessToken || typeof cached.graphExpiryDate !== 'number') return null
+  return cached.graphExpiryDate - GRAPH_TOKEN_MARGIN_MS > now ? cached.graphAccessToken : null
+}
+
 /** Whether a MIME message this size can go in a single `sendMail` request. */
 export function fitsSimpleSend(mimeBytes: number): boolean {
   return Math.ceil(mimeBytes / 3) * 4 <= SIMPLE_SEND_LIMIT

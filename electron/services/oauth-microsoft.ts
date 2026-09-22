@@ -126,13 +126,12 @@ export async function authenticateMicrosoft(loginHint?: string): Promise<TokenDa
  * signs in again. `null` means "send over SMTP as before", not a failure.
  *
  * The refresh token may rotate here as it does in `refreshMicrosoftToken`, so the
- * caller must persist the returned one. The Graph token itself is not stored: it
- * is for a different resource from the IMAP/SMTP token in `accessToken`, and is
- * cheap to fetch per send.
+ * caller must persist the returned one, and the Graph token with its expiry —
+ * see `graphAccessToken` on `TokenData`.
  */
 export async function acquireGraphSendToken(
   tokenData: TokenData
-): Promise<{ accessToken: string; refreshToken: string } | null> {
+): Promise<{ accessToken: string; refreshToken: string; expiryDate?: number } | null> {
   if (!tokenData.refreshToken) return null
   const msal = getMsalApp()
   let result: AuthenticationResult | null
@@ -154,7 +153,8 @@ export async function acquireGraphSendToken(
   if (!result?.accessToken) return null
   return {
     accessToken: result.accessToken,
-    refreshToken: extractRefreshToken(msal) ?? tokenData.refreshToken
+    refreshToken: extractRefreshToken(msal) ?? tokenData.refreshToken,
+    expiryDate: result.expiresOn ? result.expiresOn.getTime() : undefined
   }
 }
 

@@ -112,6 +112,25 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Graph sends reuse their token, and every send logs its timings.** The first
+  real Graph send worked but was "well past ten seconds", beyond the undo hold,
+  with no way to see where the time went: the send runs on the scheduler after
+  the composer has closed. Two changes. Each send now logs one line of per-stage
+  timings (sign-in, Graph token cached or fetched, prepare, deliver, file in
+  Sent), and `performSend` logs the Sent-folder sync that "Message sent" waits
+  for. That sync is the main suspect: it is an IMAP round trip on the
+  user-visible path, and it was never measured. And the Graph token is cached
+  until it nearly expires, instead of exchanged on every send. A cached token
+  refused with 401 is replaced and retried once, which is safe because a 401
+  means nothing went out. **The cache did not work at first**:
+  `decryptCredentials` rebuilds the OAuth record field by field, so the new
+  fields were written on every send and dropped on every read, and every send
+  still fetched. Nothing would have looked wrong except the speed. The DB
+  contract caught it, with an assertion added to check that "signing in again
+  drops the cache", which could only mean something if the cache survived in
+  the first place. Whether this fixes the slowness is unknown until a real send
+  logs its timings; the Sent-folder sync may be most of it.
+
 - **Sign in again, from the account's own settings.** Asked for because the only
   way to renew an OAuth sign-in was **Add Account** with the same address: it
   updates the account in place, but nothing said so, and it read as "remove and

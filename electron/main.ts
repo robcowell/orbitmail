@@ -1545,8 +1545,14 @@ function registerIpc(): void {
     if (payload.draftId) deleteDraft(payload.draftId)
     // Only sync the Sent folder for this account so the message shows up, rather
     // than firing a full multi-account resync for every send.
+    // Timed because "Message sent" waits for it: the toast is raised only once
+    // this returns. `sendMail` logs its own stages just before this one.
+    const sentSyncStart = performance.now()
     try {
       await syncSentFolder(account.id, account.provider)
+      console.info(
+        `[orbit-mail] Sent folder sync after send: ${Math.round(performance.now() - sentSyncStart)}ms`
+      )
       notifyMessagesUpdated()
     } catch {
       // Sending succeeded; a Sent-folder sync hiccup shouldn't fail the send.

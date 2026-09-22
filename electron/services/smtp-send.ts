@@ -20,6 +20,7 @@ import { resolveGoogleAccessToken } from './oauth-google'
 import { acquireGraphSendToken, refreshMicrosoftToken } from './oauth-microsoft'
 import {
   fitsSimpleSend,
+  usableGraphToken,
   sendLargeViaGraph,
   sendMimeViaGraph,
   type GraphAttachment
@@ -159,9 +160,48 @@ export interface SendOutcome {
   sentCopyFailure?: string
 }
 
+/**
+ * Per-stage timings for one send, logged as a single line to the main process's
+ * stdout. Added when a Graph send felt slow and there was no way to tell where
+ * the time went — the send runs on the scheduler, after the composer has gone.
+ */
+class SendTimer {
+  route = 'unknown'
+  private readonly start = performance.now()
+  private mark = this.start
+  private readonly laps: string[] = []
+
+  lap(stage: string): void {
+    const now = performance.now()
+    this.laps.push(`${stage} ${Math.round(now - this.mark)}ms`)
+    this.mark = now
+  }
+
+  summary(result: 'sent' | 'failed'): string {
+    const total = Math.round(performance.now() - this.start)
+    return `[orbit-mail] send via ${this.route} ${result} in ${total}ms: ${this.laps.join(', ')}`
+  }
+}
+
 export async function sendMail(
   payload: ComposePayload,
   provider: Provider
+): Promise<SendOutcome> {
+  const timer = new SendTimer()
+  let result: 'sent' | 'failed' = 'failed'
+  try {
+    const outcome = await sendMailTimed(payload, provider, timer)
+    result = 'sent'
+    return outcome
+  } finally {
+    console.info(timer.summary(result))
+  }
+}
+
+async function sendMailTimed(
+  payload: ComposePayload,
+  provider: Provider,
+  timer: SendTimer
 ): Promise<SendOutcome> {
   // Before any credential or transport work: a payload naming a file the user
   // never chose must do nothing at all, not fail halfway through a send.
@@ -181,21 +221,37 @@ export async function sendMail(
     fromAddress = tokens.email
   }
 
+  timer.lap('sign-in')
+
   // A Microsoft 365 OAuth account sends through Graph when it has consented to
   // it, and over SMTP when it has not — every account added before Graph sending
   // existed, until it signs in again. SMTP still works wherever the organisation
   // allows it, so falling back interrupts nobody.
-  let graphToken: string | null = null
-  if (provider === 'o365' && tokens) {
+  //
+  // The Graph token is kept until it nearly expires: exchanging for one on every
+  // send was a network round trip to Microsoft on each of them.
+  const fetchGraphToken = async (): Promise<string | null> => {
+    if (!tokens) return null
     const graph = await acquireGraphSendToken(tokens)
-    if (graph) {
-      graphToken = graph.accessToken
-      if (graph.refreshToken !== tokens.refreshToken) {
-        tokens = { ...tokens, refreshToken: graph.refreshToken }
-        updateAccountTokens(payload.accountId, tokens)
-      }
+    if (!graph) return null
+    tokens = {
+      ...tokens,
+      refreshToken: graph.refreshToken,
+      graphAccessToken: graph.accessToken,
+      graphExpiryDate: graph.expiryDate
     }
+    updateAccountTokens(payload.accountId, tokens)
+    return graph.accessToken
   }
+  let graphToken: string | null = null
+  let graphTokenWasCached = false
+  if (provider === 'o365' && tokens) {
+    graphToken = usableGraphToken(tokens, Date.now())
+    graphTokenWasCached = graphToken !== null
+    if (!graphToken) graphToken = await fetchGraphToken()
+    timer.lap(graphTokenWasCached ? 'graph token (cached)' : 'graph token (fetched)')
+  }
+  timer.route = graphToken ? 'graph' : 'smtp'
 
   const mailer = mailerIdentity()
   // Images pasted into the body ride as their own MIME parts, not as data: URIs
@@ -265,8 +321,21 @@ export async function sendMail(
   // account files in Sent below. Graph files its own copy, so it needs none.
   let raw: Buffer | null = null
 
+  timer.lap('prepare')
+
   if (graphToken) {
-    await sendThroughGraph(graphToken, mailOptions, inline.images)
+    try {
+      await sendThroughGraph(graphToken, mailOptions, inline.images)
+    } catch (err) {
+      // A cached token Graph no longer accepts — revoked, or the account's
+      // password changed. A 401 means nothing was sent (and any draft it had
+      // made is already deleted), so one retry with a fresh token is safe. A
+      // fresh token that is refused is a real sign-in problem and is reported.
+      if (!graphTokenWasCached || (err as { graphStatus?: unknown }).graphStatus !== 401) throw err
+      const fresh = await fetchGraphToken()
+      if (!fresh) throw err
+      await sendThroughGraph(fresh, mailOptions, inline.images)
+    }
   } else {
     // Built up front rather than left to sendMail, so the copy filed in Sent is
     // the same message that went out, with the same Message-ID. `info.message`
@@ -296,6 +365,8 @@ export async function sendMail(
     }
   }
 
+  timer.lap('deliver')
+
   // Collect the recipients now rather than waiting for this message to come back
   // round through a Sent sync — the address you just used should autocomplete on
   // the very next compose. Bcc is deliberately included: it is a recipient the
@@ -321,6 +392,7 @@ export async function sendMail(
   if (provider === 'imap' && raw) {
     try {
       await appendToSentFolder(payload.accountId, provider, await sentCopyOf(raw))
+      timer.lap('file in Sent')
     } catch (err) {
       // The message is already delivered; failing the send now would be a lie,
       // and would tempt the user into sending it a second time. So it is

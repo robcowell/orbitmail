@@ -20,6 +20,7 @@
 import {
   saveAccount,
   reauthenticateAccount,
+  updateAccountTokens,
   getAccountTokens,
   getManualCredentials,
   saveManualAccount,
@@ -1022,6 +1023,22 @@ export function runDbContract(ok: Ok, section: Section): void {
         getAccountTokens(account.id)?.email === CONTRACT_EMAIL, String(getAccountTokens(account.id)?.email))
       ok('and keeps the display name the user has, not the provider’s',
         nameNow() === 'DB Contract', String(nameNow()))
+
+      // The cached Graph token rides in the same encrypted record. It must
+      // survive being stored, and a new sign-in must drop it: the token belongs
+      // to the consent that the sign-in replaces.
+      updateAccountTokens(account.id, {
+        ...getAccountTokens(account.id)!, graphAccessToken: 'graph-1', graphExpiryDate: base + 3_600_000
+      })
+      ok('a cached Graph token is stored with its expiry',
+        getAccountTokens(account.id)?.graphAccessToken === 'graph-1' &&
+          getAccountTokens(account.id)?.graphExpiryDate === base + 3_600_000)
+      reauthenticateAccount(account.id, 'imap', {
+        authType: 'oauth', accessToken: 'renewed-2', email: CONTRACT_EMAIL, displayName: 'x'
+      })
+      ok('and signing in again drops it',
+        getAccountTokens(account.id)?.graphAccessToken === undefined &&
+          getAccountTokens(account.id)?.graphExpiryDate === undefined)
     }
 
     // -----------------------------------------------------------------------

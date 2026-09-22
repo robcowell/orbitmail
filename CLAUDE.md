@@ -127,7 +127,7 @@ There is **no unit-test framework and no linter** in this repo. Verification =
 it is a diagnostic rather than a gate.
 
 `npm run test:pure` — pure main-process logic under plain node (~1s, no Docker,
-no Electron). `attachment-safety.ts`, `connection-failure.ts`,
+no Electron). `attachment-safety.ts`, `connection-failure.ts`, `graph-send.ts`,
 `network-reachability.ts`,
 `sync-policy.ts`, `thread-util.ts`, `window-geometry.ts` and `zoom.ts` import
 nothing at runtime, so they need neither — and

@@ -21,6 +21,13 @@ const MS_SCOPES = [
   'https://outlook.office.com/SMTP.Send'
 ]
 
+// Sending through Microsoft Graph, for organisations that switch SMTP AUTH off.
+// A token is issued for one resource at a time, and this is a different resource
+// from the IMAP/SMTP scopes above, so it cannot be in the same token request. It
+// is consented at sign-in (`extraScopesToConsent`) and exchanged for a separate
+// token only when sending (`acquireGraphSendToken`).
+export const GRAPH_SEND_SCOPE = 'https://graph.microsoft.com/Mail.Send'
+
 function getMsalApp(): PublicClientApplication {
   const { clientId, tenantId } = getMicrosoftOAuthConfig()
 
@@ -47,7 +54,8 @@ function extractRefreshToken(msal: PublicClientApplication): string | undefined 
   }
 }
 
-export async function authenticateMicrosoft(): Promise<TokenData> {
+/** `loginHint` pre-fills that address at Microsoft's sign-in, for Sign in again. */
+export async function authenticateMicrosoft(loginHint?: string): Promise<TokenData> {
   const state = generateState()
   const loopback = await startLoopbackServer({ expectedState: state })
   // RFC 8252 loopback redirect. Entra ignores the port for loopback URIs, so the
@@ -64,8 +72,10 @@ export async function authenticateMicrosoft(): Promise<TokenData> {
 
     const authUrl = await msal.getAuthCodeUrl({
       scopes: MS_SCOPES,
+      extraScopesToConsent: [GRAPH_SEND_SCOPE],
       redirectUri,
       prompt: 'select_account',
+      ...(loginHint ? { loginHint } : {}),
       state,
       codeChallenge: challenge,
       codeChallengeMethod: 'S256'
@@ -94,7 +104,7 @@ export async function authenticateMicrosoft(): Promise<TokenData> {
     throw new Error(
       'Microsoft did not return a refresh token, so the account would stop working after ' +
         'restart. In your Entra app registration enable "Allow public client flows" and keep ' +
-        'the "offline_access" scope, then add the account again.'
+        'the "offline_access" scope, then sign in again.'
     )
   }
 
@@ -110,11 +120,49 @@ export async function authenticateMicrosoft(): Promise<TokenData> {
   }
 }
 
+/**
+ * A Graph access token for sending, or `null` if this account has not consented
+ * to Graph sending — every account added before Graph sending existed, until it
+ * signs in again. `null` means "send over SMTP as before", not a failure.
+ *
+ * The refresh token may rotate here as it does in `refreshMicrosoftToken`, so the
+ * caller must persist the returned one, and the Graph token with its expiry —
+ * see `graphAccessToken` on `TokenData`.
+ */
+export async function acquireGraphSendToken(
+  tokenData: TokenData
+): Promise<{ accessToken: string; refreshToken: string; expiryDate?: number } | null> {
+  if (!tokenData.refreshToken) return null
+  const msal = getMsalApp()
+  let result: AuthenticationResult | null
+  try {
+    result = await msal.acquireTokenByRefreshToken({
+      refreshToken: tokenData.refreshToken,
+      scopes: [GRAPH_SEND_SCOPE]
+    })
+  } catch (err) {
+    // Not consented (AADSTS65001), consent declined (AADSTS65004), or Microsoft
+    // wanting an interactive sign-in for this scope. All mean "this account
+    // cannot use Graph yet", and none stops it sending over SMTP with the token
+    // it already has. Anything else — a network failure, a revoked grant — is a
+    // real problem, and SMTP would meet it too.
+    const text = err instanceof Error ? `${err.message} ${(err as { errorCode?: string }).errorCode ?? ''}` : String(err)
+    if (/AADSTS6500[14]|consent_required|interaction_required/i.test(text)) return null
+    throw err
+  }
+  if (!result?.accessToken) return null
+  return {
+    accessToken: result.accessToken,
+    refreshToken: extractRefreshToken(msal) ?? tokenData.refreshToken,
+    expiryDate: result.expiresOn ? result.expiresOn.getTime() : undefined
+  }
+}
+
 export async function refreshMicrosoftToken(tokenData: TokenData): Promise<TokenData> {
   if (!tokenData.refreshToken) {
     throw markReauthRequired(
       new Error(
-        `No Microsoft refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+        `No Microsoft refresh token stored for ${tokenData.email}. Sign in to it again in Settings → Accounts.`
       )
     )
   }

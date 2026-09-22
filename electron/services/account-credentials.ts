@@ -8,6 +8,14 @@ export interface TokenData {
   expiryDate?: number
   email: string
   displayName: string
+  /**
+   * Microsoft 365 only: a Graph token for sending, kept until it expires so a
+   * send does not pay for a token exchange every time. A different resource
+   * from `accessToken` (IMAP/SMTP), so it cannot share its expiry. Dropped
+   * whenever the account signs in again, since the whole record is replaced.
+   */
+  graphAccessToken?: string
+  graphExpiryDate?: number
 }
 
 export interface ServerConfig {
@@ -53,7 +61,11 @@ export function decryptCredentials(blob: string): AccountCredentials {
     refreshToken: (parsed as TokenData).refreshToken,
     expiryDate: (parsed as TokenData).expiryDate,
     email: parsed.email,
-    displayName: parsed.displayName
+    displayName: parsed.displayName,
+    // Rebuilt field by field, so a field not listed here is dropped on read —
+    // which is what the Graph token cache did until the DB contract caught it.
+    graphAccessToken: (parsed as TokenData).graphAccessToken,
+    graphExpiryDate: (parsed as TokenData).graphExpiryDate
   }
 }
 

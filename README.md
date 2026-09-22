@@ -216,7 +216,10 @@ The gear, or `Ctrl` + `,`. What you can change today:
   either, and whether remote images load everywhere or only for senders you have
   allowed.
 - **Accounts** — rename an account, choose how much mail to keep on this
-  computer, see what it is using, sync it, or remove it. Removing tells you how
+  computer, see what it is using, sync it, or remove it. A Gmail or Microsoft
+  365 account has **Sign in again**, for when the status bar reports a sign-in
+  problem: it signs you in in the browser and keeps everything else as it is,
+  and it refuses if you pick a different account there. Removing tells you how
   many messages and how much disk space go with it; your mail on the server is
   untouched. For IMAP and POP3 accounts you can also change the server, port,
   security and password, with a **Test connection** button — settings that do
@@ -326,7 +329,8 @@ Workspace user. Add it again with **Other (IMAP / POP3)** instead, using the
 incoming and outgoing server settings from whoever hosts mail for the domain.
 
 **Microsoft sign-in fails**  
-Your organisation may block OAuth access to IMAP and SMTP; that setting is your
+Your organisation may block OAuth access to IMAP, or require an administrator
+to approve the app before anyone can sign in with it; both settings are your
 administrator's.
 
 **Adding an IMAP account fails**  
@@ -354,11 +358,14 @@ and the message stays in Drafts, so you can fix the problem and send it again.
 "The server refused this address" is usually a typo in a recipient.
 
 **"Microsoft 365 has SMTP sending turned off for this mailbox"**  
-Orbit Mail sends Microsoft 365 mail over SMTP, and many organisations switch
-that off. Nothing in Orbit Mail can turn it back on, and it is not your
-password. A Microsoft 365 admin for your organisation has to allow it: in the
-admin center, Users → Active users → you → Mail → Manage email apps → tick
-**Authenticated SMTP**. It can take up to an hour to apply.
+Orbit Mail sends Microsoft 365 mail through Microsoft Graph, which doesn't need
+SMTP. An account added with an earlier version hasn't given it permission to
+yet, so it still sends over SMTP, which many organisations switch off. It is
+not your password. In Settings → Accounts, pick the account and click **Sign in
+again**, and it switches over; your mail and settings stay as they are. An account added by hand with a password can only use SMTP,
+so there a Microsoft 365 admin has to allow it: in the admin center, Users →
+Active users → you → Mail → Manage email apps → tick **Authenticated SMTP**. It
+can take up to an hour to apply.
 
 **A message says "Message sent, but no copy was saved to Sent"**  
 The message went out and the recipient has it — do **not** send it again. What
@@ -372,7 +379,9 @@ Microsoft 365 file sent mail themselves.
 The status bar names the account and the reason. "Rejected the login" means the
 password stopped working — most often because it was changed with your provider;
 update it in Settings → Accounts. Otherwise click **Retry**, or
-**Re-authenticate** if it is an account problem.
+**Re-authenticate** if it is an account problem, which opens that account's
+settings: **Sign in again** for Gmail and Microsoft 365, the password for an
+account added by hand.
 
 **Unread counts look wrong**  
 Click **Refresh**, or **Sync now** on the account. Note the window title counts

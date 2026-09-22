@@ -15,6 +15,7 @@ const api: OrbitMailAPI = {
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     add: (provider) => ipcRenderer.invoke('accounts:add', provider),
+    reauthenticate: (accountId) => ipcRenderer.invoke('accounts:reauthenticate', accountId),
     addManual: (input: ManualAccountInput) =>
       ipcRenderer.invoke('accounts:addManual', input),
     autodetect: (email) => ipcRenderer.invoke('accounts:autodetect', email),

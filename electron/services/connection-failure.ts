@@ -205,7 +205,20 @@ export function describeConnectionFailure(
  * promise about the message afterwards depends on whether a draft was kept.
  */
 export function describeSendFailure(err: unknown): string {
-  const e = (err ?? {}) as { responseCode?: unknown; rejected?: unknown }
+  const e = (err ?? {}) as {
+    responseCode?: unknown
+    rejected?: unknown
+    graphStatus?: unknown
+    graphCode?: unknown
+    graphUnavailable?: unknown
+  }
+  if (typeof e.graphStatus === 'number') {
+    return describeGraphRefusal(
+      e.graphStatus,
+      typeof e.graphCode === 'string' ? e.graphCode : '',
+      err instanceof Error ? err.message : ''
+    )
+  }
   const { kind, response, message } = classifyConnectionFailure(err)
   const code = typeof e.responseCode === 'number' ? e.responseCode : undefined
   const rejected = Array.isArray(e.rejected)
@@ -251,6 +264,16 @@ export function describeSendFailure(err: unknown): string {
   // on the setting's name rather than on 5.7.139, which Microsoft also uses for
   // other sign-in refusals.
   if (/SmtpClientAuthentication is disabled/i.test(`${response} ${message}`)) {
+    // An OAuth account that sent over SMTP only because it has not consented to
+    // Graph — every account added before Graph sending. Signing in again fixes
+    // it without an admin, so that comes first.
+    if (e.graphUnavailable === true) {
+      return (
+        'Microsoft 365 has SMTP sending turned off for this mailbox. Sign in to ' +
+        'this account again (Settings → Accounts → Sign in again) so Orbit Mail ' +
+        'can send through Microsoft Graph instead, which does not need SMTP.'
+      )
+    }
     return (
       'Microsoft 365 has SMTP sending turned off for this mailbox, and SMTP is ' +
       'how Orbit Mail sends. A Microsoft 365 admin can turn on Authenticated ' +
@@ -280,6 +303,48 @@ export function describeSendFailure(err: unknown): string {
     default:
       return response || message
   }
+}
+
+/**
+ * Wording for a send Microsoft Graph refused. Graph answers with an HTTP status
+ * and an error `code`; the status decides the class of problem and the code
+ * narrows it. Graph's own message rides along in brackets, as an SMTP reply does.
+ */
+function describeGraphRefusal(status: number, code: string, detail: string): string {
+  const said = detail ? ` (${detail})` : ''
+
+  if (status === 413 || /MessageSizeExceeded|RequestEntityTooLarge/i.test(code)) {
+    return (
+      'Microsoft refused the message as too large' + said +
+      '. Removing or shrinking an attachment is usually the fix.'
+    )
+  }
+  if (/InvalidRecipient/i.test(code)) {
+    return 'Microsoft refused a recipient' + said + '. Check the addresses for a typo.'
+  }
+  if (/QuotaExceeded/i.test(code)) {
+    return 'Your Microsoft 365 mailbox is full' + said + '. Freeing space will let it send.'
+  }
+  if (status === 429 || /Throttl|ServerBusy/i.test(code)) {
+    return 'Microsoft is limiting how fast this account can send. Try again in a few minutes.'
+  }
+  if (status === 401) {
+    return (
+      'Microsoft did not accept this account’s sign-in for sending' + said +
+      '. Sign in to it again in Settings → Accounts.'
+    )
+  }
+  if (status === 403) {
+    return (
+      'Microsoft refused to let Orbit Mail send for this account' + said +
+      '. Signing in to it again may fix it; if not, your organisation may be ' +
+      'blocking the app.'
+    )
+  }
+  if (status >= 500) {
+    return `Microsoft’s servers had a problem (${status}). Try again shortly.`
+  }
+  return `Microsoft refused the message (${[status, code].filter(Boolean).join(' ')})${detail ? `: ${detail}` : ''}.`
 }
 
 /**

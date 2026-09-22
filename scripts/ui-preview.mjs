@@ -307,8 +307,9 @@ const OVERRIDES = {
         syncing: false, lastSyncAt: Date.now() - 5400000,
         error: 'Authentication failed: token expired',
         // Refused, not unreachable — which is why the offline banner stays
-        // away here even though this account is failing.
-        needsReauth: false,
+        // away here even though this account is failing. A sign-in failure,
+        // so it raises Re-authenticate, which opens this account's settings.
+        needsReauth: true,
         reachedServer: true
       }
     }

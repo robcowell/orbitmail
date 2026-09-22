@@ -48,6 +48,7 @@ import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
   saveAccount,
+  reauthenticateAccount,
   removeAccount,
   listFolders,
   listMessages,
@@ -1085,6 +1086,24 @@ function registerIpc(): void {
     return account
   })
 
+  // Settings → Accounts → Sign in again. The same browser sign-in as adding,
+  // with the address pre-filled, but stored against *this* account and refused
+  // if another address comes back — see `reauthenticateAccount`. A sync follows
+  // so a sign-in error in the status bar clears as soon as it is fixed.
+  ipcMain.handle('accounts:reauthenticate', async (_, accountId: string) => {
+    const account = listAccounts().find((a) => a.id === accountId)
+    if (!account) throw new Error('Account not found')
+    if (account.provider !== 'gmail' && account.provider !== 'o365') {
+      throw new Error('Only Gmail and Microsoft 365 accounts sign in through the browser.')
+    }
+    const tokenData =
+      account.provider === 'gmail'
+        ? await authenticateGoogle(account.email)
+        : await authenticateMicrosoft(account.email)
+    reauthenticateAccount(account.id, account.provider, tokenData)
+    syncNewAccountInBackground(account.id, account.provider)
+  })
+
   ipcMain.handle('accounts:addManual', async (_, input: ManualAccountInput) => {
     const account = await addManualAccount(input)
     syncNewAccountInBackground(account.id, account.provider)
@@ -1526,8 +1545,14 @@ function registerIpc(): void {
     if (payload.draftId) deleteDraft(payload.draftId)
     // Only sync the Sent folder for this account so the message shows up, rather
     // than firing a full multi-account resync for every send.
+    // Timed because "Message sent" waits for it: the toast is raised only once
+    // this returns. `sendMail` logs its own stages just before this one.
+    const sentSyncStart = performance.now()
     try {
       await syncSentFolder(account.id, account.provider)
+      console.info(
+        `[orbit-mail] Sent folder sync after send: ${Math.round(performance.now() - sentSyncStart)}ms`
+      )
       notifyMessagesUpdated()
     } catch {
       // Sending succeeded; a Sent-folder sync hiccup shouldn't fail the send.

@@ -25,7 +25,18 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
   image change" class of bug. Recorded because the disk cost is real, not because
   it is obviously worth paying to fix.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
-- **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
+- **O365 Sent filing is unverified for SMTP sends** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant. Narrower than it was: an OAuth account that has consented to Graph sends through `sendMail`, which files in Sent Items itself (see Done). What is left is the SMTP fallback — accounts added before Graph sending that have not signed in again — and manual (password) Microsoft 365 accounts.
+- **Graph sending is only partly verified against real Microsoft.** The request shapes are tested against a fake Graph, which proves what we send, not what Exchange does with it.
+  - **Confirmed on 2026-09-22**, on a real tenant with SMTP AUTH switched off, from `npm run dev`:
+    - an account added before Graph sending fell back to SMTP and got the "sign in again" message, not the admin one;
+    - after **Sign in again** it sent through Graph (`send via graph sent`);
+    - the token cache works: `graph token (fetched) 243ms` on the first send, `(cached) 0ms` on the second;
+    - `deliver` took 364–527ms and the Sent-folder sync about 150ms.
+  - **Still to confirm**, on that tenant and on a personal outlook.com account:
+    - the Message-ID we pin survives (threading and the label dedupe key on it);
+    - Bcc recipients receive the message and nobody else sees them;
+    - a draft created from MIME keeps its headers, and the >3 MB path sends;
+    - the message appears in Sent Items exactly once.
 
 ## Performance
 
@@ -110,6 +121,84 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **Graph sends reuse their token, and every send logs its timings.** The first
+  real Graph send worked but was "well past ten seconds", beyond the undo hold,
+  with no way to see where the time went: the send runs on the scheduler after
+  the composer has closed. Two changes. Each send now logs one line of per-stage
+  timings (sign-in, Graph token cached or fetched, prepare, deliver, file in
+  Sent), and `performSend` logs the Sent-folder sync that "Message sent" waits
+  for. That sync is the main suspect: it is an IMAP round trip on the
+  user-visible path, and it was never measured. And the Graph token is cached
+  until it nearly expires, instead of exchanged on every send. A cached token
+  refused with 401 is replaced and retried once, which is safe because a 401
+  means nothing went out. **The cache did not work at first**:
+  `decryptCredentials` rebuilds the OAuth record field by field, so the new
+  fields were written on every send and dropped on every read, and every send
+  still fetched. Nothing would have looked wrong except the speed. The DB
+  contract caught it, with an assertion added to check that "signing in again
+  drops the cache", which could only mean something if the cache survived in
+  the first place.
+  **What the timings showed** (two real sends, 2026-09-22): 772ms with a
+  fetched token, then 364ms with a cached one, plus about 150ms of Sent-folder
+  sync. So the suspect was wrong: the sync is cheap. After Send is clicked, the
+  app takes about 11–12s in all, almost entirely the deliberate 10s undo hold
+  plus up to 1s until the scheduler's next one-second tick. The cache saves
+  about a quarter of a second per send. The "well past ten seconds" send that
+  prompted this was not reproduced and may have been a one-off. If it recurs,
+  the log line now shows which stage took the time. Shortening the undo hold,
+  or making it a setting, would be a product decision; it was left alone.
+
+- **Sign in again, from the account's own settings.** Asked for because the only
+  way to renew an OAuth sign-in was **Add Account** with the same address: it
+  updates the account in place, but nothing said so, and it read as "remove and
+  re-add". The Graph-sending change made it matter, since every existing
+  Microsoft account needs one fresh sign-in to send through Graph. Settings →
+  Accounts now has **Sign in again** for Gmail and Microsoft 365 accounts. It
+  passes the address as a login hint, refuses a different address (nothing
+  written, no second account), and keeps the user's display name, all asserted
+  in the DB contract. The status bar's **Re-authenticate** opens the failing
+  account's settings instead of Add Account, and the messages that said
+  "Remove the account and sign in again" point there.
+  Found while checking it in `ui:preview`: **the account picker could not
+  leave an account Settings had been opened for.** The pane's effect re-resolved
+  the selection on every change with `settingsAccountId` taking priority, so
+  opening an account's settings from the sidebar gear pinned the picker to it.
+  This was already true on `main`, and routing Re-authenticate through it would
+  have hit it more often. Picking a tab now clears the aim. This one is checked
+  only in `ui:preview`: the effect lives in a component, which `test:store`
+  does not render.
+
+- **Microsoft 365 sends through Microsoft Graph, not SMTP.** Prompted by a real
+  tenant with SMTP AUTH switched off, where an OAuth account could not send at
+  all (see the entry below). Graph's `sendMail` does not use SMTP AUTH, so the
+  organisation's setting no longer matters, and it files in Sent Items itself.
+  Two decisions made with the user:
+  - **Existing accounts fall back to SMTP** until they sign in again, rather
+    than all being made to re-authenticate. Graph needs a new consent
+    (`Mail.Send`), which an account added earlier does not have; forcing it on
+    everyone would have broken sending for every user whose SMTP works. The
+    fallback is decided by the token exchange: a consent error means "no Graph
+    yet", anything else is thrown. Where the fallback meets SMTP AUTH off, the
+    toast says to sign in again, not to find an admin.
+  - **Large messages are handled now**, not deferred. Graph caps a request at
+    4 MB, about 3 MB of message after base64; in a tenant with SMTP off, a
+    3 MB attachment is ordinary, so "fall back to SMTP" would have failed
+    regularly for exactly the users this is for. Over the cap: a draft from
+    MIME without attachments, each attachment added (upload sessions above
+    3 MB), then send; the draft is deleted if anything before the send fails.
+  The message goes as MIME, the same bytes the SMTP path builds, so threading,
+  the pinned Message-ID, inline images and attachments are unchanged. **The Bcc
+  header has to be kept** for Graph, which routes by headers; built the SMTP way
+  it would silently drop the Bcc recipients. That property is asserted in
+  `test:imap` for both paths and was confirmed to fail with Bcc stripped.
+  `graph-send.ts` imports nothing and is covered by `test:pure` against a fake
+  Graph, 0 unjustified mutation survivors. One test bug worth recording: a
+  fake-server route that knew only one file's size made `test:pure` **crash**
+  partway, and `test:mutants` counted every mutant as caught, because a crashed
+  suite also exits non-zero. The sweep read "19 of 19" against tests that never
+  ran. Check the suite finishes before believing a sweep. What real Microsoft
+  does with these requests is not verified; see Outstanding.
 
 - **A Microsoft 365 mailbox with SMTP turned off no longer blames the
   password.** Reported from a real tenant: *"Not sent: The outgoing server

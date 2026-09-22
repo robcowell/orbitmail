@@ -191,6 +191,39 @@ export function updateAccountTokens(accountId: string, tokenData: TokenData): vo
     .run()
 }
 
+/**
+ * Store a fresh sign-in for an account that already exists — Settings →
+ * Accounts → **Sign in again**.
+ *
+ * Unlike `saveAccount`, this starts from the account, not from whoever signed
+ * in. The browser offers every account the user is signed in to, and picking a
+ * different one must not quietly hand this account's row someone else's tokens,
+ * nor add a second account from a button that says it renews this one. So the
+ * address has to match, and on a mismatch nothing is written.
+ *
+ * Only the credentials change. The display name is the user's, and may have
+ * been renamed since it came from the provider.
+ */
+export function reauthenticateAccount(
+  accountId: string,
+  provider: Provider,
+  tokenData: TokenData
+): void {
+  const db = getDb()
+  const existing = db.select().from(accounts).where(eq(accounts.id, accountId)).get()
+  if (!existing) throw new Error('Account not found')
+  if (existing.provider !== provider) {
+    throw new Error(`${existing.email} does not sign in with ${PROVIDER_LABELS[provider] ?? provider}.`)
+  }
+  if (existing.email.trim().toLowerCase() !== tokenData.email.trim().toLowerCase()) {
+    throw new Error(
+      `You signed in as ${tokenData.email}, but this account is ${existing.email}. ` +
+        `Nothing was changed — try again and choose ${existing.email}.`
+    )
+  }
+  updateAccountTokens(accountId, { ...tokenData, email: existing.email })
+}
+
 export function listAccounts(): Account[] {
   const db = getDb()
   return db.select().from(accounts).all().map((r) => ({

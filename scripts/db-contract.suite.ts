@@ -19,6 +19,8 @@
 // assume an empty database.
 import {
   saveAccount,
+  reauthenticateAccount,
+  updateAccountTokens,
   getAccountTokens,
   getManualCredentials,
   saveManualAccount,
@@ -979,6 +981,64 @@ export function runDbContract(ok: Ok, section: Section): void {
       ok('and changing provider is refused rather than silently done', refused)
       ok('with the account left as it was',
         listAccounts().find((a) => a.id === account.id)?.provider === 'imap')
+    }
+
+    // -----------------------------------------------------------------------
+    section('Signing in again renews this account, and only this one')
+    // -----------------------------------------------------------------------
+    {
+      // Settings → Accounts → Sign in again. The browser offers every account
+      // the user is signed in to, so picking the wrong one must change nothing.
+      const tokensNow = () => getAccountTokens(account.id)?.accessToken
+      const nameNow = () => listAccounts().find((a) => a.id === account.id)?.displayName
+      const before = tokensNow()
+      const refuses = (fn: () => void): string => {
+        try { fn(); return '' } catch (err) { return err instanceof Error ? err.message : String(err) }
+      }
+
+      const wrong = refuses(() => reauthenticateAccount(account.id, 'imap', {
+        authType: 'oauth', accessToken: 'someone-else', email: 'other@example.org', displayName: 'Other'
+      }))
+      ok('signing in as a different address is refused', wrong !== '', wrong)
+      ok('and says which address it wanted', wrong.includes(CONTRACT_EMAIL) && wrong.includes('other@example.org'), wrong)
+      ok('and changes nothing', tokensNow() === before, String(tokensNow()))
+      ok('nor adds an account for the other address',
+        !listAccounts().some((a) => a.email === 'other@example.org'))
+
+      ok('a different provider is refused',
+        refuses(() => reauthenticateAccount(account.id, 'gmail', {
+          authType: 'oauth', accessToken: 'x', email: CONTRACT_EMAIL, displayName: 'x'
+        })) !== '' && tokensNow() === before)
+      ok('and so is an account that does not exist',
+        refuses(() => reauthenticateAccount('no-such-account', 'imap', {
+          authType: 'oauth', accessToken: 'x', email: CONTRACT_EMAIL, displayName: 'x'
+        })) !== '')
+
+      reauthenticateAccount(account.id, 'imap', {
+        authType: 'oauth', accessToken: 'renewed', email: CONTRACT_EMAIL.toUpperCase(),
+        displayName: 'Name From Provider'
+      })
+      ok('the same address, in any case, stores the new sign-in', tokensNow() === 'renewed', String(tokensNow()))
+      ok('under the address as it was stored, not as the provider cased it',
+        getAccountTokens(account.id)?.email === CONTRACT_EMAIL, String(getAccountTokens(account.id)?.email))
+      ok('and keeps the display name the user has, not the provider’s',
+        nameNow() === 'DB Contract', String(nameNow()))
+
+      // The cached Graph token rides in the same encrypted record. It must
+      // survive being stored, and a new sign-in must drop it: the token belongs
+      // to the consent that the sign-in replaces.
+      updateAccountTokens(account.id, {
+        ...getAccountTokens(account.id)!, graphAccessToken: 'graph-1', graphExpiryDate: base + 3_600_000
+      })
+      ok('a cached Graph token is stored with its expiry',
+        getAccountTokens(account.id)?.graphAccessToken === 'graph-1' &&
+          getAccountTokens(account.id)?.graphExpiryDate === base + 3_600_000)
+      reauthenticateAccount(account.id, 'imap', {
+        authType: 'oauth', accessToken: 'renewed-2', email: CONTRACT_EMAIL, displayName: 'x'
+      })
+      ok('and signing in again drops it',
+        getAccountTokens(account.id)?.graphAccessToken === undefined &&
+          getAccountTokens(account.id)?.graphExpiryDate === undefined)
     }
 
     // -----------------------------------------------------------------------

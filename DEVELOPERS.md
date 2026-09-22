@@ -132,10 +132,99 @@ MICROSOFT_TENANT_ID=common
 
 **Microsoft notes**
 
-- **You do not need to add API permissions in the portal.** Orbit Mail requests the IMAP/SMTP scopes (`IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access`) dynamically at sign-in, and you consent in the browser. This is why "Office 365 Exchange Online" not appearing under **API permissions → APIs my organization uses** does not matter for this flow.
+- **You do not need to add API permissions in the portal.** Orbit Mail requests the IMAP/SMTP scopes (`IMAP.AccessAsUser.All`, `SMTP.Send`, `offline_access`) dynamically at sign-in, and you consent in the browser. The same consent screen also asks for Microsoft Graph **`Mail.Send`**, which is how mail is sent (see [Sending through Microsoft Graph](#sending-through-microsoft-graph)); it is requested the same dynamic way. This is why "Office 365 Exchange Online" not appearing under **API permissions → APIs my organization uses** does not matter for this flow.
 - That API only appears for tenants with an active Exchange Online license; for personal Microsoft accounts it is absent by design. If your tenant admin requires _pre-consent_, you can add it by searching the GUID `00000002-0000-0ff1-ce00-000000000000`, but it is optional here.
-- Your tenant administrator must allow OAuth-based IMAP/SMTP (some tenants disable IMAP/SMTP entirely).
+- Your tenant administrator must allow OAuth-based IMAP (some tenants disable it entirely). SMTP is only needed by accounts that have not consented to Graph sending.
 - `MICROSOFT_TENANT_ID=common` works for most cases; use your specific tenant GUID to restrict sign-in to one organization.
+
+### Sending through Microsoft Graph
+
+Many organisations switch **SMTP AUTH** off, and then an OAuth account cannot
+send over SMTP however valid its token is (`535 5.7.139 … SmtpClientAuthentication
+is disabled`). A Microsoft 365 OAuth account therefore sends through Graph's
+`sendMail`, which does not use SMTP AUTH, and falls back to SMTP only when it has
+not consented to Graph.
+
+- **Consent.** `Mail.Send` is a Graph scope, a different resource from the
+  `outlook.office.com` IMAP/SMTP scopes, and one token request cannot span two
+  resources. So sign-in asks for it through `extraScopesToConsent` (one consent
+  screen), and `acquireGraphSendToken` exchanges the stored refresh token for a
+  Graph token at send time. That token is **cached** in the account's encrypted
+  record (`graphAccessToken`/`graphExpiryDate`) and reused while it has more
+  than two minutes left (`usableGraphToken`), because exchanging on every send
+  was a round trip to Microsoft on each one. Signing in again replaces the whole
+  record, so it drops the cache with the consent it came from. A cached token
+  Graph answers with 401 is replaced and the send retried **once**; a 401 means
+  nothing was sent, and the large path has already deleted its draft. A fresh
+  token that is refused is reported. `decryptCredentials` rebuilds the OAuth
+  record field by field, so these two fields had to be added there too: until
+  the DB contract checked, the cache was written on every send and dropped on
+  every read.
+- **Timing.** Every send logs one line to the main process's stdout, e.g.
+  `[orbit-mail] send via graph sent in 1840ms: sign-in 2ms, graph token (cached)
+  0ms, prepare 35ms, deliver 1790ms`. `performSend` then logs the Sent-folder
+  sync separately, because the "Message sent" toast waits for it.
+- **Fallback.** An account added before Graph sending has not consented. The
+  token exchange then fails with `AADSTS65001` (or `65004`, or
+  `interaction_required`), `acquireGraphSendToken` returns `null`, and the send
+  goes over SMTP exactly as before, so nobody whose SMTP works is interrupted.
+  If that SMTP send is refused because SMTP AUTH is off, the error is marked
+  `graphUnavailable` and the toast says to sign in again (Settings → Accounts →
+  **Sign in again**, see below) rather than to find an admin. Any other token failure is thrown, not treated as "no Graph".
+- **MIME, not JSON.** `smtp-send.ts` builds the same MIME it sends over SMTP and
+  hands it to Graph, so threading headers, the pinned Message-ID, inline images
+  and attachments are unchanged. **The Bcc header must be kept**
+  (`buildWithBcc`): Graph routes by the headers, not an envelope, and a MIME
+  built the SMTP way would silently never reach the Bcc recipients. Exchange
+  strips it from the delivered copies.
+- **Size.** A request is capped at 4 MB, and the MIME goes base64-encoded, so
+  about 3 MB of message fits one `sendMail` (`fitsSimpleSend`). A larger one is
+  created as a draft from MIME carrying no attachments, each attachment is added
+  separately (one request under 3 MB, an upload session in chunks above), and
+  the draft is sent. Pasted images go the same way, as inline attachments under
+  the Content-ID the HTML already references. If anything fails before the send,
+  the draft is deleted, so no half-built copy is left in Outlook's Drafts.
+- **Sent Items.** Graph files the message itself, so nothing is appended. This
+  is the case the "O365 Sent filing is unverified" item in TODO.md is about, and
+  it applies only to sends that still go over SMTP.
+- **Errors.** `GraphSendError` carries the HTTP status, Graph's error code and
+  the stage (`send`, `draft`, `attach`, `dispatch`), and `describeSendFailure`
+  words it: size, recipient, full mailbox, throttling, a rejected token (sign in
+  again), a 403 (the app refused), or a Microsoft fault.
+
+`graph-send.ts` imports nothing, so `test:pure` drives it against a fake Graph
+on localhost: request shapes, chunking and its edges, the Authorization header
+being left off upload URLs, draft cleanup, and the wording. `test:imap` covers
+the glue in `smtp-send.ts`: that both paths keep the Bcc header, the pinned
+Message-ID and the inline Content-ID. **Neither proves real Graph agrees.**
+What only a real tenant can confirm: that Exchange keeps our Message-ID, hides
+Bcc from the other recipients, accepts a draft created from MIME and files the
+sent message in Sent Items, and that personal Microsoft accounts behave the same.
+Manual Microsoft 365 accounts (username and password) have no OAuth token, so
+they stay on SMTP.
+
+### Signing in again
+
+Settings → Accounts → **Sign in again** (`accounts:reauthenticate`) renews an
+existing Gmail or Microsoft 365 account's sign-in: the same browser flow as
+adding one, with the account's address passed as a login hint. It is stored by
+`reauthenticateAccount`, which differs from `saveAccount` in three ways, each
+asserted in the DB contract:
+
+- It starts from the **account**, not from whoever signed in. The browser offers
+  every account the user is signed in to; a different address is refused and
+  nothing is written. Through `saveAccount` that would have added a second
+  account from a button that says it renews this one.
+- It changes only the credentials. The display name is the user's and may have
+  been renamed; `saveAccount` overwrites it with the provider's.
+- It keeps the stored spelling of the address, whatever case the provider
+  returns it in.
+
+A sync follows, so a sign-in error in the status bar clears once it is fixed.
+The status bar's **Re-authenticate** opens this account's settings, which is also
+where an account added by hand has its password. It used to open Add Account,
+which worked only because re-adding an address updates it in place — which
+nothing on screen said.
 
 ## AI (optional)
 
@@ -2302,6 +2391,16 @@ callback is answered and ignored rather than treated as an error, so a hostile
 page cannot abort a legitimate sign-in by racing it. The listener also times out
 after 5 minutes and closes on every path.
 
+Microsoft sign-in also asks for Graph `Mail.Send`. It grants what `SMTP.Send`
+already did — sending as the user — through a different door, and nothing
+broader: no read access through Graph. The Graph access token is cached until
+it nearly expires, in the same `safeStorage`-encrypted record as the refresh
+token, so it is protected exactly as well as that. An
+upload session's URL comes back from Graph over TLS and carries its own
+authorisation, so the chunks are sent **without** the bearer token. That keeps
+the token to requests addressed to `graph.microsoft.com`, and is also what
+Graph requires.
+
 ### Credentials
 
 Rule 5 in CLAUDE.md: **never put credentials in a build**. See
@@ -2455,7 +2554,7 @@ reimplementing them, so it exercises the shipping code paths:
 | OAuth | The loopback listener accepts a callback only when its `state` matches this attempt's, so an injected authorization code cannot complete a sign-in; a genuine callback still works after rejected ones; an abandoned sign-in times out and releases the port. (Needs no mail server, but rides along here rather than adding a second test command.) |
 | TLS | `'starttls'` requires the upgrade and *refuses* a server that does not offer it — GreenMail's plain port advertises no STARTTLS, so it is an accurate stand-in. Includes a guard proving the old mapping would have logged in over plaintext. |
 | Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
-| Database contract | `scripts/db-contract.suite.ts`, run here on the real `better-sqlite3` and again under `test:db` on the node:sqlite shim — 178 assertions over blocking, threading, thread listing, search scoping, the AI cache surviving a re-sync, POP3 skip dates, contact harvesting and account removal. Running it in both places is what makes the fast runner trustworthy; see below. |
+| Database contract | `scripts/db-contract.suite.ts`, run here on the real `better-sqlite3` and again under `test:db` on the node:sqlite shim — 189 assertions over blocking, threading, thread listing, search scoping, the AI cache surviving a re-sync, POP3 skip dates, contact harvesting, signing in again (the right address only, display name kept, cached Graph token dropped) and account removal. Running it in both places is what makes the fast runner trustworthy; see below. |
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |
@@ -2823,7 +2922,9 @@ to them.
 `connection-failure.ts` was written here from the start, for the same reason:
 turning a library error into a sentence is pure string work, and it is prose the
 user reads, so it wants a fast suite and a mutation sweep rather than a
-ninety-second Docker run.
+ninety-second Docker run. So was `graph-send.ts`: its only dependency is the
+global `fetch`, so this suite runs it against a fake Graph on localhost (see
+[Sending through Microsoft Graph](#sending-through-microsoft-graph)).
 
 **Every module bundled here must import nothing at runtime.** A type-only import
 is fine — it does not survive the bundle. The moment one needs the database or

@@ -19,7 +19,7 @@ were current.
 Optional AI features summarise messages and pull out what you still need to do.
 They are off unless you add your own API key.
 
-![Version](https://img.shields.io/badge/version-0.8.0-blue)
+![Version](https://img.shields.io/badge/version-0.8.1-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 

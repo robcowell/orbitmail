@@ -7,6 +7,62 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## 0.8.1 — 2026-09-22
+
+A release about failures you were never told about. Every message with an
+attachment was quietly failing to send, and staying in Drafts without a word.
+That is fixed, and any send that does fail now says so in the main window
+instead of only in a log. When an account will not sync, the app says why — a
+wrong password, a server that cannot be reached, a certificate that does not
+match — instead of "Command failed". It also takes the three mail libraries
+the app is built on up to versions with their security fixes.
+
+### Fixed
+
+- **Messages with attachments were not being sent.** Since undo send arrived
+  in 0.8.0, closing the composer withdrew permission to attach the files
+  before the ten-second hold ran out. So every message with an attachment
+  failed after the fact and stayed in Drafts. Attachments are now checked when
+  you press Send, and the permission lasts until the message actually goes.
+  Timed sends included.
+- **A send that fails now tells you.** A held or scheduled send runs after the
+  composer has closed, so a failure used to reach nothing but a log file. The
+  main window now shows it, says why, and says whether the message is still
+  in Drafts. A refused recipient is named by address.
+- **Sent but not filed is no longer silent either.** If a message goes out but
+  its copy cannot be saved to Sent, you are told that it was sent and that
+  the copy is missing, in that order, so the message is not sent twice.
+- **Sent mail on some IMAP hosts went nowhere.** A server whose sent folder is
+  called `sent-mail`, or whose folder names are lower case, left the app with
+  no Sent folder. Messages were delivered but never filed. Folder names are
+  now matched regardless of case, and `sent-mail` is recognised. Existing
+  accounts are corrected at their next sync.
+- **Sync and sign-in errors say what went wrong.** A wrong password, an
+  unreachable server, a failed name lookup and a certificate that does not
+  cover the server's name are now told apart. When you add an account, the
+  error says whether it is the incoming or the outgoing server. Error messages
+  across the app no longer start with Electron's internal "Error invoking
+  remote method" text, which used to push the useful part off the end.
+- **A Google account with no Gmail mailbox is refused when you add it.** Google
+  will sign in an address that has no Gmail behind it, and such an account used
+  to save looking healthy and then never fill. The dialog now suggests adding it
+  as an ordinary IMAP account instead.
+- **The Re-authenticate button now depends on the failure itself**, not on
+  whether the error message happens to contain a word like "login". Rewording
+  a message can no longer remove it, and an unrelated error can no longer show
+  it.
+
+### Security
+
+- **The three mail libraries updated.** IMAP (imapflow 1.4 → 2.0), the email
+  parser, and sending (nodemailer 9.1) all move past published advisories. The
+  worst could make a crafted address list in an incoming message very slow to
+  parse. The imapflow update also brings its fixes for IMAP command injection
+  and for stricter handling of what a server sends back.
+- **A way to report a vulnerability privately.** The project now has a
+  security policy, and reports go through GitHub's private reporting rather
+  than a public issue.
+
 ## 0.8.0 — 2026-08-28
 
 Mail you have already dealt with can now be undone, and mail you have not can be

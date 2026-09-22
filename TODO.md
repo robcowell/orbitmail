@@ -132,7 +132,10 @@ does. Preserving that needs prefix or trigram tokenisation.
   fixes for servers that advertise rev2 and then reject `ENABLE`), so real
   Gmail and O365 accounts and an ordinary IMAP host are the check the suites cannot give.
   Verified with `build`, `test:pure`, `test:db`, `test:store`, `test:imap`
-  (869 passed, 0 failed) and `test:e2e` (all 12 suites).
+  (869 passed, 0 failed) and `test:e2e` (all 12 suites). After merging, a
+  `dist:deb` build was installed and run against the developer's real accounts
+  on 2026-09-22 and reported working — a hand check, not a repeatable one, so
+  a rev2-related sync failure reported later should still suspect this bump.
 
 - **mailparser 3.9.16 → 3.9.28, to move its nodemailer off a high-severity
   advisory.** Bumping our own nodemailer to 9.1.1 (#201) left `npm audit`

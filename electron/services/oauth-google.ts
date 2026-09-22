@@ -22,7 +22,7 @@ async function validateGoogleMailScope(accessToken: string): Promise<void> {
     throw new Error(
       info.error_description ??
         info.error ??
-        'Google token validation failed. Try adding the account again.'
+        'Google token validation failed. Try signing in again.'
     )
   }
 
@@ -33,12 +33,13 @@ async function validateGoogleMailScope(accessToken: string): Promise<void> {
     throw new Error(
       'Gmail access was not granted. On the Google consent screen, tick ' +
         '"Read, compose, send and permanently delete all your email from Gmail" — ' +
-        'it is off by default — then add the account again.'
+        'it is off by default — then sign in again.'
     )
   }
 }
 
-export async function authenticateGoogle(): Promise<TokenData> {
+/** `loginHint` pre-selects that address in Google's chooser, for Sign in again. */
+export async function authenticateGoogle(loginHint?: string): Promise<TokenData> {
   const client = getGoogleClient()
   const state = generateState()
   const loopback = await startLoopbackServer({ expectedState: state })
@@ -62,6 +63,7 @@ export async function authenticateGoogle(): Promise<TokenData> {
       // Gmail box unticked gets stuck. Requesting the whole set fresh shows the
       // Gmail permission explicitly on every sign-in.
       prompt: 'select_account consent',
+      ...(loginHint ? { login_hint: loginHint } : {}),
       scope: [GMAIL_SCOPE, 'openid', 'email', 'profile'],
       redirect_uri: redirectUri,
       state,
@@ -91,7 +93,7 @@ export async function authenticateGoogle(): Promise<TokenData> {
   if (!refreshToken) {
     throw new Error(
       'Google did not provide a refresh token for this account. ' +
-        'Remove Orbit Mail at https://myaccount.google.com/permissions, then add the account again.'
+        'Remove Orbit Mail at https://myaccount.google.com/permissions, then sign in again.'
     )
   }
 
@@ -124,7 +126,7 @@ export async function resolveGoogleAccessToken(
     }
     throw markReauthRequired(
       new Error(
-        `No refresh token stored for ${tokenData.email}. Remove the account and sign in again.`
+        `No refresh token stored for ${tokenData.email}. Sign in to it again in Settings → Accounts.`
       )
     )
   }
@@ -141,7 +143,7 @@ export async function resolveGoogleAccessToken(
   if (!accessToken) {
     throw markReauthRequired(
       new Error(
-        `Unable to refresh Google access for ${tokenData.email}. Remove the account and sign in again.`
+        `Unable to refresh Google access for ${tokenData.email}. Sign in to it again in Settings → Accounts.`
       )
     )
   }
@@ -239,7 +241,7 @@ export function formatGmailAuthError(err: unknown, email: string): Error {
         `• You clicked through any "Google hasn't verified this app" warning (Advanced → Go to Orbit Mail)\n` +
         `• IMAP is enabled in Gmail settings\n` +
         `• You ticked "Read, compose, send and permanently delete all your email from Gmail" on the consent screen — it is off by default\n` +
-        `Then remove the account in Orbit Mail and add it again.`
+        `Then sign in to the account again in Settings → Accounts.`
     )
   )
 }

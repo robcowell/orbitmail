@@ -33,7 +33,6 @@ import { ipcErrorMessage } from './utils/ipcError'
 function StatusBar() {
   const syncStatus = useMailStore((s) => s.syncStatus)
   const isOnline = useMailStore((s) => s.isOnline)
-  const setShowAddAccount = useMailStore((s) => s.setShowAddAccount)
   const setToast = useMailStore((s) => s.setToast)
 
   const syncLabel =
@@ -74,7 +73,13 @@ function StatusBar() {
             <button
               type="button"
               className="status-action"
-              onClick={() => setShowAddAccount(true)}
+              // To the failing account's own settings: Sign in again for Gmail and
+              // Microsoft 365, the password for an account added by hand. It used
+              // to open Add Account, which works only because re-adding an address
+              // updates it in place — nothing on screen said so.
+              onClick={() =>
+                openSettings('accounts', summary.failing.find((a) => a.needsReauth)?.accountId)
+              }
             >
               Re-authenticate
             </button>

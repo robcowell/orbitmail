@@ -48,6 +48,7 @@ import { updateAppBadge } from './app-badge'
 import {
   listAccounts,
   saveAccount,
+  reauthenticateAccount,
   removeAccount,
   listFolders,
   listMessages,
@@ -1083,6 +1084,24 @@ function registerIpc(): void {
     const account = saveAccount(provider, tokenData)
     syncNewAccountInBackground(account.id, account.provider)
     return account
+  })
+
+  // Settings → Accounts → Sign in again. The same browser sign-in as adding,
+  // with the address pre-filled, but stored against *this* account and refused
+  // if another address comes back — see `reauthenticateAccount`. A sync follows
+  // so a sign-in error in the status bar clears as soon as it is fixed.
+  ipcMain.handle('accounts:reauthenticate', async (_, accountId: string) => {
+    const account = listAccounts().find((a) => a.id === accountId)
+    if (!account) throw new Error('Account not found')
+    if (account.provider !== 'gmail' && account.provider !== 'o365') {
+      throw new Error('Only Gmail and Microsoft 365 accounts sign in through the browser.')
+    }
+    const tokenData =
+      account.provider === 'gmail'
+        ? await authenticateGoogle(account.email)
+        : await authenticateMicrosoft(account.email)
+    reauthenticateAccount(account.id, account.provider, tokenData)
+    syncNewAccountInBackground(account.id, account.provider)
   })
 
   ipcMain.handle('accounts:addManual', async (_, input: ManualAccountInput) => {

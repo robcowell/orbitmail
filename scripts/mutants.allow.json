@@ -137,6 +137,12 @@
     {
       "file": "electron/services/db-service.ts",
       "rule": "nullish->or",
+      "code": "throw new Error(`${existing.email} does not sign in with ${PROVIDER_LABELS[provider] ?? provider}.`)",
+      "reason": "reauthenticateAccount's provider-mismatch message, on the same PROVIDER_LABELS table as the two entries above: every entry is a non-empty string, so `??` and `||` can only differ on an absent key, where both take the fallback."
+    },
+    {
+      "file": "electron/services/db-service.ts",
+      "rule": "nullish->or",
       "code": "return row?.signature ?? ''",
       "reason": "setAccountSignature stores `signature.trim() || null`, so the column is either null or a non-empty string — the empty string is never written. The suite asserts exactly that (a whitespace-only signature reads back as ''), which is what makes this equivalence checkable rather than assumed."
     },

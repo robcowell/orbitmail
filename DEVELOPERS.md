@@ -156,9 +156,8 @@ not consented to Graph.
   `interaction_required`), `acquireGraphSendToken` returns `null`, and the send
   goes over SMTP exactly as before, so nobody whose SMTP works is interrupted.
   If that SMTP send is refused because SMTP AUTH is off, the error is marked
-  `graphUnavailable` and the toast says to sign in again (Add Account →
-  Microsoft 365, same address, which updates the existing account) rather than
-  to find an admin. Any other token failure is thrown, not treated as "no Graph".
+  `graphUnavailable` and the toast says to sign in again (Settings → Accounts →
+  **Sign in again**, see below) rather than to find an admin. Any other token failure is thrown, not treated as "no Graph".
 - **MIME, not JSON.** `smtp-send.ts` builds the same MIME it sends over SMTP and
   hands it to Graph, so threading headers, the pinned Message-ID, inline images
   and attachments are unchanged. **The Bcc header must be kept**
@@ -190,6 +189,29 @@ Bcc from the other recipients, accepts a draft created from MIME and files the
 sent message in Sent Items, and that personal Microsoft accounts behave the same.
 Manual Microsoft 365 accounts (username and password) have no OAuth token, so
 they stay on SMTP.
+
+### Signing in again
+
+Settings → Accounts → **Sign in again** (`accounts:reauthenticate`) renews an
+existing Gmail or Microsoft 365 account's sign-in: the same browser flow as
+adding one, with the account's address passed as a login hint. It is stored by
+`reauthenticateAccount`, which differs from `saveAccount` in three ways, each
+asserted in the DB contract:
+
+- It starts from the **account**, not from whoever signed in. The browser offers
+  every account the user is signed in to; a different address is refused and
+  nothing is written. Through `saveAccount` that would have added a second
+  account from a button that says it renews this one.
+- It changes only the credentials. The display name is the user's and may have
+  been renamed; `saveAccount` overwrites it with the provider's.
+- It keeps the stored spelling of the address, whatever case the provider
+  returns it in.
+
+A sync follows, so a sign-in error in the status bar clears once it is fixed.
+The status bar's **Re-authenticate** opens this account's settings, which is also
+where an account added by hand has its password. It used to open Add Account,
+which worked only because re-adding an address updates it in place — which
+nothing on screen said.
 
 ## AI (optional)
 
@@ -2518,7 +2540,7 @@ reimplementing them, so it exercises the shipping code paths:
 | OAuth | The loopback listener accepts a callback only when its `state` matches this attempt's, so an injected authorization code cannot complete a sign-in; a genuine callback still works after rejected ones; an abandoned sign-in times out and releases the port. (Needs no mail server, but rides along here rather than adding a second test command.) |
 | TLS | `'starttls'` requires the upgrade and *refuses* a server that does not offer it — GreenMail's plain port advertises no STARTTLS, so it is an accurate stand-in. Includes a guard proving the old mapping would have logged in over plaintext. |
 | Sync | Seeded messages reach the local cache with correct subjects; a repeat sync is a no-op. |
-| Database contract | `scripts/db-contract.suite.ts`, run here on the real `better-sqlite3` and again under `test:db` on the node:sqlite shim — 178 assertions over blocking, threading, thread listing, search scoping, the AI cache surviving a re-sync, POP3 skip dates, contact harvesting and account removal. Running it in both places is what makes the fast runner trustworthy; see below. |
+| Database contract | `scripts/db-contract.suite.ts`, run here on the real `better-sqlite3` and again under `test:db` on the node:sqlite shim — 187 assertions over blocking, threading, thread listing, search scoping, the AI cache surviving a re-sync, POP3 skip dates, contact harvesting, signing in again (the right address only, display name kept) and account removal. Running it in both places is what makes the fast runner trustworthy; see below. |
 | UIDVALIDITY | After a validity reset the cache is *rebuilt to its previous size*, not truncated to one batch, with no duplicate rows. |
 | IDLE | Push works, survives a full server restart, and resumes afterwards. |
 | Responsiveness | A mark-read issued while a flag reconcile is in flight is not stuck behind the whole pass — `imap-pool` serializes per account, so anything holding the lane across every folder blocks user actions. |

@@ -112,6 +112,26 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Sign in again, from the account's own settings.** Asked for because the only
+  way to renew an OAuth sign-in was **Add Account** with the same address: it
+  updates the account in place, but nothing said so, and it read as "remove and
+  re-add". The Graph-sending change made it matter, since every existing
+  Microsoft account needs one fresh sign-in to send through Graph. Settings →
+  Accounts now has **Sign in again** for Gmail and Microsoft 365 accounts. It
+  passes the address as a login hint, refuses a different address (nothing
+  written, no second account), and keeps the user's display name, all asserted
+  in the DB contract. The status bar's **Re-authenticate** opens the failing
+  account's settings instead of Add Account, and the messages that said
+  "Remove the account and sign in again" point there.
+  Found while checking it in `ui:preview`: **the account picker could not
+  leave an account Settings had been opened for.** The pane's effect re-resolved
+  the selection on every change with `settingsAccountId` taking priority, so
+  opening an account's settings from the sidebar gear pinned the picker to it.
+  This was already true on `main`, and routing Re-authenticate through it would
+  have hit it more often. Picking a tab now clears the aim. This one is checked
+  only in `ui:preview`: the effect lives in a component, which `test:store`
+  does not render.
+
 - **Microsoft 365 sends through Microsoft Graph, not SMTP.** Prompted by a real
   tenant with SMTP AUTH switched off, where an OAuth account could not send at
   all (see the entry below). Graph's `sendMail` does not use SMTP AUTH, so the

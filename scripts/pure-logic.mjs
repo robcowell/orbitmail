@@ -1059,7 +1059,7 @@ async function main() {
       /Try again in a few minutes/.test(graphErr(429, '')) && !/sign in/i.test(graphErr(429, '')))
     ok('a rejected token says to sign in again, and how',
       /Sign in to it again/.test(graphErr(401, 'InvalidAuthenticationToken')) &&
-        /Add Account/.test(graphErr(401, 'InvalidAuthenticationToken')), graphErr(401, 'InvalidAuthenticationToken'))
+        /Settings → Accounts/.test(graphErr(401, 'InvalidAuthenticationToken')), graphErr(401, 'InvalidAuthenticationToken'))
     ok('a 403 names the app being refused, not the password',
       /refused to let Orbit Mail send/.test(graphErr(403, 'ErrorAccessDenied')) &&
         !/password/i.test(graphErr(403, 'ErrorAccessDenied')))
@@ -1084,8 +1084,9 @@ async function main() {
       response: '535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant.'
     })
     const fallback = describeSendFailure(Object.assign(smtpOffErr(), { graphUnavailable: true }))
-    ok('SMTP off on an account without Graph says to sign in again',
-      /Sign in to this account again/.test(fallback) && /Microsoft Graph/.test(fallback), fallback)
+    ok('SMTP off on an account without Graph says to sign in again, and where',
+      /Sign in to this account again/.test(fallback) && /Settings → Accounts/.test(fallback) &&
+        /Microsoft Graph/.test(fallback), fallback)
     ok('and does not send the user to an admin first', !/admin/i.test(fallback), fallback)
     ok('while an account that could not use Graph anyway still points at the admin',
       /admin/.test(describeSendFailure(smtpOffErr())))

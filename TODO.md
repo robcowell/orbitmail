@@ -25,7 +25,8 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
   image change" class of bug. Recorded because the disk cost is real, not because
   it is obviously worth paying to fix.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
-- **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
+- **O365 Sent filing is unverified for SMTP sends** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant. Narrower than it was: an OAuth account that has consented to Graph sends through `sendMail`, which files in Sent Items itself (see Done). What is left is the SMTP fallback — accounts added before Graph sending that have not signed in again — and manual (password) Microsoft 365 accounts.
+- **Graph sending is unverified against real Microsoft.** The request shapes are tested against a fake Graph, which proves what we send, not what Exchange does with it. To confirm on a real tenant, and on a personal outlook.com account: the Message-ID we pin survives (threading and the label dedupe key on it); Bcc recipients receive the message and nobody else sees them; a draft created from MIME keeps its headers and the >3 MB path sends; the message appears in Sent Items exactly once; an account added before this change falls back to SMTP and, after signing in again, switches to Graph.
 
 ## Performance
 
@@ -110,6 +111,37 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **Microsoft 365 sends through Microsoft Graph, not SMTP.** Prompted by a real
+  tenant with SMTP AUTH switched off, where an OAuth account could not send at
+  all (see the entry below). Graph's `sendMail` does not use SMTP AUTH, so the
+  organisation's setting no longer matters, and it files in Sent Items itself.
+  Two decisions made with the user:
+  - **Existing accounts fall back to SMTP** until they sign in again, rather
+    than all being made to re-authenticate. Graph needs a new consent
+    (`Mail.Send`), which an account added earlier does not have; forcing it on
+    everyone would have broken sending for every user whose SMTP works. The
+    fallback is decided by the token exchange: a consent error means "no Graph
+    yet", anything else is thrown. Where the fallback meets SMTP AUTH off, the
+    toast says to sign in again, not to find an admin.
+  - **Large messages are handled now**, not deferred. Graph caps a request at
+    4 MB, about 3 MB of message after base64; in a tenant with SMTP off, a
+    3 MB attachment is ordinary, so "fall back to SMTP" would have failed
+    regularly for exactly the users this is for. Over the cap: a draft from
+    MIME without attachments, each attachment added (upload sessions above
+    3 MB), then send; the draft is deleted if anything before the send fails.
+  The message goes as MIME, the same bytes the SMTP path builds, so threading,
+  the pinned Message-ID, inline images and attachments are unchanged. **The Bcc
+  header has to be kept** for Graph, which routes by headers; built the SMTP way
+  it would silently drop the Bcc recipients. That property is asserted in
+  `test:imap` for both paths and was confirmed to fail with Bcc stripped.
+  `graph-send.ts` imports nothing and is covered by `test:pure` against a fake
+  Graph, 0 unjustified mutation survivors. One test bug worth recording: a
+  fake-server route that knew only one file's size made `test:pure` **crash**
+  partway, and `test:mutants` counted every mutant as caught, because a crashed
+  suite also exits non-zero. The sweep read "19 of 19" against tests that never
+  ran. Check the suite finishes before believing a sweep. What real Microsoft
+  does with these requests is not verified; see Outstanding.
 
 - **A Microsoft 365 mailbox with SMTP turned off no longer blames the
   password.** Reported from a real tenant: *"Not sent: The outgoing server

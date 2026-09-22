@@ -1909,6 +1909,110 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Graph sending: the message Microsoft gets is the one the user wrote')
+  // -------------------------------------------------------------------------
+  {
+    // graph-send.ts's request shapes are covered by test:pure. This is the glue
+    // above it: what smtp-send.ts hands Graph. The property that matters most is
+    // the Bcc header — Graph routes by the headers, so a MIME built the SMTP way
+    // (Bcc stripped) would silently never reach the Bcc recipients.
+    const { createServer } = await import('http')
+    const { sendThroughGraph, extractInlineImages } = await import('../electron/services/smtp-send')
+
+    type Req = { method: string; path: string; body: Buffer }
+    let requests: Req[] = []
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (c: Buffer) => chunks.push(c))
+      req.on('end', () => {
+        const r = { method: req.method ?? '', path: req.url ?? '', body: Buffer.concat(chunks) }
+        requests.push(r)
+        const json = (status: number, body: unknown) => {
+          res.writeHead(status, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(body))
+        }
+        if (r.path === '/v1.0/me/sendMail') { res.writeHead(202); res.end(); return }
+        if (r.path === '/v1.0/me/messages') return json(201, { id: 'd1' })
+        if (r.path.endsWith('/createUploadSession')) {
+          return json(201, { uploadUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}/up` })
+        }
+        if (r.path.endsWith('/attachments')) return json(201, { id: 'a' })
+        if (r.path === '/up') {
+          const [, end, total] = /-(\d+)\/(\d+)$/.exec(String(req.headers['content-range']))!.map(Number)
+          res.writeHead(end === total - 1 ? 201 : 200); res.end(); return
+        }
+        if (r.path.endsWith('/send')) { res.writeHead(202); res.end(); return }
+        res.writeHead(404); res.end()
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/v1.0`
+    // Soft line breaks undone: the HTML part is quoted-printable, which wraps a
+    // long `cid:` reference across lines.
+    const decoded = (r: Req) =>
+      Buffer.from(r.body.toString(), 'base64').toString('latin1').replace(/=\r?\n/g, '')
+
+    const onePixel =
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const inline = extractInlineImages(`<p>Hi</p><img src="data:image/png;base64,${onePixel}">`)
+    const options = (attachment: Buffer) => ({
+      from: 'me@example.com',
+      to: 'them@example.org',
+      bcc: 'hidden@example.net',
+      subject: 'Graph test',
+      messageId: '<pinned-1@example.com>',
+      html: inline.html,
+      text: 'Hi',
+      attachments: [
+        { filename: 'report.pdf', content: attachment },
+        ...inline.images.map((i) => ({ filename: i.filename, content: i.content, contentType: i.contentType, cid: i.cid }))
+      ]
+    })
+
+    // --- small: one sendMail with the whole MIME
+    requests = []
+    await sendThroughGraph('tok', options(Buffer.from('%PDF small')), inline.images, base)
+    ok('a small message is a single sendMail', requests.length === 1 && requests[0].path === '/v1.0/me/sendMail',
+      requests.map((r) => r.path).join(', '))
+    const small = decoded(requests[0])
+    ok('its MIME keeps the Bcc header, or Graph never sends to that address',
+      /^Bcc: hidden@example\.net\r?$/m.test(small), small.slice(0, 300))
+    ok('and carries the pinned Message-ID', small.includes('Message-ID: <pinned-1@example.com>'))
+    ok('and the attachment', small.includes('report.pdf'))
+    ok('and the pasted image, under the Content-ID the HTML references',
+      small.includes(`Content-ID: <${inline.images[0].cid}>`) && small.includes(`cid:${inline.images[0].cid}`))
+
+    // --- large: a draft without attachments, then each one added
+    requests = []
+    const big = Buffer.alloc(5 * 1024 * 1024, 0x25)
+    await sendThroughGraph('tok', options(big), inline.images, base)
+    const calls = requests.map((r) => `${r.method} ${r.path}`)
+    ok('a large message goes as a draft, not through sendMail',
+      calls[0] === 'POST /v1.0/me/messages' && !calls.includes('POST /v1.0/me/sendMail'), calls.join(' | '))
+    const draft = decoded(requests[0])
+    ok('the draft keeps the Bcc header too', /^Bcc: hidden@example\.net\r?$/m.test(draft), draft.slice(0, 300))
+    ok('but carries no attachments — they go separately',
+      !draft.includes('report.pdf') && !draft.includes(`Content-ID: <${inline.images[0].cid}>`), `${draft.length} bytes`)
+    ok('and still references the pasted image by its Content-ID', draft.includes(`cid:${inline.images[0].cid}`))
+    ok('the big attachment is uploaded through a session',
+      requests.some((r) => r.path.endsWith('/createUploadSession') &&
+        JSON.parse(r.body.toString()).AttachmentItem.name === 'report.pdf'))
+    const session = requests.find((r) => r.path.endsWith('/createUploadSession'))
+    ok('with a content type worked out from its name',
+      session ? JSON.parse(session.body.toString()).AttachmentItem.contentType === 'application/pdf' : false)
+    const image = requests
+      .filter((r) => r.path.endsWith('/attachments'))
+      .map((r) => JSON.parse(r.body.toString()))
+      .find((a) => a.name === inline.images[0].filename)
+    ok('the pasted image is added inline, under the same Content-ID',
+      image?.isInline === true && image?.contentId === inline.images[0].cid && image?.contentType === 'image/png',
+      JSON.stringify(image ?? {}).slice(0, 200))
+    ok('and the draft is sent at the end', calls.at(-1) === 'POST /v1.0/me/messages/d1/send', calls.at(-1))
+
+    server.close()
+  }
+
+  // -------------------------------------------------------------------------
   section('Inline images: a signature logo is not an attachment on the way in')
   // -------------------------------------------------------------------------
   {

@@ -24,6 +24,7 @@ import { tmpdir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { createRequire } from 'module'
+import { createServer } from 'http'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = mkdtempSync(join(tmpdir(), 'orbit-pure-'))
@@ -42,6 +43,7 @@ const section = (name) => console.log(`\n${name}`)
 const MODULES = {
   'attachment-safety': 'electron/services/attachment-safety.ts',
   'connection-failure': 'electron/services/connection-failure.ts',
+  'graph-send': 'electron/services/graph-send.ts',
   'network-reachability': 'electron/services/network-reachability.ts',
   'sync-policy': 'electron/services/sync-policy.ts',
   'thread-util': 'electron/services/thread-util.ts',
@@ -832,6 +834,261 @@ async function main() {
     for (const m of [noMailbox, full, describeSentCopyFailure(new Error('x'))]) {
       ok('the sent-copy failure is a single line', !m.includes('\n'), JSON.stringify(m))
     }
+  }
+
+  // -------------------------------------------------------------------------
+  section('Graph sending: Microsoft 365 without SMTP')
+  // -------------------------------------------------------------------------
+  {
+    // Against a fake Graph on localhost. What it proves is the request shapes
+    // this code sends and how it reads the answers — not that real Graph agrees
+    // with them, which only a real tenant can say.
+    const {
+      sendMimeViaGraph, sendLargeViaGraph, fitsSimpleSend, GraphSendError,
+      SIMPLE_SEND_LIMIT, UPLOAD_SESSION_THRESHOLD, UPLOAD_CHUNK
+    } = load('graph-send')
+    const { describeSendFailure } = load('connection-failure')
+
+    let requests = []
+    let route = () => ({ status: 500 })
+    const server = createServer((req, res) => {
+      const chunks = []
+      req.on('data', (c) => chunks.push(c))
+      req.on('end', () => {
+        const entry = { method: req.method, path: req.url, headers: req.headers, body: Buffer.concat(chunks) }
+        requests.push(entry)
+        const { status, json } = route(entry)
+        res.writeHead(status, json ? { 'Content-Type': 'application/json' } : {})
+        res.end(json ? JSON.stringify(json) : undefined)
+      })
+    })
+    await new Promise((r) => server.listen(0, '127.0.0.1', r))
+    const base = `http://127.0.0.1:${server.address().port}/v1.0`
+    const reset = (fn) => { requests = []; route = fn }
+    const rejects = async (p) => { try { await p; return null } catch (err) { return err } }
+
+    // Size: base64 grows the MIME by a third, and the limit is on what is sent.
+    const maxRaw = Math.floor(SIMPLE_SEND_LIMIT / 4) * 3
+    ok('a message whose base64 fits the limit goes in one request', fitsSimpleSend(maxRaw))
+    ok('and one byte-group more does not', !fitsSimpleSend(maxRaw + 1))
+    ok('the limit stays under Graph’s 4 MB request cap', SIMPLE_SEND_LIMIT < 4 * 1024 * 1024)
+
+    // --- simple send
+    const mime = Buffer.from('From: a@x.test\r\nTo: b@y.test\r\nBcc: c@z.test\r\nSubject: hi\r\n\r\nbody')
+    reset(() => ({ status: 202 }))
+    await sendMimeViaGraph('tok-1', mime, base)
+    const [send] = requests
+    ok('a small message is one POST to /me/sendMail',
+      requests.length === 1 && send.method === 'POST' && send.path === '/v1.0/me/sendMail',
+      requests.map((r) => `${r.method} ${r.path}`).join(', '))
+    ok('with the Graph token as a bearer', send.headers.authorization === 'Bearer tok-1')
+    ok('as text/plain, which is how Graph takes MIME',
+      send.headers['content-type'] === 'text/plain', send.headers['content-type'])
+    ok('and the body is the MIME, base64-encoded, byte for byte',
+      Buffer.from(send.body.toString(), 'base64').equals(mime))
+
+    reset(() => ({ status: 403, json: { error: { code: 'ErrorAccessDenied', message: 'Access is denied.' } } }))
+    const denied = await rejects(sendMimeViaGraph('tok-1', mime, base))
+    ok('a refusal is thrown as a GraphSendError', denied instanceof GraphSendError, String(denied))
+    ok('carrying the status, the code and Graph’s message',
+      denied?.graphStatus === 403 && denied?.graphCode === 'ErrorAccessDenied' &&
+        denied?.message === 'Access is denied.', JSON.stringify(denied))
+    ok('and the stage it failed at', denied?.stage === 'send')
+
+    reset(() => ({ status: 200 }))
+    ok('only 202 counts as sent — a 200 is not what sendMail returns',
+      (await rejects(sendMimeViaGraph('tok-1', mime, base))) instanceof GraphSendError)
+
+    reset(() => ({ status: 502 }))
+    const bare = await rejects(sendMimeViaGraph('tok-1', mime, base))
+    ok('a refusal with no JSON body still reports its status',
+      bare?.graphStatus === 502 && /502/.test(bare?.message), bare?.message)
+
+    // --- large send: draft, attachments, dispatch
+    const small = { name: 'notes.txt', contentType: 'text/plain', content: Buffer.from('small file') }
+    const pasted = { name: 'image-1.png', contentType: 'image/png', content: Buffer.from([1, 2, 3]), contentId: 'inline-0@orbit-mail' }
+    // Just over the threshold and more than one chunk, with a short last chunk.
+    const bigBytes = Buffer.alloc(UPLOAD_SESSION_THRESHOLD + UPLOAD_CHUNK + 1234)
+    for (let i = 0; i < bigBytes.length; i++) bigBytes[i] = i % 251
+    const big = { name: 'report.pdf', contentType: 'application/pdf', content: bigBytes }
+    const uploadPath = '/upload/session-1'
+    const received = []
+
+    const graphOk = (r) => {
+      if (r.method === 'POST' && r.path === '/v1.0/me/messages') return { status: 201, json: { id: 'draft/1=' } }
+      if (r.path.endsWith('/attachments/createUploadSession')) {
+        return { status: 201, json: { uploadUrl: `http://127.0.0.1:${server.address().port}${uploadPath}` } }
+      }
+      if (r.path.endsWith('/attachments')) return { status: 201, json: { id: 'att' } }
+      if (r.path === uploadPath) {
+        received.push(r)
+        const [, end, total] = /-(\d+)\/(\d+)$/.exec(r.headers['content-range']).map(Number)
+        return { status: end === total - 1 ? 201 : 200 }
+      }
+      if (r.path.endsWith('/send')) return { status: 202 }
+      if (r.method === 'DELETE') return { status: 204 }
+      return { status: 404 }
+    }
+
+    reset(graphOk)
+    await sendLargeViaGraph('tok-2', mime, [small, pasted, big], base)
+    const calls = requests.map((r) => `${r.method} ${r.path}`)
+    ok('a large message starts as a draft created from MIME',
+      calls[0] === 'POST /v1.0/me/messages' &&
+        Buffer.from(requests[0].body.toString(), 'base64').equals(mime), calls[0])
+    ok('the draft id is escaped into the URL',
+      calls.some((c) => c.includes('/me/messages/draft%2F1%3D/')), calls.join(' | '))
+    ok('and it is sent last, after every attachment',
+      calls.at(-1) === 'POST /v1.0/me/messages/draft%2F1%3D/send', calls.at(-1))
+    ok('nothing is deleted when it all works', !calls.some((c) => c.startsWith('DELETE')))
+
+    const direct = requests.filter((r) => r.path.endsWith('/attachments')).map((r) => JSON.parse(r.body.toString()))
+    ok('attachments under the threshold go in one request each', direct.length === 2, String(direct.length))
+    const note = direct.find((a) => a.name === 'notes.txt')
+    ok('as a fileAttachment with its bytes',
+      note?.['@odata.type'] === '#microsoft.graph.fileAttachment' &&
+        Buffer.from(note.contentBytes, 'base64').equals(small.content))
+    ok('an ordinary attachment is not inline and has no Content-ID',
+      note?.isInline === false && !('contentId' in note), JSON.stringify(note))
+    const image = direct.find((a) => a.name === 'image-1.png')
+    ok('a pasted image is inline, under the Content-ID the HTML references',
+      image?.isInline === true && image?.contentId === 'inline-0@orbit-mail', JSON.stringify(image))
+
+    const session = requests.find((r) => r.path.endsWith('/createUploadSession'))
+    const item = session && JSON.parse(session.body.toString()).AttachmentItem
+    ok('an attachment at or over the threshold gets an upload session',
+      item?.name === 'report.pdf' && item?.size === bigBytes.length && item?.attachmentType === 'file',
+      JSON.stringify(item))
+    ok('uploaded in more than one chunk', received.length > 1, String(received.length))
+    ok('each chunk no bigger than the chunk size',
+      received.every((r) => r.body.length <= UPLOAD_CHUNK))
+    ok('without an Authorization header, which Graph rejects on the upload URL',
+      received.every((r) => !r.headers.authorization))
+    ok('with Content-Range naming each chunk’s bytes and the total',
+      received.every((r, i) => {
+        const start = i * UPLOAD_CHUNK
+        const end = Math.min(start + UPLOAD_CHUNK, bigBytes.length) - 1
+        return r.headers['content-range'] === `bytes ${start}-${end}/${bigBytes.length}`
+      }), received.map((r) => r.headers['content-range']).join(', '))
+    ok('and the chunks reassemble to the file exactly',
+      Buffer.concat(received.map((r) => r.body)).equals(bigBytes))
+    ok('the draft and attachment calls carry the Graph token',
+      requests.filter((r) => r.path.startsWith('/v1.0/')).every((r) => r.headers.authorization === 'Bearer tok-2'))
+
+    // A failure after the draft exists must not leave a half-built copy in the
+    // user's Outlook Drafts.
+    reset((r) => (r.path.endsWith('/attachments')
+      ? { status: 413, json: { error: { code: 'ErrorMessageSizeExceeded', message: 'Too big.' } } }
+      : graphOk(r)))
+    const attachFail = await rejects(sendLargeViaGraph('tok-2', mime, [small], base))
+    ok('an attachment refusal is thrown with its stage',
+      attachFail?.stage === 'attach' && attachFail?.graphStatus === 413, JSON.stringify(attachFail))
+    ok('and the draft is deleted',
+      requests.some((r) => r.method === 'DELETE' && r.path === '/v1.0/me/messages/draft%2F1%3D'))
+    ok('and never sent', !requests.some((r) => r.path.endsWith('/send')))
+
+    reset((r) => (r.path.endsWith('/send') ? { status: 500 } : graphOk(r)))
+    const dispatchFail = await rejects(sendLargeViaGraph('tok-2', mime, [small], base))
+    ok('a refused dispatch is thrown with its stage', dispatchFail?.stage === 'dispatch')
+    ok('and its draft is deleted too', requests.some((r) => r.method === 'DELETE'))
+
+    reset((r) => (r.path === '/v1.0/me/messages' ? { status: 400, json: { error: { code: 'ErrorMimeContentInvalid' } } } : graphOk(r)))
+    const draftFail = await rejects(sendLargeViaGraph('tok-2', mime, [small], base))
+    ok('a refused draft stops there, with nothing to delete',
+      draftFail?.stage === 'draft' && requests.length === 1, requests.map((r) => r.path).join(', '))
+
+    reset((r) => (r.path === '/v1.0/me/messages' ? { status: 201, json: {} } : graphOk(r)))
+    ok('a draft with no id is an error, not a send to /me/messages/undefined',
+      (await rejects(sendLargeViaGraph('tok-2', mime, [small], base)))?.stage === 'draft' &&
+        requests.length === 1)
+    reset((r) => (r.path === '/v1.0/me/messages' ? { status: 201, json: { id: '' } } : graphOk(r)))
+    ok('and so is an empty one',
+      (await rejects(sendLargeViaGraph('tok-2', mime, [small], base)))?.stage === 'draft')
+
+    for (const answer of [{}, { uploadUrl: '' }]) {
+      reset((r) => (r.path.endsWith('/createUploadSession') ? { status: 201, json: answer } : graphOk(r)))
+      const noUrl = await rejects(sendLargeViaGraph('tok-2', mime, [big], base))
+      ok(`an upload session with ${JSON.stringify(answer)} is an error, and the draft is deleted`,
+        noUrl?.stage === 'attach' && requests.some((r) => r.method === 'DELETE'), String(noUrl))
+    }
+
+    // The edges of the two size decisions. An attachment exactly at the
+    // threshold is the first one Graph wants uploaded, and a file that is an
+    // exact number of chunks must not get an extra, empty one.
+    received.length = 0
+    reset(graphOk)
+    const atThreshold = { name: 'edge.bin', contentType: 'application/octet-stream', content: Buffer.alloc(UPLOAD_SESSION_THRESHOLD, 7) }
+    await sendLargeViaGraph('tok-2', mime, [atThreshold], base)
+    ok('an attachment exactly at the threshold gets an upload session',
+      requests.some((r) => r.path.endsWith('/createUploadSession')) &&
+        !requests.some((r) => r.path.endsWith('/attachments')))
+
+    const exactBytes = Buffer.alloc(2 * UPLOAD_CHUNK, 9)
+    received.length = 0
+    reset(graphOk)
+    await sendLargeViaGraph('tok-2', mime, [{ name: 'two.bin', contentType: 'application/octet-stream', content: exactBytes }], base)
+    ok('a file of exactly two chunks is uploaded in exactly two',
+      received.length === 2 && received.every((r) => r.body.length === UPLOAD_CHUNK),
+      received.map((r) => r.headers['content-range']).join(', '))
+
+    // Graph answers 200 while it expects more and 201 once the attachment
+    // exists. Anything else mid-upload means the attachment is not there.
+    reset((r) => (r.path === uploadPath ? { status: 416 } : graphOk(r)))
+    const chunkFail = await rejects(sendLargeViaGraph('tok-2', mime, [big], base))
+    ok('a refused chunk stops the upload and deletes the draft',
+      chunkFail?.stage === 'attach' && chunkFail?.graphStatus === 416 &&
+        requests.filter((r) => r.path === uploadPath).length === 1 &&
+        requests.some((r) => r.method === 'DELETE'), String(chunkFail))
+    reset((r) => (r.path === uploadPath ? { status: 200 } : graphOk(r)))
+    ok('an upload whose last chunk never gets a 201 did not create the attachment',
+      (await rejects(sendLargeViaGraph('tok-2', mime, [big], base)))?.stage === 'attach')
+
+    server.close()
+
+    // --- wording
+    const graphErr = (status, code, message = '') =>
+      describeSendFailure(new GraphSendError('send', status, code, message))
+    ok('Graph refusing the size says too large',
+      /too large/.test(graphErr(413, 'ErrorMessageSizeExceeded')), graphErr(413, 'ErrorMessageSizeExceeded'))
+    ok('the size code alone is enough, whatever the status',
+      /too large/.test(graphErr(400, 'ErrorMessageSizeExceeded')))
+    ok('a bad recipient points at the addresses',
+      /recipient/.test(graphErr(400, 'ErrorInvalidRecipients')) && /typo/.test(graphErr(400, 'ErrorInvalidRecipients')))
+    ok('a full mailbox says so', /mailbox is full/.test(graphErr(403, 'ErrorQuotaExceeded')))
+    ok('throttling says to wait, not that anything is wrong',
+      /Try again in a few minutes/.test(graphErr(429, '')) && !/sign in/i.test(graphErr(429, '')))
+    ok('a rejected token says to sign in again, and how',
+      /Sign in to it again/.test(graphErr(401, 'InvalidAuthenticationToken')) &&
+        /Add Account/.test(graphErr(401, 'InvalidAuthenticationToken')), graphErr(401, 'InvalidAuthenticationToken'))
+    ok('a 403 names the app being refused, not the password',
+      /refused to let Orbit Mail send/.test(graphErr(403, 'ErrorAccessDenied')) &&
+        !/password/i.test(graphErr(403, 'ErrorAccessDenied')))
+    ok('a server fault says to try again',
+      /Try again shortly/.test(graphErr(503, '')), graphErr(503, ''))
+    ok('and 500, the first server fault, is one',
+      /Try again shortly/.test(graphErr(500, '')), graphErr(500, ''))
+    ok('while 499 is not reported as Microsoft’s fault',
+      !/servers had a problem/.test(graphErr(499, '')), graphErr(499, ''))
+    ok('Graph’s own words are carried', graphErr(403, 'ErrorAccessDenied', 'Access is denied.').includes('Access is denied.'))
+    ok('an unrecognised refusal keeps its status and code',
+      /400/.test(graphErr(400, 'ErrorSomethingNew')) && /ErrorSomethingNew/.test(graphErr(400, 'ErrorSomethingNew')),
+      graphErr(400, 'ErrorSomethingNew'))
+    for (const m of [graphErr(413, ''), graphErr(401, '', 'x'), graphErr(400, 'Odd', 'y')]) {
+      ok('the Graph failure is a single line', !m.includes('\n'), JSON.stringify(m))
+    }
+
+    // An account that fell back to SMTP because it never consented to Graph can
+    // fix this by signing in again — no admin needed, so that comes first.
+    const smtpOffErr = () => Object.assign(new Error('Invalid login'), {
+      code: 'EAUTH', responseCode: 535,
+      response: '535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant.'
+    })
+    const fallback = describeSendFailure(Object.assign(smtpOffErr(), { graphUnavailable: true }))
+    ok('SMTP off on an account without Graph says to sign in again',
+      /Sign in to this account again/.test(fallback) && /Microsoft Graph/.test(fallback), fallback)
+    ok('and does not send the user to an admin first', !/admin/i.test(fallback), fallback)
+    ok('while an account that could not use Graph anyway still points at the admin',
+      /admin/.test(describeSendFailure(smtpOffErr())))
   }
 
   console.log(

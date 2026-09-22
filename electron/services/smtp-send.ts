@@ -2,6 +2,7 @@ import { app } from 'electron'
 import nodemailer from 'nodemailer'
 import MailComposer from 'nodemailer/lib/mail-composer'
 import type Mail from 'nodemailer/lib/mailer'
+import { detectMimeType } from 'nodemailer/lib/mime-funcs/mime-types'
 import { readFileSync } from 'fs'
 import { randomUUID } from 'crypto'
 import type { Provider, ComposePayload } from '../../shared/types'
@@ -16,7 +17,13 @@ import {
 import { appendToSentFolder, getAccountSmtpConfig } from './imap-sync'
 import { smtpTransportOptions } from './account-credentials'
 import { resolveGoogleAccessToken } from './oauth-google'
-import { refreshMicrosoftToken } from './oauth-microsoft'
+import { acquireGraphSendToken, refreshMicrosoftToken } from './oauth-microsoft'
+import {
+  fitsSimpleSend,
+  sendLargeViaGraph,
+  sendMimeViaGraph,
+  type GraphAttachment
+} from './graph-send'
 import { assertAttachmentsApproved } from './attachment-allowlist'
 import { harvestContacts } from './contacts'
 import { describeSentCopyFailure } from './connection-failure'
@@ -89,6 +96,56 @@ function mailerIdentity(): string {
   return `Orbit Mail ${app.getVersion()} (${os} ${process.arch}; Electron ${process.versions.electron})`
 }
 
+function buildMime(node: ReturnType<MailComposer['compile']>): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    node.build((err, message) => (err ? reject(err) : resolve(message)))
+  })
+}
+
+/** MIME that keeps its Bcc header — see `sentCopyOf` for why that is normally stripped. */
+function buildWithBcc(options: Mail.Options): Promise<Buffer> {
+  const node = new MailComposer(options).compile()
+  node.keepBcc = true
+  return buildMime(node)
+}
+
+/**
+ * Send through Microsoft Graph. Graph routes by the MIME headers rather than an
+ * envelope, so the Bcc header must be kept or the Bcc recipients are never sent
+ * to; Exchange strips it from the delivered copies and keeps it in Sent Items.
+ *
+ * A message too large for one request goes as a draft carrying no attachments,
+ * with the attachments added one at a time — pasted images included, as inline
+ * attachments under the same Content-ID the HTML already references.
+ */
+export async function sendThroughGraph(
+  accessToken: string,
+  mailOptions: Mail.Options,
+  inlineImages: InlineImage[],
+  /** Only ever set by the test suite, to point this at a fake Graph. */
+  graphBaseUrl?: string
+): Promise<void> {
+  const mime = await buildWithBcc(mailOptions)
+  if (fitsSimpleSend(mime.length)) {
+    await sendMimeViaGraph(accessToken, mime, graphBaseUrl)
+    return
+  }
+
+  const inlineCids = new Set(inlineImages.map((image) => image.cid))
+  const attachments: GraphAttachment[] = (mailOptions.attachments ?? []).map((a) => {
+    const name = a.filename || 'attachment'
+    const cid = typeof a.cid === 'string' && inlineCids.has(a.cid) ? a.cid : undefined
+    return {
+      name,
+      contentType: a.contentType || detectMimeType(name),
+      content: a.content as Buffer,
+      ...(cid ? { contentId: cid } : {})
+    }
+  })
+  const draftMime = await buildWithBcc({ ...mailOptions, attachments: [] })
+  await sendLargeViaGraph(accessToken, draftMime, attachments, graphBaseUrl)
+}
+
 /**
  * What happened *after* the message went out. The send itself is reported by
  * throwing, so an empty result means everything worked.
@@ -110,26 +167,34 @@ export async function sendMail(
   // never chose must do nothing at all, not fail halfway through a send.
   assertAttachmentsApproved(payload.attachmentPaths)
 
-  let transport: nodemailer.Transporter
   let fromAddress: string
+  let tokens: TokenData | undefined
 
   if (provider === 'imap' || provider === 'pop3') {
     const manual = getManualCredentials(payload.accountId)
     if (!manual) throw new Error('Account not found')
     fromAddress = manual.email
-    transport = createPasswordTransport(payload.accountId, provider)
   } else {
-    let tokens = getAccountTokens(payload.accountId)
-    if (!tokens) throw new Error('Account not found')
-
-    tokens = await ensureFreshToken(payload.accountId, provider, tokens)
+    const stored = getAccountTokens(payload.accountId)
+    if (!stored) throw new Error('Account not found')
+    tokens = await ensureFreshToken(payload.accountId, provider, stored)
     fromAddress = tokens.email
-    transport = createOAuthTransport(
-      payload.accountId,
-      provider,
-      tokens.email,
-      tokens.accessToken
-    )
+  }
+
+  // A Microsoft 365 OAuth account sends through Graph when it has consented to
+  // it, and over SMTP when it has not — every account added before Graph sending
+  // existed, until it signs in again. SMTP still works wherever the organisation
+  // allows it, so falling back interrupts nobody.
+  let graphToken: string | null = null
+  if (provider === 'o365' && tokens) {
+    const graph = await acquireGraphSendToken(tokens)
+    if (graph) {
+      graphToken = graph.accessToken
+      if (graph.refreshToken !== tokens.refreshToken) {
+        tokens = { ...tokens, refreshToken: graph.refreshToken }
+        updateAccountTokens(payload.accountId, tokens)
+      }
+    }
   }
 
   const mailer = mailerIdentity()
@@ -176,20 +241,6 @@ export async function sendMail(
   }
   if (attachments.length > 0) mailOptions.attachments = attachments
 
-  // Build the MIME message up front rather than letting sendMail do it, so the
-  // copy filed in Sent is the same message that went out, with the same
-  // Message-ID. `info.message` used to be read for this, but the SMTP transport
-  // never sets it (only the stream/JSON transports do), so the append below was
-  // unreachable and manual IMAP accounts kept no record of sent mail.
-  const buildMime = (node: ReturnType<MailComposer['compile']>): Promise<Buffer> =>
-    new Promise((resolve, reject) => {
-      node.build((err, message) => (err ? reject(err) : resolve(message)))
-    })
-
-  const composed = new MailComposer(mailOptions).compile()
-  const envelope = composed.getEnvelope()
-  const raw = await buildMime(composed)
-
   /**
    * The message as it should be *filed*, which is not the message that goes out.
    *
@@ -207,15 +258,42 @@ export async function sendMail(
    */
   const sentCopyOf = async (transmitted: Buffer): Promise<Buffer> => {
     if (!payload.bcc?.trim()) return transmitted
-    const node = new MailComposer(mailOptions).compile()
-    node.keepBcc = true
-    return buildMime(node)
+    return buildWithBcc(mailOptions)
   }
 
-  try {
-    await transport.sendMail({ raw, envelope })
-  } finally {
-    transport.close()
+  // The transmitted message, when it went over SMTP — the one a manual IMAP
+  // account files in Sent below. Graph files its own copy, so it needs none.
+  let raw: Buffer | null = null
+
+  if (graphToken) {
+    await sendThroughGraph(graphToken, mailOptions, inline.images)
+  } else {
+    // Built up front rather than left to sendMail, so the copy filed in Sent is
+    // the same message that went out, with the same Message-ID. `info.message`
+    // used to be read for this, but the SMTP transport never sets it (only the
+    // stream/JSON transports do), so the append below was unreachable and
+    // manual IMAP accounts kept no record of sent mail.
+    const composed = new MailComposer(mailOptions).compile()
+    const envelope = composed.getEnvelope()
+    raw = await buildMime(composed)
+    const transport =
+      provider === 'imap' || provider === 'pop3'
+        ? createPasswordTransport(payload.accountId, provider)
+        : createOAuthTransport(payload.accountId, provider, fromAddress, tokens!.accessToken)
+    try {
+      await transport.sendMail({ raw, envelope })
+    } catch (err) {
+      // A Microsoft 365 account refused over SMTP because its organisation has
+      // SMTP AUTH off, and which could send through Graph if it signed in again.
+      // Marked here because only here is it known that Graph was not available;
+      // `describeSendFailure` reads the mark and says so.
+      if (provider === 'o365' && err && typeof err === 'object') {
+        ;(err as { graphUnavailable?: boolean }).graphUnavailable = true
+      }
+      throw err
+    } finally {
+      transport.close()
+    }
   }
 
   // Collect the recipients now rather than waiting for this message to come back
@@ -238,8 +316,9 @@ export async function sendMail(
 
   // Only manual IMAP accounts need this. Gmail files SMTP-submitted mail into
   // Sent Mail itself, so appending would leave the user with two copies.
-  // (O365 is not as consistent here — tracked in TODO.md rather than guessed at.)
-  if (provider === 'imap') {
+  // (O365 over SMTP is not as consistent here — tracked in TODO.md rather than
+  // guessed at. Through Graph it is: `sendMail` files in Sent Items.)
+  if (provider === 'imap' && raw) {
     try {
       await appendToSentFolder(payload.accountId, provider, await sentCopyOf(raw))
     } catch (err) {

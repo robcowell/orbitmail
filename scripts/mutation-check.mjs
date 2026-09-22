@@ -68,6 +68,7 @@ const ALLOW_PATH = join(ROOT, 'scripts', 'mutants.allow.json')
 const TARGETS = {
   'electron/services/network-reachability.ts': 'npm run test:pure',
   'electron/services/attachment-safety.ts': 'npm run test:pure',
+  'electron/services/graph-send.ts': 'npm run test:pure',
   'electron/services/sync-policy.ts': 'npm run test:pure',
   'electron/services/thread-util.ts': 'npm run test:pure',
   'electron/services/window-geometry.ts': 'npm run test:pure',

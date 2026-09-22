@@ -243,6 +243,22 @@ export function describeSendFailure(err: unknown): string {
     )
   }
 
+  // Microsoft 365 with SMTP AUTH switched off, for the organisation or the
+  // mailbox. It arrives as a 535 like any rejected login, so without this it
+  // said "if the password changed" — which sends someone to change a password
+  // that is fine, and on an OAuth account there is no password to change.
+  // Nothing the user can set here fixes it; an admin has to allow it. Matched
+  // on the setting's name rather than on 5.7.139, which Microsoft also uses for
+  // other sign-in refusals.
+  if (/SmtpClientAuthentication is disabled/i.test(`${response} ${message}`)) {
+    return (
+      'Microsoft 365 has SMTP sending turned off for this mailbox, and SMTP is ' +
+      'how Orbit Mail sends. A Microsoft 365 admin can turn on Authenticated ' +
+      'SMTP for it: admin center → Users → Active users → the user → Mail → ' +
+      'Manage email apps.'
+    )
+  }
+
   switch (kind) {
     case 'auth':
       return (

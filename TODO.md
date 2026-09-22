@@ -26,7 +26,17 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
   it is obviously worth paying to fix.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
 - **O365 Sent filing is unverified for SMTP sends** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant. Narrower than it was: an OAuth account that has consented to Graph sends through `sendMail`, which files in Sent Items itself (see Done). What is left is the SMTP fallback — accounts added before Graph sending that have not signed in again — and manual (password) Microsoft 365 accounts.
-- **Graph sending is unverified against real Microsoft.** The request shapes are tested against a fake Graph, which proves what we send, not what Exchange does with it. To confirm on a real tenant, and on a personal outlook.com account: the Message-ID we pin survives (threading and the label dedupe key on it); Bcc recipients receive the message and nobody else sees them; a draft created from MIME keeps its headers and the >3 MB path sends; the message appears in Sent Items exactly once; an account added before this change falls back to SMTP and, after signing in again, switches to Graph.
+- **Graph sending is only partly verified against real Microsoft.** The request shapes are tested against a fake Graph, which proves what we send, not what Exchange does with it.
+  - **Confirmed on 2026-09-22**, on a real tenant with SMTP AUTH switched off, from `npm run dev`:
+    - an account added before Graph sending fell back to SMTP and got the "sign in again" message, not the admin one;
+    - after **Sign in again** it sent through Graph (`send via graph sent`);
+    - the token cache works: `graph token (fetched) 243ms` on the first send, `(cached) 0ms` on the second;
+    - `deliver` took 364–527ms and the Sent-folder sync about 150ms.
+  - **Still to confirm**, on that tenant and on a personal outlook.com account:
+    - the Message-ID we pin survives (threading and the label dedupe key on it);
+    - Bcc recipients receive the message and nobody else sees them;
+    - a draft created from MIME keeps its headers, and the >3 MB path sends;
+    - the message appears in Sent Items exactly once.
 
 ## Performance
 
@@ -128,8 +138,16 @@ does. Preserving that needs prefix or trigram tokenisation.
   still fetched. Nothing would have looked wrong except the speed. The DB
   contract caught it, with an assertion added to check that "signing in again
   drops the cache", which could only mean something if the cache survived in
-  the first place. Whether this fixes the slowness is unknown until a real send
-  logs its timings; the Sent-folder sync may be most of it.
+  the first place.
+  **What the timings showed** (two real sends, 2026-09-22): 772ms with a
+  fetched token, then 364ms with a cached one, plus about 150ms of Sent-folder
+  sync. So the suspect was wrong: the sync is cheap. After Send is clicked, the
+  app takes about 11–12s in all, almost entirely the deliberate 10s undo hold
+  plus up to 1s until the scheduler's next one-second tick. The cache saves
+  about a quarter of a second per send. The "well past ten seconds" send that
+  prompted this was not reproduced and may have been a one-off. If it recurs,
+  the log line now shows which stage took the time. Shortening the undo hold,
+  or making it a setting, would be a product decision; it was left alone.
 
 - **Sign in again, from the account's own settings.** Asked for because the only
   way to renew an OAuth sign-in was **Add Account** with the same address: it

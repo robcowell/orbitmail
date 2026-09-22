@@ -37,7 +37,7 @@ import { ipcErrorMessage } from '../utils/ipcError'
 
 export const MESSAGE_PAGE_SIZE = 200
 
-export type SettingsCategory = 'general' | 'accounts' | 'privacy' | 'ai'
+export type SettingsCategory = 'general' | 'accounts' | 'privacy' | 'ai' | 'about'
 
 /**
  * The global on/off preferences Settings can change. Narrowed to a key union on

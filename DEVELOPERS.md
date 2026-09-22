@@ -1436,6 +1436,15 @@ The dialog is `src/components/settings/SettingsDialog.tsx` — the usual
 `.modal-overlay` / `.modal` skeleton plus a category rail, opened by the toolbar
 gear, `Ctrl/Cmd+,`, or `openSettings(category, accountId)` in `mailStore`.
 
+**About** is the last category, and the only place the app shows its version.
+There is no application menu of our own: Electron's default one has no About
+item on Linux, and it is hidden behind `Alt` anyway. `AboutPane` reads
+`app:getVersionInfo`, which returns `app.getVersion()` and
+`process.versions` from the **running** main process rather than a version
+inlined at build time, so what it shows cannot disagree with what is actually
+executing. Its buttons go through `shell:openExternal`: release notes for the
+running version's tag, the website, and the issue tracker.
+
 **`.modal-settings` is fixed size, not `max-*`.** It is held at what the tallest
 pane needs and the pane body scrolls inside it, because sizing to content made
 the dialog resize as you moved between categories — the rail and the Close button

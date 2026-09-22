@@ -13,6 +13,7 @@ import type {
   SweepScope,
   DraftTone,
   SearchField,
+  AppVersionInfo,
   AttachmentDraft,
   OAuthCredentialKey,
   PlatformCapabilities,
@@ -1899,6 +1900,16 @@ function registerIpc(): void {
       trayActive: isTrayActive(),
       notificationsSupported: Notification.isSupported(),
       mailtoHandlerActive: app.isDefaultProtocolClient('mailto')
+    })
+  )
+
+  ipcMain.handle(
+    'app:getVersionInfo',
+    (): AppVersionInfo => ({
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      chromium: process.versions.chrome,
+      node: process.versions.node
     })
   )
 

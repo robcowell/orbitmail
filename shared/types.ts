@@ -494,6 +494,14 @@ export interface PlatformCapabilities {
   mailtoHandlerActive: boolean
 }
 
+/** What Settings → About shows. Read from the running process, not the build. */
+export interface AppVersionInfo {
+  version: string
+  electron: string
+  chromium: string
+  node: string
+}
+
 export interface AiAnalysis {
   summary: string
   /**
@@ -883,6 +891,7 @@ export interface OrbitMailAPI {
      * offer one that silently does nothing.
      */
     getPlatformCapabilities: () => Promise<PlatformCapabilities>
+    getVersionInfo: () => Promise<AppVersionInfo>
   }
   attachments: {
     download: (attachmentId: string) => Promise<string>

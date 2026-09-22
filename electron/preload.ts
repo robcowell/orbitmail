@@ -176,7 +176,8 @@ const api: OrbitMailAPI = {
     },
     reportRendererError: (report) => ipcRenderer.invoke('app:reportRendererError', report),
     getSecureStorageStatus: () => ipcRenderer.invoke('app:getSecureStorageStatus'),
-    getPlatformCapabilities: () => ipcRenderer.invoke('app:getPlatformCapabilities')
+    getPlatformCapabilities: () => ipcRenderer.invoke('app:getPlatformCapabilities'),
+    getVersionInfo: () => ipcRenderer.invoke('app:getVersionInfo')
   },
   attachments: {
     download: (attachmentId) => ipcRenderer.invoke('attachments:download', attachmentId),

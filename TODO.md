@@ -27,14 +27,17 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
 - **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
 - *(low)* **`npm audit` still flags the nodemailer inside imapflow.** imapflow
-  1.x pins its own nodemailer 9.0.3, below the 9.1.0 that fixes GHSA-2x7j-588g-ccc2
-  and three moderate advisories, and 1.5.0 — the last 1.x — still pins it, so no
-  in-range bump clears it. It is flagged, not reachable: imapflow loads only
+  1.x bundles its own nodemailer (9.0.1 under our 1.4.3), below the 9.1.0 that
+  fixes GHSA-2x7j-588g-ccc2 and three moderate advisories, and 1.5.0 — the last
+  1.x — pins 9.0.3, so no in-range bump clears it. It is flagged, not reachable: imapflow loads only
   `nodemailer/lib/smtp-connection/http-proxy-client`, and every advisory is in
   the address parser, `resolveContent` or the recipient-domain checks. The fix is
   imapflow 2.x, which drops the dependency — a major bump of the sync library,
   so it needs `test:imap` and a read of the changelog, not a lockfile edit. An
-  `overrides` entry would silence the audit for nothing.
+  `overrides` entry would silence the audit for nothing. The matching GitHub
+  Dependabot alerts (#67–#70) were dismissed as "vulnerable code is not actually
+  used" on 2026-09-22 with this reasoning, so they will not re-raise it: if a
+  later imapflow 1.x starts using more of nodemailer, re-check by hand.
 
 ## Performance
 

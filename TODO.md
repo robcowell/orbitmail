@@ -26,6 +26,15 @@ Severity tags come from the [2026-07-21 audit](#security--correctness-audit-2026
   it is obviously worth paying to fix.
 - *(low)* **`markRead`/`toggleStar` await the server round-trip inside the IPC handler** (`main.ts` `messages:markRead` et al). The renderer patches optimistically so the delay is not visible, but the handler stays open for the whole round-trip and a burst of actions serializes. Decoupling means a background queue plus a way to roll the UI back after the fact.
 - **O365 Sent filing is unverified** (loose end from #32) — Exchange Online does not reliably file SMTP-submitted mail into Sent Items (it is governed by `MessageCopyForSMTPClientSubmissionEnabled`), so O365 accounts may not get a Sent copy at all. Left out of that fix rather than guessed at; needs testing against a real tenant.
+- *(low)* **`npm audit` still flags the nodemailer inside imapflow.** imapflow
+  1.x pins its own nodemailer 9.0.3, below the 9.1.0 that fixes GHSA-2x7j-588g-ccc2
+  and three moderate advisories, and 1.5.0 — the last 1.x — still pins it, so no
+  in-range bump clears it. It is flagged, not reachable: imapflow loads only
+  `nodemailer/lib/smtp-connection/http-proxy-client`, and every advisory is in
+  the address parser, `resolveContent` or the recipient-domain checks. The fix is
+  imapflow 2.x, which drops the dependency — a major bump of the sync library,
+  so it needs `test:imap` and a read of the changelog, not a lockfile edit. An
+  `overrides` entry would silence the audit for nothing.
 
 ## Performance
 
@@ -110,6 +119,18 @@ does. Preserving that needs prefix or trigram tokenisation.
 # Done
 
 ## Shipped
+
+- **mailparser 3.9.16 → 3.9.28, to move its nodemailer off a high-severity
+  advisory.** Bumping our own nodemailer to 9.1.1 (#201) left `npm audit`
+  flagging two older copies bundled by other packages. mailparser's is the one
+  that matters: it parses the headers of **untrusted mail** with nodemailer's
+  address parser, which below 9.1.0 is quadratic on a crafted address list
+  (GHSA-2x7j-588g-ccc2, high). 3.9.28 is inside the existing `^3.9.16` range and
+  brings nodemailer 10.0.10, so it is a lockfile-only change confined to
+  mailparser's subtree. The copy inside imapflow is not fixed by this; see
+  Outstanding. Verified with `build`, `test:pure`, `test:db`, `test:store` and
+  `test:imap` (869 passed, 0 failed), the last because the inline-image and
+  attachment-extraction work keys directly off `simpleParser`'s output.
 
 - **A security policy, and a private way to report.** Suggested by a security
   architect: the repo is public and had no `SECURITY.md`, so the only visible

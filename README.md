@@ -353,6 +353,13 @@ main window rather than in the composer. It says which server refused and why,
 and the message stays in Drafts, so you can fix the problem and send it again.
 "The server refused this address" is usually a typo in a recipient.
 
+**"Microsoft 365 has SMTP sending turned off for this mailbox"**  
+Orbit Mail sends Microsoft 365 mail over SMTP, and many organisations switch
+that off. Nothing in Orbit Mail can turn it back on, and it is not your
+password. A Microsoft 365 admin for your organisation has to allow it: in the
+admin center, Users → Active users → you → Mail → Manage email apps → tick
+**Authenticated SMTP**. It can take up to an hour to apply.
+
 **A message says "Message sent, but no copy was saved to Sent"**  
 The message went out and the recipient has it — do **not** send it again. What
 failed is the separate step of saving your own copy into the Sent folder on the

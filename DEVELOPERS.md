@@ -2898,7 +2898,14 @@ transport can be perfectly healthy and the *server* still refuse. A rejected
 recipient (`rejected` + a 550-554 `responseCode`) names **the addresses**, not
 "a recipient" — that is the difference between fixing a typo and hunting through
 four addresses for it — and an over-size message (552/523) is checked first,
-because both carry addresses and "too large" is the actionable half.
+because both carry addresses and "too large" is the actionable half. Microsoft
+365 with SMTP AUTH switched off (`SmtpClientAuthentication is disabled`, for the
+tenant or the mailbox) is recognised by that phrase ahead of the generic auth
+wording: it arrives as a 535 like any rejected login, and "if the password
+changed" sent the user to change a password that was fine — on an OAuth account,
+one that does not exist. Only an admin can fix it, so the message says where. It
+is matched on the phrase rather than on `5.7.139`, which Microsoft also uses for
+other sign-in refusals.
 
 `describeSentCopyFailure` is the fourth, and the only one whose news is *smaller*
 than it looks: the message was sent and the recipient has it — what failed is the

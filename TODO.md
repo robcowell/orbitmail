@@ -111,6 +111,22 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **A Microsoft 365 mailbox with SMTP turned off no longer blames the
+  password.** Reported from a real tenant: *"Not sent: The outgoing server
+  rejected the login (535 5.7.139 … SmtpClientAuthentication is disabled for
+  the Tenant …). If the password changed, update it in Settings → Accounts."*
+  The password was not the problem — on an OAuth account there is not even one
+  to change — and nothing a user can set fixes it: the organisation has SMTP
+  AUTH off. `describeSendFailure`
+  now recognises the phrase and says an admin has to turn on Authenticated SMTP,
+  and where. It matches the phrase, not `5.7.139`, because Microsoft uses that
+  code for other sign-in refusals, which should keep the ordinary wording. The
+  README gets a troubleshooting entry. This is the stopgap: the real fix is
+  sending Microsoft 365 mail through Microsoft Graph, which does not use SMTP
+  AUTH at all. Verified by `test:pure`; three of the four new assertions fail
+  against the unfixed code, and `test:mutants` on the file leaves no
+  unjustified survivor.
+
 - **Settings → About shows the running version.** Asked for right after
   installing 0.8.1, to check it had taken, and there was nowhere in the app to
   look: no About panel, and nothing else that showed the version. The only

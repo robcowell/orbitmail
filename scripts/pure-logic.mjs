@@ -715,13 +715,40 @@ async function main() {
         describeSendFailure(Object.assign(new Error('Invalid login: 535 Bad'), {
           code: 'EAUTH', response: '535 Bad'
         }))))
+
+    // Microsoft 365 with SMTP AUTH off. The reply is a 535 like any rejected
+    // login, and used to be worded as one — "if the password changed" — which
+    // sent the user to change a password that was fine. Response text is the
+    // one a real tenant returned, minus the server and timestamp tail.
+    const smtpOff = describeSendFailure(Object.assign(
+      new Error('Invalid login: 535 5.7.139 Authentication unsuccessful'), {
+        code: 'EAUTH',
+        responseCode: 535,
+        response: '535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication ' +
+          'is disabled for the Tenant. Visit https://aka.ms/smtp_auth_disabled for ' +
+          'more information.'
+      }))
+    ok('Microsoft 365 with SMTP turned off is named as that',
+      /SMTP sending turned off/.test(smtpOff), smtpOff)
+    ok('and says an admin can turn it on, and where',
+      /admin/.test(smtpOff) && /Authenticated SMTP/.test(smtpOff), smtpOff)
+    ok('and does not blame the password',
+      !/password/i.test(smtpOff), smtpOff)
+    ok('and is not mistaken for a refused recipient',
+      !/recipient|typo/i.test(smtpOff), smtpOff)
+    ok('a plain 535 is still worded as a rejected login',
+      /rejected the login/.test(describeSendFailure(Object.assign(
+        new Error('Invalid login: 535 5.7.139 Authentication unsuccessful'), {
+          code: 'EAUTH', responseCode: 535,
+          response: '535 5.7.139 Authentication unsuccessful, the user credentials were incorrect.'
+        }))))
     ok('an unreachable outgoing server says so',
       /outgoing server could not be found/.test(
         describeSendFailure(Object.assign(new Error('x'), { code: 'ENOTFOUND' }))))
     ok('and anything unrecognised keeps its detail',
       describeSendFailure(new Error('something odd')) === 'something odd')
 
-    for (const m of [rcpt, big, describeSendFailure(new Error('x'))]) {
+    for (const m of [rcpt, big, smtpOff, describeSendFailure(new Error('x'))]) {
       ok('the send failure is a single line', !m.includes('\n'), JSON.stringify(m))
     }
   }

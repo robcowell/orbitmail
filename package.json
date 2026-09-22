@@ -1,6 +1,6 @@
 {
   "name": "orbit-mail",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "desktopName": "orbit-mail.desktop",
   "description": "Orbit Mail — a polished desktop email client for Linux",
   "main": "out/main/index.js",

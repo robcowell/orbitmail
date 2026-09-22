@@ -7,6 +7,54 @@ which keeps decisions rather than just tasks.
 Versions follow [semantic versioning](https://semver.org/). Before 1.0 the minor
 number moves for anything substantial.
 
+## 0.8.2 — 2026-09-22
+
+Microsoft 365 accounts can now send even where the organisation has switched
+SMTP off. Orbit Mail sends Microsoft 365 mail through Microsoft Graph, which
+doesn't use SMTP at all, and Microsoft files the message in Sent Items itself.
+An account added with an earlier version needs to sign in once more to allow
+it, and that no longer means going through Add Account: each Gmail and
+Microsoft 365 account now has **Sign in again** in its settings.
+
+### Added
+
+- **Microsoft 365 sends through Microsoft Graph.** Many organisations turn off
+  SMTP sending, and until now a Microsoft 365 account in one of them could not
+  send at all. Sending through Graph works either way, including messages with
+  large attachments. An account added before this version keeps sending over
+  SMTP, exactly as before, until it signs in again. If its organisation has
+  SMTP off, the error says to do that.
+- **Sign in again**, in Settings → Accounts, for Gmail and Microsoft 365. It
+  opens the browser with the address filled in, and keeps the account's mail,
+  settings and name as they are. If you choose a different account in the
+  browser, it refuses and changes nothing. The status bar's **Re-authenticate**
+  now takes you here, to the account that needs it.
+- **About**, in Settings: which version you're running, the Electron and
+  Chromium versions underneath it, and links to its release notes, the website,
+  and where to report a problem. Until now nothing in the app showed the
+  version.
+
+### Fixed
+
+- **"SMTP sending turned off" no longer blames your password.** A Microsoft 365
+  organisation with SMTP off used to produce "If the password changed, update
+  it", which sent you to change a password that was fine. It now says what
+  happened: an account added by hand needs a Microsoft 365 admin to allow it,
+  and says where; a signed-in account just needs to sign in again.
+- **The account list in Settings could get stuck** on one account when Settings
+  was opened for it from the sidebar, and clicking another account did nothing.
+- **Messages that said to remove an account and add it again** now point to
+  Sign in again instead.
+- **Microsoft 365 sends are a little quicker.** The app reuses its permission
+  to send until it expires, rather than asking Microsoft for it every time.
+
+### Not yet confirmed
+
+Sending through Graph has been tried on a real Microsoft 365 organisation with
+SMTP switched off, and works. Not yet checked there: a personal outlook.com
+account, a Bcc'd message, an attachment over about 3 MB, and replies keeping
+their thread. If one of those misbehaves, please report it.
+
 ## 0.8.1 — 2026-09-22
 
 A release about failures you were never told about. Every message with an

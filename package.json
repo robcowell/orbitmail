@@ -40,7 +40,7 @@
     "@azure/msal-node": "^5.3.1",
     "@phosphor-icons/react": "^2.1.10",
     "better-sqlite3": "^12.11.1",
-    "dompurify": "^3.4.13",
+    "dompurify": "^3.4.16",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.45.2",
     "google-auth-library": "^9.15.1",

@@ -60,7 +60,7 @@ cp .env.example .env
 1. Open [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a project and enable the **Gmail API**
 3. Configure the OAuth consent screen (**External**)
-4. Create credentials → **Desktop app**
+4. Create credentials → **Desktop app**. If Google asks whether the client is **agentic** (`is_agentic`), answer **no**: Orbit Mail is a mail client that signs in to IMAP/SMTP, not an AI agent calling Workspace MCP servers. Google treats agentic clients as AI-agent traffic, which Workspace admins can restrict separately, and the setting cannot be changed on an existing client after 12 November 2026. See TODO.md → Decided.
 5. Add the `https://mail.google.com/` scope to the consent screen (this is the only scope that grants IMAP/SMTP access, and Google classes it as **restricted**)
 6. Copy the Client ID and Client Secret into `.env`:
 

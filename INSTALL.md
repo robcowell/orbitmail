@@ -85,8 +85,8 @@ machine and never end up inside a build.
 
 - **Gmail** → [Google OAuth setup](DEVELOPERS.md#google-gmail). Create a Google
   Cloud project, enable the Gmail API, set the consent screen to **External**
-  and **Publish** it, create a **Desktop app** credential, and copy the Client
-  ID and Secret.
+  and **Publish** it, create a **Desktop app** credential (**not** marked as agentic), and copy
+  the Client ID and Secret.
 - **Microsoft 365 / Outlook** →
   [Microsoft OAuth setup](DEVELOPERS.md#microsoft-office-365--outlook). Register
   an app in Entra, add the `http://127.0.0.1/callback` redirect, enable public

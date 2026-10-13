@@ -109,6 +109,27 @@ The engineering side of this is finished: a packaged build is self-sufficient
 and needs no file editing (#45, #46). What remains is inherent to the model,
 not a defect.
 
+## Google OAuth client stays non-agentic
+
+Google wrote on 2026-10-13 to every project with a Workspace OAuth client,
+`orbit-mail-500812` among them. It is adding an "agentic" flag (`is_agentic`) to
+OAuth clients: from 2026-11-11 only agentic clients can call the new Workspace
+MCP servers, and from 2026-11-12 the flag can no longer be changed on an
+existing client.
+
+**Decision: the client is not agentic** (it was briefly switched on, then
+reverted the same day). Orbit Mail asks for one scope, `https://mail.google.com/`,
+and uses it only for IMAP/SMTP sign-in plus `tokeninfo`/`userinfo`
+(`oauth-google.ts`). It never calls a Workspace MCP server. The AI features run on
+Anthropic's API over mail that is already synced locally, so no model ever calls
+Google with the token. That is the "not an AI agent" case in Google's notice, so
+the flag gets us nothing. What it would do is apply agent access controls, so a
+Workspace admin's policy aimed at AI agents could block an ordinary mail sign-in.
+
+If Orbit Mail ever needs Workspace MCP, Google's guidance is to use a **separate**
+agentic client for that traffic and leave this one alone. Anyone registering
+their own client should answer "no" when Google asks (DEVELOPERS.md → Google).
+
 ## Full-text search, if it is ever wanted again
 
 The old `messages_fts` table was removed in #36 (see [Done](#done)). Rebuilding it

@@ -734,6 +734,155 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('View headers: the whole header block, fetched without marking it read')
+  // -------------------------------------------------------------------------
+  {
+    // Headers are not stored (sync keeps only what the app uses), so the dialog
+    // asks the server. What it must show is everything above the body and none
+    // of the body, and looking must not change the message's state on the
+    // server — someone checking whether a message is forged has not read it.
+    const { fetchRawHeaders } = await import('../electron/services/message-headers')
+    const box = 'HeaderView'
+    const client = rawClient()
+    await client.connect()
+    await client.mailboxCreate(box).catch(() => {})
+    const folder = db.upsertFolder(account.id, box, box, 'custom')
+    const source = [
+      'Received: from relay.example.net (relay.example.net [203.0.113.9])',
+      '\tby mx.example.org with ESMTPS; Wed, 12 Nov 2025 10:00:30 +0000',
+      'Received: from origin.example.com by relay.example.net; Wed, 12 Nov 2025 10:00:00 +0000',
+      'Authentication-Results: mx.example.org; spf=pass smtp.mailfrom=example.com',
+      'X-Spam-Status: No, score=-0.1',
+      'From: Origin <a@example.com>',
+      `To: Me <${EMAIL}>`,
+      'Subject: Headers please',
+      'Message-ID: <header-view@example.com>',
+      `Date: ${new Date().toUTCString()}`,
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      'BODY-MARKER-NOT-A-HEADER',
+      ''
+    ].join('\r\n')
+    await client.append(box, Buffer.from(source), [])
+    await sync.syncFolder(client, account.id, folder.id, box)
+    const row = db.listMessages(folder.id, 50, 0).find((m) => m.subject === 'Headers please')
+    ok('the message is cached', !!row)
+
+    const headers = await fetchRawHeaders(row!.id)
+    ok('both Received hops are there, in server order',
+      headers.indexOf('from relay.example.net') < headers.indexOf('from origin.example.com') &&
+        headers.includes('from origin.example.com'),
+      headers.slice(0, 120))
+    ok('a folded line keeps its continuation, as the server wrote it',
+      headers.includes('\tby mx.example.org with ESMTPS'))
+    ok('headers the app never parses are included',
+      headers.includes('X-Spam-Status: No, score=-0.1') &&
+        headers.includes('Authentication-Results: mx.example.org'))
+    ok('the body is not', !headers.includes('BODY-MARKER-NOT-A-HEADER'))
+    ok('and neither is the blank line before it', !/\n\s*$/.test(headers))
+
+    const after = await client.getMailboxLock(box)
+    let flags: Set<string> | undefined
+    try {
+      flags = (await client.fetchOne(String(row!.uid), { flags: true }, { uid: true }))?.flags
+    } finally {
+      after.release()
+    }
+    ok('viewing headers does not mark the message read on the server',
+      !!flags && !flags.has('\\Seen'), Array.from(flags ?? []).join(','))
+
+    const missing = await rejects(() => fetchRawHeaders('no-such-message'))
+    ok('an unknown message rejects rather than returning nothing', !!missing, missing?.message)
+
+    await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
+  section('View headers: a POP3 message is found by UIDL, and only its headers come back')
+  // -------------------------------------------------------------------------
+  {
+    // The numeric uid of a POP3 row is a hash and collides. Showing another
+    // message's headers to someone checking for forgery is worse than none, so
+    // this must go by UIDL — a server that numbers the target second proves it.
+    const net = await import('net')
+    const { randomUUID } = await import('crypto')
+    const { fetchRawHeaders } = await import('../electron/services/message-headers')
+    const maildrop = [
+      { uidl: 'uidl-decoy', source: 'Subject: decoy\r\nX-Which: decoy\r\n\r\ndecoy body\r\n' },
+      { uidl: 'uidl-target', source: 'Subject: target\r\nX-Which: target\r\n\r\ntarget body\r\n' }
+    ]
+    const topArgs: string[] = []
+    const server = net.createServer((socket) => {
+      socket.write('+OK orbit test server\r\n')
+      socket.on('data', (chunk) => {
+        for (const line of chunk.toString('utf8').split('\r\n').filter(Boolean)) {
+          const [verb, arg, lines] = line.split(' ')
+          const m = maildrop[Number(arg) - 1]
+          switch (verb.toUpperCase()) {
+            case 'USER':
+            case 'PASS':
+              socket.write('+OK\r\n')
+              break
+            case 'UIDL':
+              socket.write('+OK\r\n')
+              maildrop.forEach((x, i) => socket.write(`${i + 1} ${x.uidl}\r\n`))
+              socket.write('.\r\n')
+              break
+            case 'TOP': {
+              topArgs.push(`${arg} ${lines}`)
+              // A server honouring `TOP n 0`: headers, the blank separator, no body.
+              socket.write(`+OK\r\n${m.source.split('\r\n\r\n')[0]}\r\n\r\n.\r\n`)
+              break
+            }
+            case 'QUIT':
+              socket.write('+OK bye\r\n')
+              socket.end()
+              break
+            default:
+              socket.write('-ERR unsupported\r\n')
+          }
+        }
+      })
+      socket.on('error', () => {})
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
+    const port = (server.address() as { port: number }).port
+    const pop3Account = db.saveManualAccount('pop3', {
+      authType: 'password',
+      email: `pop3-headers-${randomUUID()}@example.com`,
+      displayName: 'POP3 headers',
+      username: LOGIN,
+      password: PASSWORD,
+      incoming: { host: '127.0.0.1', port, security: 'none' },
+      outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
+    })
+    const folder = db.upsertFolder(pop3Account.id, 'INBOX', 'Inbox', 'inbox')
+    const target = db.upsertMessage({
+      folderId: folder.id, accountId: pop3Account.id, uid: 1,
+      serverUid: 'uidl-target', from: 'a@x', to: 'me@x', subject: 'target',
+      snippet: '', date: 1000, isRead: false, isStarred: false, hasAttachments: false
+    })
+    const legacy = db.upsertMessage({
+      folderId: folder.id, accountId: pop3Account.id, uid: 2,
+      from: 'a@x', to: 'me@x', subject: 'pre-upgrade',
+      snippet: '', date: 2000, isRead: false, isStarred: false, hasAttachments: false
+    })
+
+    const headers = await fetchRawHeaders(target.id)
+    ok('the message with that UIDL is the one fetched', headers.includes('X-Which: target'), headers)
+    ok('not the one its numeric uid points at', !headers.includes('decoy'))
+    ok('asked for with TOP n 0 — headers, no body lines', topArgs[0] === '2 0', topArgs.join('; '))
+    ok('the separator line is trimmed', headers === 'Subject: target\nX-Which: target', JSON.stringify(headers))
+
+    const refused = await rejects(() => fetchRawHeaders(legacy.id))
+    ok('a row with no recorded UIDL refuses instead of guessing',
+      !!refused && /server id was never recorded/.test(refused.message), refused?.message)
+
+    db.removeAccount(pop3Account.id)
+    server.close()
+  }
+
+  // -------------------------------------------------------------------------
   section('Sent folders: a row names the recipient, not us')
   // -------------------------------------------------------------------------
   {

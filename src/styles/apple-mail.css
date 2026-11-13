@@ -3587,3 +3587,192 @@ textarea {
   font-size: 12px;
   margin-top: 8px;
 }
+
+/* View headers dialog. Wide, because header lines are long and wrapping a
+   DKIM signature mid-token makes it harder to read, not easier. */
+.headers-modal {
+  width: 820px;
+  max-width: 92vw;
+  /* Fixed height so switching Raw/Summary does not resize the dialog under the cursor. */
+  height: min(720px, 85vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.headers-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.headers-modal-head h2 {
+  margin: 0;
+}
+
+.headers-modal .modal-actions {
+  margin-top: 12px;
+}
+
+.headers-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-main);
+}
+
+.headers-raw {
+  margin: 0;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  color: var(--text-primary);
+}
+
+.headers-error,
+.headers-modal-body .tasks-loading {
+  padding: 12px;
+  margin: 0;
+}
+
+.headers-error {
+  color: #d64545;
+}
+
+.headers-summary {
+  padding: 12px;
+  user-select: text;
+}
+
+.headers-section + .headers-section {
+  margin-top: 14px;
+}
+
+.headers-section > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.headers-section-body {
+  padding-left: 14px;
+}
+
+.headers-none {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.headers-verdicts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.headers-verdict {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.headers-verdict.is-pass {
+  color: #1f8a4c;
+  border-color: rgba(31, 138, 76, 0.4);
+}
+
+.headers-verdict.is-fail {
+  color: #d64545;
+  border-color: rgba(214, 69, 69, 0.45);
+}
+
+.headers-hops {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.headers-hops li + li {
+  margin-top: 6px;
+}
+
+.headers-hop-label {
+  color: var(--text-muted);
+}
+
+.headers-hop-time {
+  color: var(--text-muted);
+}
+
+.headers-fields {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.headers-field {
+  border-top: 1px solid var(--border);
+}
+
+.headers-field:first-child {
+  border-top: none;
+}
+
+.headers-field > summary {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+/* display: flex drops the native disclosure triangle, so draw one. */
+.headers-field > summary::before {
+  content: '▸';
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.1s;
+}
+
+.headers-field[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.headers-field-name {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+/* One line while closed; the full value is beneath once opened. */
+.headers-field-preview {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.headers-field[open] .headers-field-preview {
+  display: none;
+}
+
+.headers-field-value {
+  padding: 0 0 8px 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+}

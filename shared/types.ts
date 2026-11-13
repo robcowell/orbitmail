@@ -722,6 +722,12 @@ export interface OrbitMailAPI {
     countThreads: (folderId: string | 'unified', unreadOnly?: boolean) => Promise<number>
     getThread: (accountId: string, threadId: string) => Promise<MessageDetail[]>
     get: (messageId: string) => Promise<MessageDetail | null>
+    /**
+     * The message's complete header block as the server holds it, fetched on
+     * demand (it is not stored). Does not mark the message read. Rejects when
+     * the server cannot be reached or no longer has the message.
+     */
+    getHeaders: (messageId: string) => Promise<string>
     markRead: (messageId: string, isRead: boolean) => Promise<void>
     toggleStar: (messageId: string, isStarred: boolean) => Promise<void>
     setFlag: (messageId: string, flagColor: FlagColor | null) => Promise<void>

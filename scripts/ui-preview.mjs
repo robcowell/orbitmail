@@ -150,6 +150,31 @@ const OVERRIDES = {
   'messages.undoRelocate': { restored: 2, failed: 0 },
   'messages.list': [],
   'messages.count': 0,
+  // A realistic header block for the View headers dialog: folded lines, a
+  // negative hop delay (relay clock skew), mixed auth verdicts, and spam
+  // headers from two different filters — the cases the summary has to lay out.
+  'messages.getHeaders': [
+    'Received: from mail-relay.example.net (mail-relay.example.net [203.0.113.9])',
+    '\tby mx.work.example (Postfix) with ESMTPS id 4F2A1C0;',
+    '\tWed, 12 Nov 2025 10:00:31 +0000',
+    'Received: from origin.example.com (origin.example.com [198.51.100.7])',
+    '\tby mail-relay.example.net with ESMTP id abc123; Wed, 12 Nov 2025 10:00:34 +0000',
+    'Received: by origin.example.com with HTTP; Wed, 12 Nov 2025 10:00:02 +0000',
+    'Authentication-Results: mx.work.example; spf=pass smtp.mailfrom=example.com;',
+    '\tdkim=pass header.d=example.com header.s=sel1; dmarc=fail (p=quarantine)',
+    'Received-SPF: Pass (mx.work.example: domain of example.com designates 198.51.100.7 as permitted sender)',
+    'DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=example.com; s=sel1; h=from:to:subject:date:message-id; bh=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=; b=VeryLongSignatureValueThatDoesNotBreakAnywhereAtAllAndMustWrapInsideTheDialogRatherThanOverflowIt0123456789',
+    'X-Spam-Status: No, score=2.4 required=5.0 tests=DKIM_SIGNED,HTML_MESSAGE autolearn=no',
+    'X-Spam-Score: 2.4',
+    'X-MS-Exchange-Organization-SCL: 1',
+    'From: Accounts <ap@supplier.example>',
+    'To: you@work.example',
+    'Subject: Invoice reminder',
+    'Date: Wed, 12 Nov 2025 10:00:00 +0000',
+    'Message-ID: <sr2@example.com>',
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8'
+  ].join('\\n'),
   // One conversation, so the thread reader — and the conversation summary that
   // hangs off it — can actually be looked at. Every field of ThreadSummary and
   // MessageDetail must be present: a missing one throws inside the component

@@ -197,7 +197,18 @@ and **Settings** (the gear). Plus, if you have added an API key, **Tasks** and
 
 Replying and forwarding are not up here — they act on one message, so they live
 on the message you are reading, along with **Draft reply**, **Analyze**, **Add to
-tasks** and **Print**.
+tasks**, **Print** and **Headers**.
+
+**Headers** (the `</>` button on each message in a conversation) shows the
+message's full headers, exactly as your mail server holds them — every relay it
+passed through, the SPF/DKIM/DMARC results, and any spam-filter scores. **Raw**
+is the untouched text, with a **Copy** button. **Summary** is a set of
+collapsible sections: the authentication results, the delivery path oldest-first
+with the time between hops, and **All headers** — every
+header as a name you can click open to see its full value. The summary is a reading aid, not a verdict
+on whether a message is genuine. Headers are fetched from the server when you
+open them, so this needs a connection, and looking does not mark the message
+read.
 
 ### Settings
 

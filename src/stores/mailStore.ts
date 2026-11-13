@@ -167,6 +167,8 @@ interface MailState {
   // select it. Cleared when the dialog closes.
   settingsAccountId: string | null
   showTasks: boolean
+  // The message whose full headers are open in the View headers dialog.
+  headersMessageId: string | null
   sweeping: boolean
   sweepTasks: SweepTask[]
   sweepCompleted: CompletedTask[]
@@ -233,6 +235,7 @@ interface MailState {
   setGlobalPreferences: (patch: Partial<GlobalPreferences>) => void
   setPlatformCapabilities: (capabilities: PlatformCapabilities) => void
   setShowTasks: (show: boolean) => void
+  setHeadersMessageId: (id: string | null) => void
   setSweeping: (sweeping: boolean) => void
   setSweepResult: (
     tasks: SweepTask[],
@@ -307,6 +310,7 @@ export const useMailStore = create<MailState>((set) => ({
   aiDetail: DEFAULT_AI_DETAIL,
   platformCapabilities: null,
   showTasks: false,
+  headersMessageId: null,
   sweeping: false,
   sweepTasks: [],
   sweepCompleted: [],
@@ -380,6 +384,7 @@ export const useMailStore = create<MailState>((set) => ({
   setGlobalPreferences: (patch) => set(patch),
   setPlatformCapabilities: (capabilities) => set({ platformCapabilities: capabilities }),
   setShowTasks: (show) => set({ showTasks: show }),
+  setHeadersMessageId: (id) => set({ headersMessageId: id }),
   setSweeping: (sweeping) => set({ sweeping }),
   setSweepResult: (tasks, completed, analyzedCount, sweptAt) =>
     set({

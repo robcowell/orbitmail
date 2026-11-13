@@ -139,6 +139,7 @@ import {
   testManualAccountSettings
 } from './services/manual-account'
 import { ensureAttachmentLocal, localizeMessageAttachments } from './services/attachment-fetch'
+import { fetchRawHeaders } from './services/message-headers'
 import {
   isExecutableAttachment,
   executableAttachmentWarning
@@ -1258,6 +1259,8 @@ function registerIpc(): void {
     }
     return getMessage(messageId)
   })
+
+  ipcMain.handle('messages:getHeaders', (_, messageId: string) => fetchRawHeaders(messageId))
 
   ipcMain.handle('messages:markRead', async (_, messageId: string, isRead: boolean) => {
     const msg = getMessage(messageId)

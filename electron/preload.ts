@@ -54,6 +54,7 @@ const api: OrbitMailAPI = {
     getThread: (accountId, threadId) =>
       ipcRenderer.invoke('messages:getThread', accountId, threadId),
     get: (messageId) => ipcRenderer.invoke('messages:get', messageId),
+    getHeaders: (messageId) => ipcRenderer.invoke('messages:getHeaders', messageId),
     markRead: (messageId, isRead) =>
       ipcRenderer.invoke('messages:markRead', messageId, isRead),
     toggleStar: (messageId, isStarred) =>

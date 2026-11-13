@@ -99,14 +99,3 @@ export function receivedHops(fields: HeaderField[]): ReceivedHop[] {
   }
   return hops
 }
-
-/**
- * Headers a spam filter wrote: SpamAssassin's X-Spam-*, Rspamd, Microsoft's
- * SCL and antispam reports (X-Forefront-Antispam-Report), and the like. Matched by name, so a
- * filter not listed here still shows up in the raw block.
- */
-export function spamHeaders(fields: HeaderField[]): HeaderField[] {
-  return fields.filter((f) =>
-    /spam|rspamd|-scl$|phish/i.test(f.name)
-  )
-}

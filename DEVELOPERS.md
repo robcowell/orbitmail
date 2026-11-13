@@ -1360,11 +1360,16 @@ rendered from `App.tsx` so the global shortcut handler bails while it is open �
 otherwise Delete would delete the mail underneath) has a **Raw** view and a
 **Summary**. The summary is `src/utils/rawHeaders.ts`: unfolding, the
 method=result pairs from Authentication-Results/Received-SPF, Received hops
-reversed into delivery order with the gap between timestamps, and headers whose
-*name* looks like a spam filter's. It is deliberately not a verdict. What it
-does **not** do: decode RFC 2047 encoded-words, interpret any filter's score,
-or recognise a filter whose header names do not match — that is what the raw
-view beside it is for. Drafts have no server copy and get no button.
+reversed into delivery order with the gap between timestamps — followed by
+**All headers**, every field in server order. Spam-filter verdicts are read
+there rather than in a section of their own: picking them out by header name
+could only ever be partial, and the full list already holds them. Each section,
+and each header within All headers, is a native
+`<details>`: a header row shows its name and a one-line preview, and opens to
+the full value beneath. Repeats such as `Received` stay separate rows rather
+than being merged, since their order is the path. It is deliberately not a verdict. What it
+does **not** do: decode RFC 2047 encoded-words, or interpret any spam filter's
+score — those are left as the server wrote them, in All headers and the raw view. Drafts have no server copy and get no button.
 
 ### POP3 sync window
 

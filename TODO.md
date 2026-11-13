@@ -157,10 +157,18 @@ does. Preserving that needs prefix or trigram tokenisation.
   (a dialog of buttons with Delete still live is the bug Settings once had).
   **Raw** is the default view; **Summary** pulls out auth verdicts, the Received
   path oldest-first with the gap between hops (negative gaps shown, not hidden —
-  relay clock skew is part of reading a path) and spam-filter headers by name.
+  relay clock skew is part of reading a path), and **All headers** — every
+  field as a key/value row. Follow-up on review: every
+  section and every header is collapsible (native `<details>`, so keyboard and
+  screen-reader behaviour comes free), a closed row showing the name and a
+  one-line preview with the full value beneath when opened; asked for because
+  the first cut listed only the spam headers as key/value pairs. The separate
+  spam-filter section (and `spamHeaders`, which matched filters by header name)
+  was then dropped as redundant: All headers already holds every filter's
+  verdict, and a name-match list could only ever be partial.
   It is a reading aid, not a verdict, and does not decode encoded-words or
   interpret scores. Button: `</>` on each message in a conversation, **Headers**
-  in the single-message toolbar; drafts get none. Checks: 17 in `test:store` for
+  in the single-message toolbar; drafts get none. Checks: 15 in `test:store` for
   the summary parser (mutation-checked, two equivalents justified in
   `mutants.allow.json`), 13 in `test:imap` — GreenMail for the IMAP fetch and the
   `\Seen` flag, a fake POP3 server that numbers the target second for the UIDL

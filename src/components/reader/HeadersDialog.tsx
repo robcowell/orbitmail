@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMailStore } from '../../stores/mailStore'
 import { ipcErrorMessage } from '../../utils/ipcError'
-import { authVerdicts, parseHeaderFields, receivedHops, spamHeaders } from '../../utils/rawHeaders'
+import {
+  authVerdicts,
+  parseHeaderFields,
+  receivedHops,
+  type HeaderField
+} from '../../utils/rawHeaders'
 
 interface HeadersDialogProps {
   messageId: string
@@ -101,15 +106,18 @@ export function HeadersDialog({ messageId, onClose }: HeadersDialogProps) {
 }
 
 function HeaderSummary({ raw }: { raw: string }) {
-  const { verdicts, hops, spam } = useMemo(() => {
+  const { fields, verdicts, hops } = useMemo(() => {
     const fields = parseHeaderFields(raw)
-    return { verdicts: authVerdicts(fields), hops: receivedHops(fields), spam: spamHeaders(fields) }
+    return {
+      fields,
+      verdicts: authVerdicts(fields),
+      hops: receivedHops(fields)
+    }
   }, [raw])
 
   return (
     <div className="headers-summary">
-      <section>
-        <h3>Authentication</h3>
+      <Section title="Authentication">
         {verdicts.length === 0 ? (
           <p className="headers-none">No Authentication-Results or Received-SPF headers.</p>
         ) : (
@@ -121,10 +129,11 @@ function HeaderSummary({ raw }: { raw: string }) {
             ))}
           </div>
         )}
-      </section>
+      </Section>
 
-      <section>
-        <h3>Delivery path ({hops.length} {hops.length === 1 ? 'hop' : 'hops'}, oldest first)</h3>
+      <Section
+        title={`Delivery path (${hops.length} ${hops.length === 1 ? 'hop' : 'hops'}, oldest first)`}
+      >
         {hops.length === 0 ? (
           <p className="headers-none">No Received headers.</p>
         ) : (
@@ -149,23 +158,40 @@ function HeaderSummary({ raw }: { raw: string }) {
             ))}
           </ol>
         )}
-      </section>
+      </Section>
 
-      <section>
-        <h3>Spam filter headers</h3>
-        {spam.length === 0 ? (
-          <p className="headers-none">None found. Check the raw view for filters with other names.</p>
-        ) : (
-          <dl className="headers-fields">
-            {spam.map((f, i) => (
-              <div key={i}>
-                <dt>{f.name}</dt>
-                <dd>{f.value}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-      </section>
+      <Section title={`All headers (${fields.length}, as the server lists them)`}>
+        <HeaderFieldList fields={fields} />
+      </Section>
+    </div>
+  )
+}
+
+// A collapsible section of the summary, open to begin with.
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <details className="headers-section" open>
+      <summary>{title}</summary>
+      <div className="headers-section-body">{children}</div>
+    </details>
+  )
+}
+
+// One collapsible row per header: the name (and a one-line preview while
+// closed), with the full value beneath when opened. Repeats such as Received
+// stay separate rows, in order — merging them would lose the path.
+function HeaderFieldList({ fields }: { fields: HeaderField[] }) {
+  return (
+    <div className="headers-fields">
+      {fields.map((f, i) => (
+        <details key={i} className="headers-field">
+          <summary>
+            <span className="headers-field-name">{f.name}</span>
+            <span className="headers-field-preview">{f.value}</span>
+          </summary>
+          <div className="headers-field-value">{f.value || '(empty)'}</div>
+        </details>
+      ))}
     </div>
   )
 }

@@ -2144,7 +2144,7 @@ async function main() {
   section('View headers: the summary reads the raw block the way a person would')
   // -------------------------------------------------------------------------
   {
-    const { parseHeaderFields, authVerdicts, receivedHops, spamHeaders } =
+    const { parseHeaderFields, authVerdicts, receivedHops } =
       require(join(outDir, 'rawHeaders.cjs'))
 
     // Newest hop first, as servers prepend; a folded Received and a folded
@@ -2205,11 +2205,6 @@ async function main() {
     const bare = receivedHops(parseHeaderFields('Received: ;Wed, 12 Nov 2025 10:00:00 +0000'))
     ok('a Received that is only a timestamp still has its time',
       bare[0].time === Date.UTC(2025, 10, 12, 10, 0, 0), bare[0])
-
-    const spam = spamHeaders(fields).map((f) => f.name)
-    ok('spam-filter headers are picked out by name',
-      spam.includes('X-Spam-Status') && spam.includes('X-MS-Exchange-Organization-SCL'), spam)
-    ok('and nothing else is', !spam.includes('Subject') && !spam.includes('Received'), spam)
   }
 
   console.log(

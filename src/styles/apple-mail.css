@@ -3652,14 +3652,19 @@ textarea {
   user-select: text;
 }
 
-.headers-summary section + section {
-  margin-top: 16px;
+.headers-section + .headers-section {
+  margin-top: 14px;
 }
 
-.headers-summary h3 {
-  margin: 0 0 6px;
+.headers-section > summary {
+  cursor: pointer;
   font-size: 13px;
   font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.headers-section-body {
+  padding-left: 14px;
 }
 
 .headers-none {
@@ -3714,21 +3719,60 @@ textarea {
 }
 
 .headers-fields {
-  margin: 0;
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.headers-fields div + div {
-  margin-top: 6px;
+.headers-field {
+  border-top: 1px solid var(--border);
 }
 
-.headers-fields dt {
+.headers-field:first-child {
+  border-top: none;
+}
+
+.headers-field > summary {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 0;
+  cursor: pointer;
+  min-width: 0;
+}
+
+/* display: flex drops the native disclosure triangle, so draw one. */
+.headers-field > summary::before {
+  content: '▸';
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.1s;
+}
+
+.headers-field[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.headers-field-name {
   font-weight: 600;
+  flex-shrink: 0;
 }
 
-.headers-fields dd {
-  margin: 0;
+/* One line while closed; the full value is beneath once opened. */
+.headers-field-preview {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.headers-field[open] .headers-field-preview {
+  display: none;
+}
+
+.headers-field-value {
+  padding: 0 0 8px 16px;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
 }

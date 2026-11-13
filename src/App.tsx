@@ -8,6 +8,7 @@ import { MessageView } from './components/reader/MessageView'
 import { AddAccountWizard } from './components/accounts/AddAccountWizard'
 import { SettingsDialog } from './components/settings/SettingsDialog'
 import { TasksDialog } from './components/tasks/TasksDialog'
+import { HeadersDialog } from './components/reader/HeadersDialog'
 import {
   useMailStore,
   loadInitialData,
@@ -194,6 +195,8 @@ function MainApp() {
   const setShowSettings = useMailStore((s) => s.setShowSettings)
   const showTasks = useMailStore((s) => s.showTasks)
   const setShowTasks = useMailStore((s) => s.setShowTasks)
+  const headersMessageId = useMailStore((s) => s.headersMessageId)
+  const setHeadersMessageId = useMailStore((s) => s.setHeadersMessageId)
 
   // DIAGNOSTIC (dev only): detect stalls of the renderer UI thread. If this
   // fires while the app feels frozen, the freeze is renderer-side (a render
@@ -319,7 +322,8 @@ function MainApp() {
       // dialog made of buttons: with Settings open and a tab focused, `f`
       // opened a Forward window behind it and Delete deleted the mail still
       // selected in the list underneath.
-      if (store.showSettings || store.showAddAccount || store.showTasks) return
+      if (store.showSettings || store.showAddAccount || store.showTasks || store.headersMessageId)
+        return
 
       if (e.key === 'c' && !e.metaKey && !e.ctrlKey) {
         const accountId = composeAccountId()
@@ -421,6 +425,9 @@ function MainApp() {
       <AddAccountWizard />
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
       {showTasks && <TasksDialog onClose={() => setShowTasks(false)} />}
+      {headersMessageId && (
+        <HeadersDialog messageId={headersMessageId} onClose={() => setHeadersMessageId(null)} />
+      )}
       <PendingSendBar />
       <Toast />
     </div>

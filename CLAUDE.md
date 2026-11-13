@@ -180,7 +180,8 @@ error before a toast shows it, `electron/services/connection-failure.ts` — a
 consumes it, and the only honest test of that contract runs the real producer's
 verdict through the real consumer — and
 `src/utils/emailColorScheme.ts` for the dark-mode
-contrast rule that decides whether a message renders on a light surface — the same trick works for any pure
+contrast rule that decides whether a message renders on a light surface, and
+`src/utils/rawHeaders.ts` for the View headers summary — the same trick works for any pure
 renderer logic, which is why that classifier is string work and not a DOM walk.
 Run it after touching `src/stores/`, any of those three, or the reader's
 body rendering. Details in DEVELOPERS.md → Store tests.

@@ -40,7 +40,8 @@ import {
   Printer,
   ListChecks,
   TrayArrowDown,
-  ImageSquare
+  ImageSquare,
+  Code
 } from '../icons'
 import { flagColorHex } from '../../constants/flags'
 import { printMessageDetail, printThreadDetails } from '../../utils/printMessage'
@@ -342,6 +343,24 @@ function FlagTaskButton({ messageId }: { messageId: string }) {
   )
 }
 
+// Opens the full-headers dialog. The dialog itself lives in App so the global
+// shortcut handler can see it is open and stand down.
+function HeadersButton({ messageId, compact = false }: { messageId: string; compact?: boolean }) {
+  const setHeadersMessageId = useMailStore((s) => s.setHeadersMessageId)
+  return (
+    <button
+      type="button"
+      className="reader-ai-btn"
+      title="View the full message headers"
+      aria-label="View headers"
+      onClick={() => setHeadersMessageId(messageId)}
+    >
+      <Code size={compact ? 14 : 16} weight="duotone" />
+      {!compact && 'Headers'}
+    </button>
+  )
+}
+
 export function MessageView() {
   const selectedMessage = useMailStore((s) => s.selectedMessage)
   const selectedMessageId = useMailStore((s) => s.selectedMessageId)
@@ -535,6 +554,7 @@ export function MessageView() {
             <AnalyzeButton message={selectedMessage} />
             <FlagTaskButton messageId={selectedMessage.id} />
             <PrintButton message={selectedMessage} aiAnalysis={aiAnalysis} />
+            <HeadersButton messageId={selectedMessage.id} />
             </>
             )}
 
@@ -1190,6 +1210,7 @@ const ThreadMessage = memo(function ThreadMessage({
             />
           </button>
           <AnalyzeButton message={message} iconSize={14} />
+          {!message.id.startsWith('draft:') && <HeadersButton messageId={message.id} compact />}
           <span className="thread-msg-date">{new Date(message.date).toLocaleString()}</span>
         </div>
       </div>

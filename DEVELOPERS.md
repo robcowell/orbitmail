@@ -1336,6 +1336,36 @@ Export streams message by message to an owner-only file. It previously used
 `join`ed the lot into one string (a third copy) before writing — three copies of
 a mailbox that can be gigabytes.
 
+### Viewing full headers (`message-headers.ts`)
+
+`messages:getHeaders` returns a message's whole header block, fetched from the
+server **on demand**. Sync keeps only the handful of headers the app uses;
+storing every block would add kilobytes per row for something opened rarely.
+The price, plainly: it needs the server. Offline, or for a message the server
+has since dropped, the dialog shows the error instead of headers.
+
+- **IMAP** fetches `BODY.PEEK[HEADER]` (imapflow's `headers: true`). PEEK is the
+  point: looking at headers must not set `\Seen`, and `test:imap` checks the
+  flag on the server afterwards.
+- **POP3** uses `TOP n 0`, and finds the message by **UIDL** (`fetchPop3Headers`
+  in `pop3-sync.ts`), never by the hashed `uid` that the attachment fallback
+  still matches on. The hash collides; showing someone *another* message's
+  headers while they check whether mail is forged is worse than an error. A
+  pre-UIDL row refuses, as delete does.
+- The returned text stops at the blank line and normalises CRLF, so a server
+  that includes the separator (POP3) and one that does not agree.
+
+The dialog (`HeadersDialog.tsx`, opened by `headersMessageId` in the store and
+rendered from `App.tsx` so the global shortcut handler bails while it is open —
+otherwise Delete would delete the mail underneath) has a **Raw** view and a
+**Summary**. The summary is `src/utils/rawHeaders.ts`: unfolding, the
+method=result pairs from Authentication-Results/Received-SPF, Received hops
+reversed into delivery order with the gap between timestamps, and headers whose
+*name* looks like a spam filter's. It is deliberately not a verdict. What it
+does **not** do: decode RFC 2047 encoded-words, interpret any filter's score,
+or recognise a filter whose header names do not match — that is what the raw
+view beside it is for. Drafts have no server copy and get no button.
+
 ### POP3 sync window
 
 POP3 has no server-side search, so the sync window is enforced client-side: a
@@ -2138,6 +2168,7 @@ orbit-mail/
 | `electron/services/ai-service.ts` | Optional AI: message analysis, incremental inbox task sweep (unread/all scope, persisted + cached tasks), encrypted Anthropic key storage |
 | `electron/services/office-text.ts` | Text out of ZIP-based document attachments (OOXML, OpenDocument) so the model can read them — the API takes only PDF or plain text |
 | `electron/services/rtf-text.ts` | The same job for RTF, which is not a container |
+| `electron/services/message-headers.ts` | A message's full header block, fetched on demand for the View headers dialog |
 | `electron/zoom.ts` | Page zoom: which keypress means what, bounds, and clamping a stored level |
 | `electron/services/window-geometry.ts` | A remembered compose-window size, resolved against the screen it will open on. Pure, so `test:pure` and the mutation check reach it |
 | `electron/preload.ts` | Typed `window.orbitMail` IPC bridge |
@@ -3251,7 +3282,8 @@ below, and the pure modules under `src/utils/` — `folders.ts` for the Favourit
 qualifier rule, `syncStatus.ts` for the status-bar wording, `snoozePresets.ts`
 for when a snooze actually lands, `paneLayout.ts`, `listHeader.ts`, `search.ts`,
 `ipcError.ts` for stripping Electron's channel wrapper off a message before a
-toast shows it, and `emailColorScheme.ts` for the dark-mode contrast rule. It also bundles
+toast shows it, `emailColorScheme.ts` for the dark-mode contrast rule, and
+`rawHeaders.ts` for what the View headers summary pulls out of a raw block. It also bundles
 one *main-process* module, `electron/services/connection-failure.ts` — see
 the Re-authenticate coupling below. That last one is why
 the classifier is string work rather than a DOM walk — there is no DOM here at

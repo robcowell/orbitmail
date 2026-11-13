@@ -275,6 +275,25 @@ export async function deletePop3MessageOnServer(
   }
 }
 
+/**
+ * A message's header block via `TOP n 0` — headers, no body lines. Found by
+ * UIDL, like delete: the numeric `uid` is a hash and collides, and showing
+ * another message's headers to someone checking whether mail is forged is
+ * worse than showing none.
+ */
+export async function fetchPop3Headers(accountId: string, serverUid: string): Promise<string> {
+  const pop3 = createPop3Client(accountId)
+  try {
+    const uidl = await pop3.UIDL()
+    for (const [msgNumStr, candidate] of uidl ?? []) {
+      if (candidate === serverUid) return await pop3.TOP(Number(msgNumStr), 0)
+    }
+    throw new Error('Message not found on server')
+  } finally {
+    await pop3.QUIT().catch(() => {})
+  }
+}
+
 export async function testPop3Connection(accountId: string): Promise<void> {
   const pop3 = createPop3Client(accountId)
   try {

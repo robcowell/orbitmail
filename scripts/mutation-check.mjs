@@ -80,7 +80,8 @@ const TARGETS = {
   'src/utils/listHeader.ts': 'npm run test:store',
   'src/utils/snoozePresets.ts': 'npm run test:store',
   'src/utils/folders.ts': 'npm run test:store',
-  'src/utils/emailColorScheme.ts': 'npm run test:store'
+  'src/utils/emailColorScheme.ts': 'npm run test:store',
+  'src/utils/rawHeaders.ts': 'npm run test:store'
 }
 
 // A file passed with --file that is not in the table above still needs a suite.

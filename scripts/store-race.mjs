@@ -404,6 +404,17 @@ async function main() {
     logLevel: 'silent'
   })
 
+  // The View headers dialog's summary: which parts of a raw header block it
+  // pulls out for someone reading it by hand.
+  await build({
+    entryPoints: [join(root, 'src/utils/rawHeaders.ts')],
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile: join(outDir, 'rawHeaders.cjs'),
+    logLevel: 'silent'
+  })
+
   // A main-process module, deliberately. `describeAccountSyncFailure` writes the
   // sync error prose and `summarizeSyncStatus` decides — by running a regex over
   // that prose — whether to offer a Re-authenticate button. That coupling spans
@@ -2127,6 +2138,78 @@ async function main() {
     ok('a bare wrapper with nothing after it falls back',
       ipcErrorMessage(new Error("Error invoking remote method 'a:b': Error: "), 'Fallback') ===
         'Fallback')
+  }
+
+  // -------------------------------------------------------------------------
+  section('View headers: the summary reads the raw block the way a person would')
+  // -------------------------------------------------------------------------
+  {
+    const { parseHeaderFields, authVerdicts, receivedHops, spamHeaders } =
+      require(join(outDir, 'rawHeaders.cjs'))
+
+    // Newest hop first, as servers prepend; a folded Received and a folded
+    // Authentication-Results, as real mail always has.
+    const raw = [
+      'Received: from mx.example.net (mx.example.net [203.0.113.5])',
+      '\tby mail.example.org with ESMTPS id abc;',
+      '\tWed, 12 Nov 2025 10:00:30 +0000',
+      'Received: from sender.example.com',
+      ' by mx.example.net with SMTP; Wed, 12 Nov 2025 10:00:00 +0000',
+      'Received: by localhost',
+      'Authentication-Results: mail.example.org;',
+      '\tspf=pass smtp.mailfrom=example.com;',
+      '\tdkim=fail header.d=example.com; dmarc=none',
+      'Received-SPF: Softfail (domain does not designate)',
+      'X-Spam-Status: Yes, score=7.2',
+      'X-MS-Exchange-Organization-SCL: 5',
+      'Subject: a: colon in the value',
+      'not a header line',
+      '',
+    ].join('\r\n')
+
+    const fields = parseHeaderFields(raw)
+    ok('folded lines join the field above, not start one of their own',
+      fields.filter((f) => f.name === 'Received').length === 3, fields.map((f) => f.name))
+    ok('a colon inside a value stays in the value',
+      fields.find((f) => f.name === 'Subject')?.value === 'a: colon in the value')
+    ok('a line with no colon is not invented into a header',
+      !fields.some((f) => f.name.startsWith('not a header')))
+    ok('unfolding keeps the continuation text',
+      fields[0].value.includes('by mail.example.org') && fields[0].value.endsWith('+0000'),
+      fields[0].value)
+
+    const verdicts = authVerdicts(fields).map((v) => `${v.method}=${v.result}`)
+    ok('every method in a folded Authentication-Results is read',
+      ['spf=pass', 'dkim=fail', 'dmarc=none'].every((v) => verdicts.includes(v)), verdicts)
+    ok('Received-SPF contributes its verdict, lower-cased', verdicts.includes('spf=softfail'), verdicts)
+    ok('smtp.mailfrom= is a property, not a method', !verdicts.some((v) => v.startsWith('smtp')),
+      verdicts)
+
+    const hops = receivedHops(fields)
+    ok('hops run oldest first', hops[0].by === 'localhost' && hops[2].by === 'mail.example.org',
+      hops.map((h) => h.by))
+    ok('from/by/with are the tokens after each keyword',
+      hops[2].from === 'mx.example.net' && hops[2].with === 'ESMTPS' && hops[1].with === 'SMTP',
+      hops[2])
+    ok('a hop with no timestamp has no time, and no delay either side',
+      hops[0].time === null && hops[1].delaySeconds === null, hops.slice(0, 2))
+    ok('the delay is the gap from the previous hop, in seconds',
+      hops[2].delaySeconds === 30, hops[2].delaySeconds)
+    ok('the first hop has no delay', hops[0].delaySeconds === null)
+    ok('the hop time is the instant after the last semicolon',
+      hops[1].time === Date.UTC(2025, 10, 12, 10, 0, 0), hops[1].time)
+
+    ok('a line starting with a colon has no name, so is not a field',
+      !parseHeaderFields(': orphan value').length)
+    // A relay that writes nothing but the timestamp still gives the path a time.
+    const bare = receivedHops(parseHeaderFields('Received: ;Wed, 12 Nov 2025 10:00:00 +0000'))
+    ok('a Received that is only a timestamp still has its time',
+      bare[0].time === Date.UTC(2025, 10, 12, 10, 0, 0), bare[0])
+
+    const spam = spamHeaders(fields).map((f) => f.name)
+    ok('spam-filter headers are picked out by name',
+      spam.includes('X-Spam-Status') && spam.includes('X-MS-Exchange-Organization-SCL'), spam)
+    ok('and nothing else is', !spam.includes('Subject') && !spam.includes('Received'), spam)
   }
 
   console.log(

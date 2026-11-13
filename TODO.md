@@ -143,6 +143,31 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **View full headers** — asked for: a button on every message opening a modal
+  with the full headers, for checking paths, authentication and spam scores by
+  hand. **Fetched from the server on open, not stored**: sync keeps only what the
+  app uses, and every row carrying its header block would cost kilobytes per
+  message for a view opened rarely; the tradeoff is that it needs a connection,
+  and the dialog says so when it has none. IMAP uses `BODY.PEEK[HEADER]` so
+  looking does not mark the message read. **POP3 finds the message by UIDL, not
+  the hashed uid** the attachment fallback uses — a collision there would show
+  another message's headers to someone checking for forgery, which is worse than
+  an error; a pre-UIDL row refuses. The dialog lives in `App.tsx` behind
+  `headersMessageId` so the global shortcut handler stands down while it is open
+  (a dialog of buttons with Delete still live is the bug Settings once had).
+  **Raw** is the default view; **Summary** pulls out auth verdicts, the Received
+  path oldest-first with the gap between hops (negative gaps shown, not hidden —
+  relay clock skew is part of reading a path) and spam-filter headers by name.
+  It is a reading aid, not a verdict, and does not decode encoded-words or
+  interpret scores. Button: `</>` on each message in a conversation, **Headers**
+  in the single-message toolbar; drafts get none. Checks: 17 in `test:store` for
+  the summary parser (mutation-checked, two equivalents justified in
+  `mutants.allow.json`), 13 in `test:imap` — GreenMail for the IMAP fetch and the
+  `\Seen` flag, a fake POP3 server that numbers the target second for the UIDL
+  lookup. Looked at in `ui:preview`, both themes, conversation view only: the
+  preview has no `messages.get` fixture, so the single-message toolbar button
+  was not seen rendered.
+
 - **Graph sends reuse their token, and every send logs its timings.** The first
   real Graph send worked but was "well past ten seconds", beyond the undo hold,
   with no way to see where the time went: the send runs on the scheduler after

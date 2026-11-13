@@ -439,6 +439,18 @@
       "rule": "nullish->or",
       "code": "const e = (err ?? {}) as { serverResponseCode?: unknown }",
       "reason": "The third instance of this line, and the same argument as the other two: the result is only property-accessed (.serverResponseCode), and every falsy non-nullish value `||` would swap for {} — 0, '', false, NaN — yields undefined for it anyway, so no input distinguishes them. describeSentCopyFailure also hands the original `err` to classifyConnectionFailure, which reads its own copy, so nothing downstream sees the difference either."
+    },
+    {
+      "file": "src/utils/rawHeaders.ts",
+      "rule": "round->trunc",
+      "code": "if (prev !== null && cur !== null) hops[i].delaySeconds = Math.round((cur - prev) / 1000)",
+      "reason": "RFC 5322 date-times have one-second resolution, so the difference of two parsed hop times is always a whole number of seconds and round and trunc agree. The round is a guard against a relay writing a non-standard timestamp with fractions."
+    },
+    {
+      "file": "src/utils/rawHeaders.ts",
+      "rule": "nullish->or",
+      "code": "f.value.match(new RegExp(`(?:^|\\\\s)${word}\\\\s+([^\\\\s;]+)`, 'i'))?.[1] ?? null",
+      "reason": "The capture group is [^\\s;]+, so a match is never the empty string; ?? and || differ only on that, and on undefined/null they agree."
     }
   ]
 }

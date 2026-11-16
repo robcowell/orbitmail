@@ -1557,11 +1557,13 @@ function registerIpc(): void {
         `[orbit-mail] Sent folder sync after send: ${Math.round(performance.now() - sentSyncStart)}ms`
       )
       notifyMessagesUpdated()
-    } catch {
+    } catch (err) {
       // Sending succeeded; a Sent-folder sync hiccup shouldn't fail the send.
-      // Not reported either, unlike a failed *file*: the copy is on the server,
-      // so the next ordinary sync brings it in. Nothing is lost, and there is
-      // nothing for the user to do about it.
+      // Not shown to the user either, unlike a failed *file*: the copy is on the
+      // server, so the next ordinary sync brings it in. Nothing is lost, and
+      // there is nothing for the user to do about it. Logged, though — silent,
+      // it showed up only as a sent message taking minutes to appear in Sent.
+      console.warn('[orbit-mail] Sent folder sync after send failed:', err)
     }
     // Handed back rather than announced here: the caller is the one that tells
     // the user the send finished, and a message that went out but was not filed

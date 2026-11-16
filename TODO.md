@@ -143,6 +143,16 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **A failed post-send Sent sync is now logged.** `performSend`'s
+  `syncSentFolder` catch was a bare `catch {}`; it is now a `console.warn`. Still
+  not shown to the user, for the reason recorded under "A message that was sent
+  but never filed in Sent" below: the copy is on the server and the next ordinary
+  sync brings it in. Prompted by a reply that went out at 16:20 and appeared in
+  that account's `sent-mail` only with the regular sync three minutes later. With
+  nothing logged there was no way to tell whether the post-send sync had thrown
+  or had run before the copy was there. This records which one it was next time;
+  it does not fix whatever caused the delay.
+
 - **View full headers** — asked for: a button on every message opening a modal
   with the full headers, for checking paths, authentication and spam scores by
   hand. **Fetched from the server on open, not stored**: sync keeps only what the
@@ -354,9 +364,9 @@ does. Preserving that needs prefix or trigram tokenisation.
   the sidebar is enough for Orbit Mail to learn it", which is not true of
   anything in the code.)
 
-  The `syncSentFolder` catch is deliberately still silent: there the copy *is* on
-  the server and the next ordinary sync brings it in, so there is nothing lost
-  and nothing to do.
+  The `syncSentFolder` catch is deliberately still silent to the user: there the
+  copy *is* on the server and the next ordinary sync brings it in, so there is
+  nothing lost and nothing to do. (It does now log a `console.warn` — see above.)
 
   **The e2e check earned its place on its first run, and not on the silence it
   was written for.** The warning went out as an `app:toast` and the scheduler's

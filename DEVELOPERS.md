@@ -2791,7 +2791,8 @@ message. No unit test could have caught either the silence or the leak.
 The quietest failure the app had. `appendToSentFolder` throwing is caught in
 `smtp-send.ts` and reduced to a `console.warn` — rightly, since the message is
 already delivered and failing the send would tempt a second one — and
-`syncSentFolder` failing is caught in `main.ts` with a bare `catch {}`. Between
+`syncSentFolder` failing was caught in `main.ts` with a bare `catch {}` (it now
+logs a `console.warn`, still with nothing on screen). Between
 them, an account whose Sent folder was named `sent-mail` sent mail for weeks with
 every copy unfiled and nothing on screen saying so; the report was "I can't see
 it in sent items" and the diagnosis took a database dump. Here the **incoming**

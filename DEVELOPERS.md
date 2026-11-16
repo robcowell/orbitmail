@@ -628,7 +628,15 @@ the control, and the README says so.
 ### Sync model
 
 - **Initial sync** — up to 200 messages per folder (UID-sorted batch)
-- **Incremental sync** — UID-based delta fetch; only new UIDs since `highestSyncedUid`
+- **Incremental sync** — UID-based delta fetch; only new UIDs since `highestSyncedUid`.
+  A folder is first checked with `STATUS UIDNEXT`, and if that says nothing is
+  new it is not opened at all. That keeps a poll across every folder cheap, but it
+  trusts the server's answer: a cPanel/Courier server was seen reporting a stale
+  `UIDNEXT` straight after an APPEND. So the **post-send Sent sync skips that
+  check** (`skipStatusShortcut`, passed by `syncSentFolder`) and always opens the
+  folder and runs a UID SEARCH, since that is the one moment a new message is
+  known to be there. Background polls keep the shortcut, so on such a server mail
+  that arrives any other way can still wait a poll or two.
 - **Background poll** — POP3 every 20s; IDLE-capable IMAP accounts every 90s (IDLE already push-syncs their inboxes), plus one immediate catch-up sync shortly after launch. Accounts sync in parallel.
 - **IMAP IDLE** — inbox folders on supported accounts for near-realtime delivery, including live flag changes and expunge (deletion) pushes
 - **Server-side reconciliation** — sync detects messages expunged on the server and removes them from the local cache; flag changes propagate in both directions (`imap-idle.ts`, `imap-sync.ts`)

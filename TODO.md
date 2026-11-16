@@ -143,6 +143,35 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **The post-send Sent sync no longer trusts `STATUS UIDNEXT`.** The test send
+  from the entry below logged `fetched 0` in 55ms, which confirmed the suspect:
+  the server answered STATUS with the `UIDNEXT` from before the APPEND, so
+  `syncFolder` decided nothing was new. `syncFolder` now takes
+  `skipStatusShortcut`, and `syncSentFolder` passes it, so the post-send sync
+  always opens the folder and runs a UID SEARCH. That costs one extra round trip
+  per send. **Background polls keep the shortcut** on purpose: it is what keeps a
+  poll across every folder cheap. The cost is that on a server like this, mail
+  arriving any other way can still wait a poll or two. That is accepted, not
+  fixed.
+
+  `resolveUidsToFetch` repeats the same `UIDNEXT` check, and the first version
+  of the fix skipped only the one in `syncFolder`, so it would still have
+  fetched nothing. The test (`imap-integration.suite.ts`, "a stale STATUS
+  UIDNEXT") wraps a real GreenMail client so STATUS answers one behind. It was
+  run against that half-fix and failed with `fetched=0`.
+
+  Adding that section exposed an isolation bug in the existing "a copy that
+  cannot be filed" test, which then failed 2 runs in 3. It re-saves the suite's
+  main account (same address) with the incoming port set to 1, expecting the
+  APPEND to fail. But the pool could still hold a live connection on the real
+  port, so whether the APPEND failed depended on suite timing. It now closes
+  the account's pool after the change, as `accounts:updateManualSettings` does
+  in the app. Three clean runs in a row afterwards.
+
+  **Not yet confirmed on the real server.** The SELECT and UID SEARCH could be
+  stale there too; the GreenMail test cannot say. A test send on a build with
+  this change will: `fetched 1` means fixed.
+
 - **The post-send Sent sync logs how many messages it fetched.** Follow-up to the
   entry below. Looking into the delay found that the send itself ran on time and
   the folder was typed correctly. The copy then arrived only with the 90-second
@@ -152,8 +181,8 @@ does. Preserving that needs prefix or trigram tokenisation.
   log would never fire. `syncSentFolder` now returns the count (or `null` when
   there is no Sent folder), and the success line reads `…: Nms, fetched N`. A
   `fetched 0` straight after a send confirms that suspect; `fetched 1` with the
-  message still missing on screen points at the renderer instead. Unconfirmed
-  until a test send is run with the app started from a terminal.
+  message still missing on screen points at the renderer instead. A test send
+  logged `fetched 0`, so the suspect was right; the fix is the entry above.
 
 - **A failed post-send Sent sync is now logged.** `performSend`'s
   `syncSentFolder` catch was a bare `catch {}`; it is now a `console.warn`. Still

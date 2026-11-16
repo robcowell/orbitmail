@@ -1552,9 +1552,12 @@ function registerIpc(): void {
     // this returns. `sendMail` logs its own stages just before this one.
     const sentSyncStart = performance.now()
     try {
-      await syncSentFolder(account.id, account.provider)
+      const fetched = await syncSentFolder(account.id, account.provider)
+      // The count is the useful part: 0 right after a send means the server did
+      // not yet report the copy, so it arrives with a later sync instead.
       console.info(
-        `[orbit-mail] Sent folder sync after send: ${Math.round(performance.now() - sentSyncStart)}ms`
+        `[orbit-mail] Sent folder sync after send: ${Math.round(performance.now() - sentSyncStart)}ms, ` +
+          (fetched === null ? 'no Sent folder found' : `fetched ${fetched}`)
       )
       notifyMessagesUpdated()
     } catch (err) {

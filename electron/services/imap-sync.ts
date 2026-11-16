@@ -1808,13 +1808,19 @@ export async function appendToSentFolder(
 
 // Sync just the account's Sent folder — used right after sending so the new
 // message appears without triggering a full multi-account resync.
-export async function syncSentFolder(accountId: string, provider: Provider): Promise<void> {
-  if (provider === 'pop3') return
+// Returns how many messages it fetched, or null when there was no Sent folder to
+// sync — kept apart so the post-send log can tell "nothing new" from "nowhere to
+// look".
+export async function syncSentFolder(
+  accountId: string,
+  provider: Provider
+): Promise<number | null> {
+  if (provider === 'pop3') return null
 
-  await withImapClient(accountId, provider, async (client) => {
+  return withImapClient(accountId, provider, async (client) => {
     const mailboxes = await client.list()
     const sentMb = resolveRoleMailbox(mailboxes, 'sent')
-    if (!sentMb || sentMb.flags?.has('\\Noselect')) return
+    if (!sentMb || sentMb.flags?.has('\\Noselect')) return null
 
     const folder = upsertFolder(
       accountId,
@@ -1823,7 +1829,7 @@ export async function syncSentFolder(accountId: string, provider: Provider): Pro
       'sent',
       isVirtualViewFolder(provider, sentMb.path)
     )
-    await syncFolder(client, accountId, folder.id, sentMb.path)
+    return syncFolder(client, accountId, folder.id, sentMb.path)
   })
 }
 

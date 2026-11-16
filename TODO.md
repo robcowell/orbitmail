@@ -143,6 +143,18 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **The post-send Sent sync logs how many messages it fetched.** Follow-up to the
+  entry below. Looking into the delay found that the send itself ran on time and
+  the folder was typed correctly. The copy then arrived only with the 90-second
+  background poll. The leading suspect is `syncFolder`'s `STATUS UIDNEXT`
+  shortcut: a server reporting a stale `UIDNEXT` right after the APPEND would
+  make the sync return without fetching and without throwing, so the failure
+  log would never fire. `syncSentFolder` now returns the count (or `null` when
+  there is no Sent folder), and the success line reads `…: Nms, fetched N`. A
+  `fetched 0` straight after a send confirms that suspect; `fetched 1` with the
+  message still missing on screen points at the renderer instead. Unconfirmed
+  until a test send is run with the app started from a terminal.
+
 - **A failed post-send Sent sync is now logged.** `performSend`'s
   `syncSentFolder` catch was a bare `catch {}`; it is now a `console.warn`. Still
   not shown to the user, for the reason recorded under "A message that was sent

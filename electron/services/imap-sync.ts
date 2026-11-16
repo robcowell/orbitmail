@@ -610,9 +610,12 @@ async function resolveUidsToFetch(
   folderId: string,
   accountId: string,
   maxLocalUid: number | null,
-  uidNext: number
+  uidNext: number,
+  skipStatusShortcut = false
 ): Promise<number[]> {
-  if (maxLocalUid != null && uidNext <= maxLocalUid + 1) {
+  // The same UIDNEXT check as syncFolder's; it has to honour the same opt-out,
+  // or skipping one of them still fetches nothing.
+  if (!skipStatusShortcut && maxLocalUid != null && uidNext <= maxLocalUid + 1) {
     return []
   }
 
@@ -1068,7 +1071,13 @@ export async function syncFolder(
   accountId: string,
   folderId: string,
   imapPath: string,
-  onProgress?: SyncProgressHandler
+  onProgress?: SyncProgressHandler,
+  // skipStatusShortcut: always open the folder and search, even when STATUS
+  // says nothing is new. For the sync right after a send, where we know a new
+  // message is there: a cPanel/Courier server was seen reporting a stale
+  // UIDNEXT just after the APPEND, so the shortcut skipped the copy without an
+  // error and it appeared only with a later poll.
+  options: { skipStatusShortcut?: boolean } = {}
 ): Promise<number> {
   const status = await client.status(imapPath, {
     uidNext: true,
@@ -1086,7 +1095,7 @@ export async function syncFolder(
   let maxLocalUid = validityChanged ? null : getFolderMaxUid(folderId)
   const uidNext = normalizeImapUint(status.uidNext) ?? 1
 
-  if (maxLocalUid != null && uidNext <= maxLocalUid + 1) {
+  if (!options.skipStatusShortcut && maxLocalUid != null && uidNext <= maxLocalUid + 1) {
     updateFolderUnread(folderId, status.unseen ?? 0)
     updateFolderSyncState(folderId, {
       uidValidity: serverValidity,
@@ -1116,7 +1125,14 @@ export async function syncFolder(
       return resynced.newCount
     }
 
-    const uids = await resolveUidsToFetch(client, folderId, accountId, maxLocalUid, uidNext)
+    const uids = await resolveUidsToFetch(
+      client,
+      folderId,
+      accountId,
+      maxLocalUid,
+      uidNext,
+      options.skipStatusShortcut
+    )
 
     const { newCount, maxUid } = await fetchMessagesByUid(
       client,
@@ -1829,7 +1845,9 @@ export async function syncSentFolder(
       'sent',
       isVirtualViewFolder(provider, sentMb.path)
     )
-    return syncFolder(client, accountId, folder.id, sentMb.path)
+    return syncFolder(client, accountId, folder.id, sentMb.path, undefined, {
+      skipStatusShortcut: true
+    })
   })
 }
 

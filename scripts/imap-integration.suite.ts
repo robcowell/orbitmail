@@ -698,6 +698,54 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  section('Sync: a stale STATUS UIDNEXT does not hide a known-new message')
+  // -------------------------------------------------------------------------
+  {
+    // A cPanel/Courier server answered STATUS with the UIDNEXT from *before* an
+    // APPEND it had just accepted. syncFolder trusted it, decided nothing was
+    // new, and the sent copy appeared only with the next background poll; the
+    // post-send sync logged `fetched 0`. GreenMail's STATUS is always current,
+    // so the client is wrapped to give that one-behind answer. Everything else
+    // — the SELECT, the UID SEARCH, the FETCH — is the real server.
+    const box = 'StaleStatus'
+    const client = rawClient()
+    await client.connect()
+    await client.mailboxCreate(box).catch(() => {})
+    const folder = db.upsertFolder(account.id, box, box, 'sent')
+    await seed(client, box, ['Already here'])
+    await sync.syncFolder(client, account.id, folder.id, box)
+
+    await seed(client, box, ['Just sent'])
+    const stale = new Proxy(client, {
+      get(target, prop, receiver) {
+        if (prop === 'status') {
+          return async (path: string, query: Record<string, boolean>) => {
+            const real = await target.status(path, query)
+            return { ...real, uidNext: (real.uidNext ?? 1) - 1 }
+          }
+        }
+        const value = Reflect.get(target, prop, receiver)
+        return typeof value === 'function' ? value.bind(target) : value
+      }
+    }) as typeof client
+
+    // The shape of the bug, kept as a statement of what the shortcut does: an
+    // ordinary sync believes the stale answer. Background polls keep it.
+    const believed = await sync.syncFolder(stale, account.id, folder.id, box)
+    ok('an ordinary sync trusts a stale UIDNEXT and fetches nothing',
+      believed === 0, `fetched=${believed}`)
+
+    const fetched = await sync.syncFolder(stale, account.id, folder.id, box, undefined, {
+      skipStatusShortcut: true
+    })
+    ok('skipping the shortcut fetches the message anyway', fetched === 1, `fetched=${fetched}`)
+    ok('and it is in the folder',
+      db.listMessages(folder.id, 50, 0).some((m) => m.subject === 'Just sent'))
+
+    await client.logout()
+  }
+
+  // -------------------------------------------------------------------------
   section('Move: the message lands in the target and stays out of the source')
   // -------------------------------------------------------------------------
   {
@@ -6211,6 +6259,13 @@ async function main(): Promise<void> {
       incoming: { host: HOST, port: 1, security: 'none' },
       outgoing: { host: HOST, port: SMTP_PORT, security: 'none' }
     } as never)
+    // Same address, so this *updates* the suite's main account rather than
+    // adding one, and the pool may still hold a live connection from a section
+    // above, open on the real port. The APPEND then reused it and succeeded,
+    // so this section failed or passed depending on how long ago that was.
+    // `accounts:updateManualSettings` closes the pool after a settings change
+    // for exactly this reason; do the same.
+    await (await import('../electron/services/imap-pool')).closeAccountPool(unfiled.id)
 
     let outcome: { sentCopyFailure?: string } | null = null
     const err = await rejects(async () => {

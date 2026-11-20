@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
-    "@azure/msal-node": "^5.3.1",
+    "@azure/msal-node": "^7.1.0",
     "@phosphor-icons/react": "^2.1.10",
     "better-sqlite3": "^12.11.1",
     "dompurify": "^3.4.16",

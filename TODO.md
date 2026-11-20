@@ -143,6 +143,15 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Dropdown lists are readable in dark mode.** Every native `<select>` popup
+  (the composer's From account, the formatting toolbar, settings) was drawn
+  white by Chromium while its options inherited the dark theme's light text, so
+  the From list was white on white. Options now take the theme's surface and
+  text colours explicitly. `color-scheme: dark` on the root was tried first and
+  did **not** work: on Linux the popup still drew white. The popup is drawn by
+  the browser, not the page, so `ui:preview` screenshots cannot show it —
+  it has to be checked by eye in a dev build.
+
 - **The post-send Sent sync no longer trusts `STATUS UIDNEXT`.** The test send
   from the entry below logged `fetched 0` in 55ms, which confirmed the suspect:
   the server answered STATUS with the `UIDNEXT` from before the APPEND, so

@@ -1559,6 +1559,15 @@ textarea {
   flex-shrink: 0;
 }
 
+/* A native <select> popup is drawn by Chromium, not the page: on Linux it
+   ignores the theme and paints the list white, while the options inherit the
+   select's light text in dark mode — the From account list was white on white.
+   Chromium does honour colours set on the options themselves. */
+select option {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
 .compose-input {
   flex: 1;
   border: none;

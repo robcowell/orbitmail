@@ -1255,6 +1255,24 @@ export function runDbContract(ok: Ok, section: Section): void {
     }
 
     // -----------------------------------------------------------------------
+    section('Storage usage counts bytes, not characters')
+    // -----------------------------------------------------------------------
+    {
+      // "On this computer" is a size. Counting characters undercounts every
+      // non-ASCII message — a euro sign is one character and three bytes.
+      const f = upsertFolder(account.id, 'CONTRACT/BYTES', 'Contract Bytes', 'custom')
+      const before = getAccountStorageUsage(account.id).contentBytes
+      const subject = 'Café menu'
+      const body = '€€€€ — naïve résumé'
+      put(f.id, { uid: 2302, subject, body })
+      const expected =
+        Buffer.byteLength(subject) + Buffer.byteLength(body) + Buffer.byteLength('snippet')
+      const added = getAccountStorageUsage(account.id).contentBytes - before
+      ok('a non-ASCII message adds its size in bytes', added === expected,
+        `added ${added}, expected ${expected}`)
+    }
+
+    // -----------------------------------------------------------------------
     section('The one-time thread regroup runs once, and only once')
     // -----------------------------------------------------------------------
     {

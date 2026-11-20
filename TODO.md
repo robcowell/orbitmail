@@ -143,6 +143,18 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Opening an account in Settings no longer stalls the app.** Its "On this
+  computer" figure summed `LENGTH()` over every stored body, which reads all of
+  them — ~300ms on a 4,500-message account, on the main process, and logged as
+  `[ipc-slow] accounts:getInfo` with a matching `[main-lag]`. It now uses
+  `octet_length()`, which SQLite answers from the record header without loading
+  the value: ~7ms on the same account. It also fixes the figure itself:
+  `LENGTH()` counts characters, so non-ASCII mail was undercounted. Splitting
+  storage into its own on-demand IPC channel was the agreed plan, and was
+  dropped once this made the whole call ~20ms. Still linear in the number of
+  messages, just cheap per row. A `test:db` contract check asserts a non-ASCII
+  message adds its byte size; it fails on the old query.
+
 - **Dev builds no longer warn about `console-message` arguments.** The
   dev-only bridge that copies renderer `[renderer-lag]`/error lines into the
   terminal read the message from the listener's positional arguments, which

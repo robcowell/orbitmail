@@ -752,7 +752,9 @@ function createMainWindow(): void {
   // DIAGNOSTIC (dev only): surface renderer console (incl. [renderer-lag] and
   // React errors) in the same terminal as the main-process logs.
   if (!app.isPackaged) {
-    mainWindow.webContents.on('console-message', (_e, _l, message) => {
+    // The event object carries the message; the positional arguments are
+    // deprecated and reading them prints a warning on every start.
+    mainWindow.webContents.on('console-message', ({ message }) => {
       if (/lag|error|warning|maximum update/i.test(message)) console.log('[renderer]', message)
     })
   }

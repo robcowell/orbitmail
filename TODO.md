@@ -143,6 +143,15 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **Dev builds no longer warn about `console-message` arguments.** The
+  dev-only bridge that copies renderer `[renderer-lag]`/error lines into the
+  terminal read the message from the listener's positional arguments, which
+  Electron has deprecated; it printed a warning on every start. It now reads
+  `message` off the event object. Checked with a standalone Electron script:
+  the old listener prints the warning, the new one does not, and both still
+  receive the message. `test:e2e` cannot show it — none of its suites log to
+  the renderer console.
+
 - **No more `punycode` deprecation warning.** Every start printed
   `[DEP0040] The punycode module is deprecated`. The cause was a dependency
   chain, not our code: `google-auth-library@9` → `gaxios@6` → `node-fetch@2` →

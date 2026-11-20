@@ -67,7 +67,7 @@
     "esbuild": "^0.25.12",
     "sharp": "^0.35.5",
     "typescript": "^5.7.3",
-    "vite": "^6.0.11"
+    "vite": "^6.4.5"
   },
   "build": {
     "appId": "com.orbitmail.app",

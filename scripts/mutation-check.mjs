@@ -43,7 +43,8 @@
 // detector. It runs on demand, not in CI, because a slow check that fails for
 // defensible reasons is a check people learn to skip.
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { execSync } from 'child_process'
+import { spawn } from 'child_process'
+import { constants } from 'os'
 import { join, dirname, relative } from 'path'
 import { fileURLToPath } from 'url'
 import { build } from 'esbuild'
@@ -147,13 +148,61 @@ async function bundleOf(file) {
   return result.outputFiles[0].text
 }
 
-function runSuite(file) {
+// The suites take about a second. A mutant that turns a loop condition into one
+// that never changes (`!==` -> `===` on a union-find walk did exactly this)
+// spins forever, and that counts as caught — but only once it has been stopped.
+const SUITE_TIMEOUT_MS = 30_000
+
+// The suite in flight, and the target currently holding a mutant. The signal
+// handler below needs both: one to stop, one to put back.
+let running = null
+let dirty = null
+
+// Each suite runs in its own process group, and the whole group is killed.
+// Killing only the direct child is not enough: execSync's timeout did that, and
+// it took out `sh` while `npm` and the spinning `node` under it lived on,
+// adopted by systemd, at 100% CPU, long after the sweep had finished.
+function killGroup(child) {
   try {
-    execSync(SUITE_FOR(file), { cwd: ROOT, stdio: 'pipe', timeout: 180_000 })
-    return true // suite passed — the mutant survived
+    process.kill(-child.pid, 'SIGKILL')
   } catch {
-    return false // suite failed — the mutant was caught
+    // ESRCH: the group has already gone.
   }
+}
+
+function runSuite(file) {
+  return new Promise((resolve) => {
+    const child = spawn(SUITE_FOR(file), {
+      cwd: ROOT,
+      shell: true,
+      stdio: 'ignore',
+      detached: true // its own process group, so it can be killed as one
+    })
+    running = child
+    const timer = setTimeout(() => killGroup(child), SUITE_TIMEOUT_MS)
+    const done = (passed) => {
+      clearTimeout(timer)
+      running = null
+      killGroup(child) // anything the suite left running behind it
+      resolve(passed)
+    }
+    // Passed: the mutant survived. Failed, or killed by the timeout: caught.
+    child.on('exit', (code) => done(code === 0))
+    child.on('error', () => done(false))
+  })
+}
+
+// `finally` does not run when a signal ends the process, so Ctrl-C mid-sweep
+// would otherwise leave a mutated source in the tree. The suites are in their
+// own process groups, so the terminal's Ctrl-C reaches only this process; it
+// has to stop them too.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    if (running) killGroup(running)
+    if (dirty) writeFileSync(dirty.abs, dirty.original)
+    process.stderr.write(`\n  ! ${sig}: stopped${dirty ? `, ${dirty.file} restored` : ''}\n`)
+    process.exit(128 + constants.signals[sig])
+  })
 }
 
 /** Every single-site application of every rule, as candidate mutated sources. */
@@ -194,6 +243,7 @@ async function main() {
     const baseline = await bundleOf(file)
     process.stdout.write(`\n${file}\n`)
 
+    dirty = { file, abs, original }
     try {
       for (const candidate of candidates(original)) {
         writeFileSync(abs, candidate.mutated)
@@ -219,7 +269,7 @@ async function main() {
         }
 
         applied++
-        const survived = runSuite(file)
+        const survived = await runSuite(file)
         if (!survived) {
           caught++
           continue
@@ -237,9 +287,11 @@ async function main() {
         }
       }
     } finally {
-      // Always, even on a throw or a Ctrl-C mid-run: leaving a mutated source
-      // behind would be far worse than any bug this finds.
+      // Always, even on a throw: leaving a mutated source behind would be far
+      // worse than any bug this finds. A signal skips this block; the handler
+      // above restores the file in that case.
       writeFileSync(abs, original)
+      dirty = null
     }
   }
 

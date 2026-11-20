@@ -2437,11 +2437,15 @@ export function getAccountStorageUsage(accountId: string): {
   const sqlite = getRawSqlite()
   const contentRow = sqlite
     .prepare(
+      // octet_length, not LENGTH: LENGTH counts characters, so it undercounted
+      // anything non-ASCII, and it has to read every body to count them —
+      // ~300ms on a 4,500-message account, on the main thread. octet_length
+      // reads the byte size from the record header without loading the value.
       `SELECT COALESCE(SUM(
-         LENGTH(COALESCE(body_html, '')) +
-         LENGTH(COALESCE(body_text, '')) +
-         LENGTH(subject) +
-         LENGTH(snippet)
+         octet_length(COALESCE(body_html, '')) +
+         octet_length(COALESCE(body_text, '')) +
+         octet_length(subject) +
+         octet_length(snippet)
        ), 0) AS content_bytes
        FROM messages
        WHERE account_id = ?`

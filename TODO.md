@@ -143,6 +143,18 @@ does. Preserving that needs prefix or trigram tokenisation.
 
 ## Shipped
 
+- **No more `punycode` deprecation warning.** Every start printed
+  `[DEP0040] The punycode module is deprecated`. The cause was a dependency
+  chain, not our code: `google-auth-library@9` → `gaxios@6` → `node-fetch@2` →
+  `whatwg-url@5` → `tr46`, which uses Node's built-in `punycode`.
+  `google-auth-library` is now 11.x, whose `gaxios` uses `node-fetch@3`, and
+  nothing in `node_modules` requires the built-in any more. Two major versions,
+  but the API `oauth-google.ts` uses (`OAuth2Client`, `CodeChallengeMethod`,
+  `generateCodeVerifierAsync`, `generateAuthUrl`, `getToken`,
+  `getAccessToken`, `refreshAccessToken`) is unchanged. Each of those calls
+  was run under Electron's Node against a stub token endpoint before merging;
+  no suite covers them, since a real Google sign-in cannot run in CI.
+
 - **Dropdown lists are readable in dark mode.** Every native `<select>` popup
   (the composer's From account, the formatting toolbar, settings) was drawn
   white by Chromium while its options inherited the dark theme's light text, so

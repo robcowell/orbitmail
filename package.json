@@ -43,7 +43,7 @@
     "dompurify": "^3.4.16",
     "dotenv": "^16.4.7",
     "drizzle-orm": "^0.45.2",
-    "google-auth-library": "^9.15.1",
+    "google-auth-library": "^11.3.4",
     "imapflow": "^2.0.5",
     "mailparser": "^3.9.16",
     "node-pop3": "^0.11.0",
